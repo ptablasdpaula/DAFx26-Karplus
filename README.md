@@ -38,3 +38,24 @@ In order to measure the effect of each loss, we will use the following baselines
 - [Semi-Supervised Model paper](https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=10017350)
 - [Discriminative Model paper](https://joshreiss.github.io/documents/2024/Zong2024Machine.pdf)
 
+# Installation
+1. Install Pixi
+```bash
+brew install pixi
+```
+
+2. Clone the repo
+```bash
+git clone https://github.com/ptablasdpaula/DAFx26-Karplus.git
+cd DAFx26-Karplus
+```
+
+3. Install Dependencies
+```bash
+pixi install
+```
+
+4. Activate Environment
+```bash
+pixi shell
+```

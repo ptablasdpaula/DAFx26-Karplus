@@ -1,0 +1,3 @@
+.idea/*
+.pixi/*
+!.pixi/config.toml
