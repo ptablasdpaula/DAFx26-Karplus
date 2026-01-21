@@ -110,6 +110,113 @@ def pluck_position_filter(
     return all_zero_comb(x, comb_L, fs, lagrange_order)
 
 @jit(nopython=True)
+def compute_dynamics_R(
+        f0: float,
+        bw: float,
+        fs: int = 16000
+) -> float:
+    """
+    Compute dynamics filter coefficient R for a given pitch and dynamic level.
+
+    From Jaffe & Smith "Extensions of the Karplus-Strong Plucked-String Algorithm":
+    R is computed to maintain constant amplitude at fundamental frequency f0
+    across different dynamic levels (bandwidths).
+
+    Steps:
+    1. Design one-pole lowpass with bandwidth bw
+    2. Compute gain at reference frequency fm (geometric mean of pitch range)
+    3. Solve for R that gives constant gain at f0
+
+    :param f0: Fundamental frequency in Hz
+    :param bw: Bandwidth in Hz (typically 0 to fs/2)
+              Higher bandwidth = brighter/louder (hard pluck)
+              Lower bandwidth = darker/softer (soft pluck)
+    :param fs: Sample rate in Hz
+    :return: Filter coefficient R in [0, 1)
+    """
+
+    fm = np.sqrt(F0_MIN * (fs / 2.0)) # geometric mean
+
+    # Compute R_L for bandwidth bw (R_L = e^(-π*bw/fs))
+    R_L = np.exp(-np.pi * bw / fs)
+
+    # Compute gain at reference frequency fm
+    omega_m = 2.0 * np.pi * fm / fs
+    G_L_real = 1.0 - R_L
+    G_L_denom = np.sqrt((1.0 - R_L * np.cos(omega_m)) ** 2 + (R_L * np.sin(omega_m)) ** 2)
+    G_L = G_L_real / G_L_denom
+
+    # Solve for R at fundamental frequency f0
+    omega_0 = 2.0 * np.pi * f0 / fs
+
+    # From paper: R = (1 - G_L^2 * cos(2πf0*Ts)) / (1 - G_L^2)
+    #              ± 2*G_L*sin(πf0*Ts) * sqrt((1 - G_L^2*cos^2(πf0*Ts)) / (1 - G_L^2))
+
+    cos_term = np.cos(omega_0)
+    sin_term = np.sin(np.pi * f0 / fs)
+
+    G_L_sq = G_L * G_L
+
+    numerator = 1.0 - G_L_sq * cos_term
+    denominator = 1.0 - G_L_sq
+
+    sqrt_term = np.sqrt((1.0 - G_L_sq * cos_term * cos_term) / denominator)
+
+    # Use the solution that gives R < 1 (stable)
+    R = (numerator / denominator) - 2.0 * G_L * sin_term * sqrt_term
+
+    # Clamp to valid range
+    R = max(0.0, min(0.999, R))
+
+    return R
+
+
+@jit(nopython=True)
+def apply_dynamics(
+        x: npt.NDArray,
+        f0: npt.NDArray,
+        dynamic_level: npt.NDArray,
+        fs: int = 16000
+) -> npt.NDArray:
+    """
+    Apply dynamics filter to excitation with time-varying dynamic level.
+
+    From Jaffe & Smith "Extensions of the Karplus-Strong Plucked-String Algorithm":
+    Controls spectral bandwidth to simulate pluck dynamics. Harder plucks have
+    more high-frequency content (wide bandwidth), softer plucks are darker
+    (narrow bandwidth).
+
+    :param x: Input signal (excitation) [num_samples]
+    :param f0: Fundamental frequency in Hz [num_samples]
+    :param dynamic_level: Dynamic level parameter [num_samples]
+                          0.0 = soft/dark (narrow bandwidth)
+                          1.0 = loud/bright (wide bandwidth)
+    :param fs: Sample rate in Hz
+    :return: Filtered excitation signal [num_samples]
+    """
+    assert len(x) == len(f0) == len(dynamic_level)
+    assert np.all((dynamic_level >= 0.0) & (dynamic_level <= 1.0))
+
+    num_samples = len(x)
+    y = np.zeros_like(x)
+
+    # One-pole filter state
+    y_prev = 0.0
+
+    for n in range(num_samples):
+        # Map dynamic_level to bandwidth (0 to fs/2 Hz)
+        bw = dynamic_level[n] * (fs / 2.0)
+
+        # Compute R for this pitch and dynamic level
+        R = compute_dynamics_R(f0[n], bw, fs)
+
+        # Apply one-pole filter: y[n] = (1-R)*x[n] + R*y[n-1]
+        y[n] = (1.0 - R) * x[n] + R * y_prev
+        y_prev = y[n]
+
+    return y
+
+@jit(nopython=True)
 def one_pole_phase_delay(f0: float, a1: float, g: float, fs: int) -> float:
     """
     Compute phase delay of one-pole loop filter at fundamental frequency.
