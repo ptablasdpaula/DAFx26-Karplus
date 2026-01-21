@@ -41,6 +41,73 @@ def noise_burst_excitation(
         excitation[trigger_sample:end_sample] = np.random.randn(burst_length)
     return excitation
 
+@jit(nopython=True)
+def all_zero_comb(
+        x: npt.NDArray,
+        L: npt.NDArray,
+        fs: int = 16000,
+        lagrange_order: int = LAGRANGE_ORDER
+) -> npt.NDArray:
+    """
+    All-zero comb filter with time-varying fractional delay: y(n) = x(n) - x(n - L)
+    Uses Lagrange interpolation for fractional delays.
+
+    :param x: Input signal [num_samples]
+    :param L: Delay in samples [num_samples], can be fractional
+    :param fs: Sample rate (used to determine max buffer size)
+    :param lagrange_order: Order of Lagrange interpolator
+    :return: Filtered signal [num_samples]
+    """
+    assert len(x) == len(L)
+    num_samples = len(x)
+    y = np.zeros_like(x)
+
+    max_delay = int(fs / F0_MIN)
+    delay_buffer = np.zeros(max_delay)
+    write_idx = 0
+
+    for n in range(num_samples):
+        L_int, h = lagrange_fractional_delay(L[n], lagrange_order)
+        delayed_sample = 0.0
+        for k in range(lagrange_order + 1):
+            read_idx = (write_idx - L_int - k) % len(delay_buffer)
+            delayed_sample += h[k] * delay_buffer[read_idx]
+        y[n] = x[n] - delayed_sample
+        delay_buffer[write_idx] = x[n]
+        write_idx = (write_idx + 1) % len(delay_buffer)
+    return y
+
+@jit(nopython=True)
+def pluck_position_filter(
+        x: npt.NDArray,
+        f0: npt.NDArray,
+        position: npt.NDArray,
+        fs: int = 16000,
+        lagrange_order: int = LAGRANGE_ORDER
+) -> npt.NDArray:
+    """
+    Simulate pluck position using an all-zero comb filter as per section
+    "Simulation of a Moving Pick" in "Extensions of the Karplus-Strong Plucked-String Algorithm"
+    by David A. Jaffe and Julius O. Smith
+
+    Creates spectral notches at harmonics corresponding to pluck position.
+    - position = 0.5 (midpoint): removes even harmonics
+    - position = 0.1: removes every 10th harmonic
+    - position = 1/N: approximates sul ponticello (bright, near bridge)
+
+    :param x: Input signal (excitation) [num_samples]
+    :param f0: Fundamental frequency in Hz [num_samples]
+    :param position: Pluck position as fraction of string length, range [0, 1] [num_samples]
+    :param fs: Sample rate in Hz
+    :param lagrange_order: Order of Lagrange interpolator
+    :return: Filtered excitation signal [num_samples]
+    """
+    assert len(x) == len(f0) == len(position)
+    assert np.all((position >= 0.0) & (position <= 1.0))
+
+    L = fs / f0
+    comb_L = L * position
+    return all_zero_comb(x, comb_L, fs, lagrange_order)
 
 @jit(nopython=True)
 def one_pole_phase_delay(f0: float, a1: float, g: float, fs: int) -> float:
