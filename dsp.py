@@ -4,12 +4,19 @@ import numpy.typing as npt
 
 LAGRANGE_ORDER = 5
 F0_MIN = 20
+FS_MIN = 16000
 
 @jit(nopython=True)
 def linear_upsample(x: npt.NDArray, num_samples: int) -> npt.NDArray:
     return np.interp(np.linspace(0, 1, num_samples),  # new x
                      np.linspace(0, 1, len(x)),  # old x
                      x)  # old y
+
+@jit(nopython=True)
+def no_dc_burst(burst_lenght: int) -> npt.NDArray:
+    burst = np.random.rand(burst_lenght)
+    burst = burst / np.max(burst)
+    return (burst - 0.5) * 2
 
 @jit(nopython=True)
 def noise_burst_excitation(
@@ -32,20 +39,20 @@ def noise_burst_excitation(
     excitation = np.zeros(num_samples)
 
     for i in range(len(trigger_samples)):
-        assert i <= num_samples
         trigger_sample = int(trigger_samples[i])
+        assert trigger_sample <= num_samples
         f0_at_trigger = f0[trigger_sample]
         burst_length = int(fs / f0_at_trigger)
         end_sample = min(trigger_sample + burst_length, num_samples)
         burst_length = end_sample - trigger_sample
-        excitation[trigger_sample:end_sample] = np.random.randn(burst_length)
+        excitation[trigger_sample:end_sample] = no_dc_burst(burst_length)
     return excitation
 
 @jit(nopython=True)
 def all_zero_comb(
         x: npt.NDArray,
         L: npt.NDArray,
-        fs: int = 16000,
+        fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER
 ) -> npt.NDArray:
     """
@@ -82,7 +89,7 @@ def pluck_position_filter(
         x: npt.NDArray,
         f0: npt.NDArray,
         position: npt.NDArray,
-        fs: int = 16000,
+        fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER
 ) -> npt.NDArray:
     """
@@ -113,7 +120,7 @@ def pluck_position_filter(
 def compute_dynamics_R(
         f0: float,
         bw: float,
-        fs: int = 16000
+        fs: int = FS_MIN
 ) -> float:
     """
     Compute dynamics filter coefficient R for a given pitch and dynamic level.
@@ -176,7 +183,7 @@ def apply_dynamics(
         x: npt.NDArray,
         f0: npt.NDArray,
         dynamic_level: npt.NDArray,
-        fs: int = 16000
+        fs: int = FS_MIN
 ) -> npt.NDArray:
     """
     Apply dynamics filter to excitation with time-varying dynamic level.
@@ -290,7 +297,7 @@ def karplus_strong(
         f0: npt.NDArray,
         a1: npt.NDArray,
         g: npt.NDArray,
-        fs: int = 16000,
+        fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER,
 ) -> npt.NDArray:
     """
@@ -337,9 +344,28 @@ def karplus_strong(
         y[n] = output_sample
     return y
 
+@jit(nopython=True)
+def physical_model(
+        num_samples: int,
+        trigger_samples: npt.NDArray,
+        f0: npt.NDArray,
+        pluck_position: npt.NDArray,
+        burst_gain: npt.NDArray,
+        dynamic_level: npt.NDArray,
+        a1: npt.NDArray,
+        decay: npt.NDArray,
+        fs: int = FS_MIN,
+        lagrange_order: int = LAGRANGE_ORDER
+) -> npt.NDArray:
+    x = noise_burst_excitation(num_samples=num_samples, trigger_samples=trigger_samples, f0=f0, fs=fs)
+    x *= burst_gain
+    x = pluck_position_filter(x=x, f0=f0, position=pluck_position, fs=fs, lagrange_order=lagrange_order)
+    x = apply_dynamics(x=x, f0=f0, dynamic_level=dynamic_level, fs=fs)
+    return karplus_strong(x=x, f0=f0, a1=a1, g=decay, fs=fs, lagrange_order=lagrange_order)
+
 
 if __name__ == "__main__":
-    fs = 16000
+    fs = FS_MIN
     duration = 0.1
     num_samples = int(fs * duration)
 
