@@ -185,29 +185,23 @@ def apply_dynamics(
     return y
 
 @jit(nopython=True)
-def one_pole_phase_delay(f0: float, a1: float, g: float, fs: int) -> float:
+def one_pole_phase_delay(f0: float, a1: float, fs: int) -> float:
     """
     Compute phase delay of one-pole loop filter at fundamental frequency.
+    Note: only valid for positive b0.
 
     :param f0: Fundamental frequency in Hz
     :param a1: Loop filter pole coefficient
-    :param g: Loop gain
     :param fs: Sample rate in Hz
     :return: Phase delay in samples
     """
     omega0 = 2.0 * np.pi * f0 / fs
 
-    # Transfer function: H(e^jω) = b0 / (1 + a1 * e^(-jω))
-    b0 = g * (1.0 + a1)
-
-    # Denominator: 1 + a1 * e^(-jω) = 1 + a1*(cos(-ω) + j*sin(-ω))
-    denom_real = 1.0 + a1 * np.cos(-omega0)
-    denom_imag = a1 * np.sin(-omega0)
-
-    # Phase of H = phase(numerator) - phase(denominator)
-    phase_num = 0.0 if b0 > 0 else np.pi
-    phase_denom = np.arctan2(denom_imag, denom_real)
-    phase = phase_num - phase_denom
+    # Transfer function: H(e^jω) = b0 / (1 - a1·e^(-jω))
+    # Denominator: 1 - a1·e^(-jω) = (1 - a1·cos(ω)) + j·a1·sin(ω)
+    denom_real = 1.0 - a1 * np.cos(omega0)
+    denom_imag = a1 * np.sin(omega0)
+    phase = np.arctan2(denom_imag, denom_real)
 
     # Phase delay: τ = -φ(ω) / ω
     phase_delay = -phase / omega0
@@ -268,14 +262,14 @@ def karplus_strong(
 
     :param x: Excitation signal [num_samples]
     :param f0: Fundamental frequency in Hz [num_samples]
-    :param a1: Loop filter pole coefficient, range [-1, 0] [num_samples]
+    :param a1: Loop filter pole coefficient, range [0, 1] [num_samples]
     :param g: Loop gain, range (0, 1) [num_samples]
     :param fs: Sample rate in Hz
     :param lagrange_order: Order of interpolator
     :return: Synthesized audio signal [num_samples]
     """
     assert len(x) == len(f0) == len(a1) == len(g)
-    assert np.all((a1 >= -1.0) & (a1 <= 0.0))
+    assert np.all((a1 >= 0.0) & (a1 <= 1.0))
     assert np.all((g >= 0.0) & (g <= 1.0))
 
     num_samples = len(x)
@@ -286,7 +280,7 @@ def karplus_strong(
     write_idx = 0
 
     for n in range(num_samples):
-        phase_delay = one_pole_phase_delay(f0[n], a1[n], g[n], fs)
+        phase_delay = one_pole_phase_delay(f0[n], a1[n], fs)
         L_corrected = L[n] + phase_delay
 
         L_int, h = lagrange_fractional_delay(L_corrected, lagrange_order)
@@ -295,8 +289,8 @@ def karplus_strong(
             read_idx = (write_idx - L_int - k) % len(delay_buffer)
             delayed_sample += h[k] * delay_buffer[read_idx]
 
-        b0 = g[n] * (1.0 + a1[n])
-        filtered_sample = b0 * delayed_sample - a1[n] * filter_state
+        b0 = g[n] * (1.0 - a1[n])
+        filtered_sample = b0 * delayed_sample + a1[n] * filter_state
         filter_state = filtered_sample
 
         output_sample = x[n] + filtered_sample
@@ -337,8 +331,8 @@ if __name__ == "__main__":
     edge_cases = [
         (0.0, 1.0),
         (0.0, 0.0),
-        (-1.0, 1.0),
-        (-1.0, 0.0),
+        (1.0, 1.0),
+        (1.0, 0.0),
     ]
 
     all_passed = True
