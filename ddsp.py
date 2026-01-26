@@ -33,7 +33,7 @@ def diff_excitation_onset(
     """
     Create excitation with per-frame onset decisions
 
-    :param onset_probs: [batch, num_frames] - logit per frame
+    :param onset_probs: [batch, num_frames] - logit per frame, expects ε [0, 1]
     :param signal_length: total signal length in samples
     :param f0: [batch, num_frames] - fundamental frequency in Hz per frame
     :param fs: sample rate in Hz
