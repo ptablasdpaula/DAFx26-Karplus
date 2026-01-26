@@ -5,6 +5,7 @@ import numpy.typing as npt
 LAGRANGE_ORDER = 5
 F0_MIN = 20
 FS_MIN = 16000
+RND_SEED = 42
 
 @jit(nopython=True)
 def linear_upsample(x: npt.NDArray, num_samples: int) -> npt.NDArray:
@@ -13,8 +14,12 @@ def linear_upsample(x: npt.NDArray, num_samples: int) -> npt.NDArray:
                      x)  # old y
 
 @jit(nopython=True)
-def no_dc_burst(burst_lenght: int) -> npt.NDArray:
-    burst = np.random.rand(burst_lenght)
+def no_dc_burst(
+        burst_length: int,
+        seed: int=RND_SEED
+) -> npt.NDArray:
+    np.random.seed(seed)  # Use old-style seed instead of default_rng
+    burst = np.random.random(burst_length)
     burst = burst / np.max(burst)
     return (burst - 0.5) * 2
 
@@ -23,7 +28,8 @@ def noise_burst_excitation(
         num_samples: int,
         trigger_samples: npt.NDArray,
         f0: npt.NDArray,
-        fs: int
+        fs: int,
+        seed: int=RND_SEED
 ) -> npt.NDArray:
     """
     Each trigger creates a noise burst with length equal to one period
@@ -45,7 +51,7 @@ def noise_burst_excitation(
         burst_length = int(fs / f0_at_trigger)
         end_sample = min(trigger_sample + burst_length, num_samples)
         burst_length = end_sample - trigger_sample
-        excitation[trigger_sample:end_sample] = no_dc_burst(burst_length)
+        excitation[trigger_sample:end_sample] = no_dc_burst(burst_length, seed=seed)
     return excitation
 
 @jit(nopython=True)
@@ -310,9 +316,10 @@ def physical_model(
         a1: npt.NDArray,
         decay: npt.NDArray,
         fs: int = FS_MIN,
-        lagrange_order: int = LAGRANGE_ORDER
+        lagrange_order: int = LAGRANGE_ORDER,
+        random_seed: int = RND_SEED,
 ) -> npt.NDArray:
-    x = noise_burst_excitation(num_samples=num_samples, trigger_samples=trigger_samples, f0=f0, fs=fs)
+    x = noise_burst_excitation(num_samples=num_samples, trigger_samples=trigger_samples, f0=f0, fs=fs, seed=random_seed)
     x *= burst_gain
     x = pluck_position_filter(x=x, f0=f0, position=pluck_position, fs=fs, lagrange_order=lagrange_order)
     x = apply_dynamics(x=x, f0=f0, dynamic_level=dynamic_level, fs=fs)
