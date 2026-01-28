@@ -306,7 +306,7 @@ def karplus_strong(
     return y
 
 @jit(nopython=True)
-def physical_model(
+def oracle_physical_model(
         num_samples: int,
         trigger_samples: npt.NDArray,
         f0: npt.NDArray,
