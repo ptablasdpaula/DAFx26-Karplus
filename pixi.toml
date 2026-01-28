@@ -18,3 +18,11 @@ ipykernel = ">=7.1.0,<8"
 matplotlib = ">=3.10.8,<4"
 librosa = ">=0.11.0,<0.12"
 ipywidgets = ">=8.1.8,<9"
+llvm-openmp = ">=21.1.8,<22"
+compilers = ">=1.11.0,<2"
+cxx-compiler = ">=1.11.0,<2"
+cmake = ">=4.2.3,<5"
+ninja = ">=1.13.2,<2"
+
+[pypi-dependencies]
+philtorch = ">=0.2, <0.3"
