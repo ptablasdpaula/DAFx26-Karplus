@@ -1,11 +1,11 @@
 import torch
 from torch import Tensor as T
-from philtorch.lpv import fir
-from dsp import FS_MIN, LAGRANGE_ORDER, F0_MIN
+from philtorch.lpv import fir, allpole
+from dsp import FS_MIN, LAGRANGE_ORDER, RND_SEED, F0_MIN
 
 def no_dc_burst(
         burst_length: int,
-        seed: int = 42,
+        seed: int = RND_SEED,
         device: torch.device = None
 ) -> T:
     """
@@ -28,7 +28,7 @@ def diff_excitation_onset(
         signal_length: int,
         f0: T,
         fs: int = FS_MIN,
-        noise_seed: int = 42,
+        noise_seed: int = RND_SEED,
         training: bool = True,
         threshold: float = 0.5,
 ) -> tuple[T, T]:
@@ -205,3 +205,75 @@ def td_pluck_position_filter(
     L = fs / f0
     comb_L = L * position
     return td_all_zero_comb(x, comb_L, fs, lagrange_order)
+
+def compute_dynamics_R(
+        f0: T,
+        bw: T,
+        fs: int = FS_MIN
+) -> T:
+    """
+    Compute dynamics filter coefficient R for a given pitch and dynamic level.
+
+    :param f0: Fundamental frequency in Hz [B, N]
+    :param bw: Bandwidth (dynamic level) [B, N]
+    :param fs: Sample rate in Hz
+    :return: Filter coefficient R [B, N]
+    """
+    bw_scaled = bw * (fs / 2.0)
+    fm = torch.sqrt(torch.tensor(F0_MIN * (fs / 2.0), device=f0.device, dtype=f0.dtype))
+    Ts = 1.0 / fs
+
+    R_L = torch.exp(-bw_scaled * torch.pi * Ts)
+
+    # Compute G_L = (1 - R_L) / |1 - R_L * exp(-j * 2π * fm * Ts)|
+    exp_term = torch.exp(-1j * 2 * torch.pi * fm * Ts)
+    denominator = 1 - R_L * exp_term
+    G_L = (1 - R_L) / torch.abs(denominator)
+
+    # Left side: (1 - G_L² * cos(2π * f0 * Ts)) / (1 - G_L²)
+    cos_term = torch.cos(2 * torch.pi * f0 * Ts)
+    left_side_num = 1 - G_L ** 2 * cos_term
+    left_side_den = 1 - G_L ** 2
+    left_side = left_side_num / left_side_den
+
+    # Right side: 2 * G_L * sin(π * f0 * Ts) * sqrt(1 - G_L² * cos²(π * f0 * Ts)) / (1 - G_L²)
+    sin_term = torch.sin(torch.pi * f0 * Ts)
+    cos_half_term = torch.cos(torch.pi * f0 * Ts)
+    right_side_outside = 2 * G_L * sin_term
+    right_side_num = torch.sqrt(1 - G_L ** 2 * cos_half_term ** 2)
+    right_side_den = 1 - G_L ** 2
+    right_side = right_side_outside * (right_side_num / right_side_den)
+
+    # Choose R_plus or R_minus based on which has smaller absolute value
+    R_plus = left_side + right_side
+    R_minus = left_side - right_side
+
+    R = torch.where(torch.abs(R_plus) < 1.0, R_plus, R_minus)
+
+    return R
+
+
+def td_dynamics_filter(
+        x: T,
+        f0: T,
+        dynamic_level: T,
+        fs: int = FS_MIN
+) -> T:
+    """
+    Apply dynamics filter to excitation with time-varying dynamic level.
+
+    :param x: Input signal (excitation) [B, N]
+    :param f0: Fundamental frequency in Hz [B, N]
+    :param dynamic_level: Dynamic level parameter [B, N]
+                          0.0 = soft/dark (narrow bandwidth)
+                          1.0 = loud/bright (wide bandwidth)
+    :param fs: Sample rate in Hz
+    :return: Filtered excitation signal [B, N]
+    """
+    assert x.shape == f0.shape == dynamic_level.shape
+    assert torch.all((dynamic_level >= 0.0) & (dynamic_level <= 1.0))
+    R = compute_dynamics_R(f0, dynamic_level, fs)
+    x_eff = (1.0 - R) * x  # [B, N]
+    a = -R.unsqueeze(-1)  # [B, N, 1]
+    y = allpole(a, x_eff)
+    return y

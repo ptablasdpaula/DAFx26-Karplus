@@ -151,7 +151,7 @@ def compute_dynamics_R(
 
 
 @jit(nopython=True)
-def apply_dynamics(
+def dynamics_filter(
         x: npt.NDArray,
         f0: npt.NDArray,
         dynamic_level: npt.NDArray,
@@ -322,7 +322,7 @@ def oracle_physical_model(
     x = noise_burst_excitation(num_samples=num_samples, trigger_samples=trigger_samples, f0=f0, fs=fs, seed=random_seed)
     x *= burst_gain
     x = pluck_position_filter(x=x, f0=f0, position=pluck_position, fs=fs, lagrange_order=lagrange_order)
-    x = apply_dynamics(x=x, f0=f0, dynamic_level=dynamic_level, fs=fs)
+    x = dynamics_filter(x=x, f0=f0, dynamic_level=dynamic_level, fs=fs)
     return karplus_strong(x=x, f0=f0, a1=a1, g=decay, fs=fs, lagrange_order=lagrange_order)
 
 
