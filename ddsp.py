@@ -1,7 +1,8 @@
 import torch
 from torch import Tensor as T
 import torch.nn.functional as F
-from philtorch.lpv import fir, allpole, state_space
+from philtorch.lpv import fir, allpole
+from torchlpc import sample_wise_lpc
 from dsp import FS_MIN, LAGRANGE_ORDER, RND_SEED, F0_MIN
 
 def no_dc_burst(
@@ -308,8 +309,6 @@ def td_karplus_strong(
     """
     Time-varying Karplus-Strong with truncated IIR expansion.
     """
-    from torchlpc import sample_wise_lpc
-
     assert x.shape == f0.shape == a1.shape == g.shape
     B, N = x.shape
     K = iir_truncation
