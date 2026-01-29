@@ -1,6 +1,7 @@
 import torch
 from torch import Tensor as T
-from philtorch.lpv import fir, allpole
+import torch.nn.functional as F
+from philtorch.lpv import fir, allpole, state_space
 from dsp import FS_MIN, LAGRANGE_ORDER, RND_SEED, F0_MIN
 
 def no_dc_burst(
@@ -276,4 +277,106 @@ def td_dynamics_filter(
     x_eff = (1.0 - R) * x  # [B, N]
     a = -R.unsqueeze(-1)  # [B, N, 1]
     y = allpole(a, x_eff)
+    return y
+
+
+def one_pole_phase_delay(f0: T, a1: T, fs: int) -> T:
+    """
+    Compute phase delay of one-pole loop filter at fundamental frequency.
+    :param f0: Fundamental frequency in Hz [B, N]
+    :param a1: Loop filter pole coefficient [B, N]
+    :param fs: Sample rate in Hz
+    :return: Phase delay in samples [B, N]
+    """
+    omega0 = 2.0 * torch.pi * f0 / fs
+    denom_real = 1.0 - a1 * torch.cos(omega0)
+    denom_imag = a1 * torch.sin(omega0)
+    phase = torch.atan2(denom_imag, denom_real)
+    phase_delay = -phase / omega0
+    return phase_delay
+
+
+def td_karplus_strong(
+        x: T,
+        f0: T,
+        a1: T,
+        g: T,
+        fs: int = FS_MIN,
+        lagrange_order: int = LAGRANGE_ORDER,
+        iir_truncation: int = 20,
+) -> T:
+    """
+    Time-varying Karplus-Strong with truncated IIR expansion.
+
+    Uses b0[n] (not b0[n-k]) for IIR coefficients, which is correct for the
+    recursion: filter_state[n] = b0[n] * delayed_y[n] + a1[n] * filter_state[n-1]
+    """
+    from torchlpc import sample_wise_lpc
+
+    assert x.shape == f0.shape == a1.shape == g.shape
+    B, N = x.shape
+    K = iir_truncation
+
+    # Compute loop filter coefficients
+    b0 = g * (1.0 - a1)  # [B, N]
+
+    phase_delay = one_pole_phase_delay(f0, a1, fs)
+    L = fs / f0
+    L_corrected = L + phase_delay
+
+    # Get Lagrange coefficients
+    L_int, weights = lagrange_fractional_delay(L_corrected, lagrange_order)
+
+    # === Vectorized time-varying IIR coefficient computation ===
+
+    # Pad a1 at the start for boundary handling
+    a1_padded = F.pad(a1, (K - 1, 0), value=1.0)  # [B, N+K-1]
+
+    # Unfold to create sliding windows for a1
+    a1_windows = a1_padded.unfold(1, K, 1).flip(-1)  # [B, N, K]
+
+    # Compute cumulative products: prod(a1[n-i] for i in 0..k-1)
+    cumprods = torch.cumprod(a1_windows, dim=-1)  # [B, N, K]
+
+    # Prepend 1.0 for k=0 case (empty product)
+    cumprods_shifted = torch.cat([
+        torch.ones(B, N, 1, device=x.device, dtype=x.dtype),
+        cumprods[:, :, :-1]
+    ], dim=-1)  # [B, N, K]
+
+    # Compute IIR coefficients: b0[n] * prod(a1[n-i] for i in 0..k-1)
+    # Use b0[n], NOT b0[n-k]!
+    iir_coeffs = b0.unsqueeze(-1) * cumprods_shifted  # [B, N, K]
+
+    # === Vectorized convolution with Lagrange weights ===
+
+    L_len = lagrange_order + 1
+    total_len = L_len + K - 1
+
+    # Efficient convolution using broadcasting
+    weights_expanded = weights.unsqueeze(-1)  # [B, N, L_len, 1]
+    iir_coeffs_expanded = iir_coeffs.unsqueeze(2)  # [B, N, 1, K]
+    conv_product = weights_expanded * iir_coeffs_expanded  # [B, N, L_len, K]
+
+    # Sum along diagonals to get convolution
+    iir_expanded = torch.zeros(B, N, total_len, device=x.device, dtype=x.dtype)
+    for i in range(L_len):
+        iir_expanded[:, :, i:i + K] += conv_product[:, :, i, :]
+
+    # === Build coefficient matrix A ===
+
+    max_delay = int(L_int.max().item()) + total_len
+    A = torch.zeros(B, N, max_delay, device=x.device, dtype=x.dtype)
+
+    # Vectorized scattering
+    batch_idx = torch.arange(B, device=x.device)[:, None].expand(B, N)
+    time_idx = torch.arange(N, device=x.device)[None, :].expand(B, N)
+
+    for k in range(total_len):
+        delay_idx = (L_int + k).clamp(0, max_delay - 1)
+        A[batch_idx, time_idx, delay_idx] -= iir_expanded[..., k]
+
+    # Apply sample_wise_lpc
+    y = sample_wise_lpc(x, A)
+
     return y
