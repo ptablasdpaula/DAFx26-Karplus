@@ -307,9 +307,6 @@ def td_karplus_strong(
 ) -> T:
     """
     Time-varying Karplus-Strong with truncated IIR expansion.
-
-    Uses b0[n] (not b0[n-k]) for IIR coefficients, which is correct for the
-    recursion: filter_state[n] = b0[n] * delayed_y[n] + a1[n] * filter_state[n-1]
     """
     from torchlpc import sample_wise_lpc
 
@@ -329,11 +326,13 @@ def td_karplus_strong(
 
     # === Vectorized time-varying IIR coefficient computation ===
 
-    # Pad a1 at the start for boundary handling
+    # Pad a1 AND b0 at the start for boundary handling
     a1_padded = F.pad(a1, (K - 1, 0), value=1.0)  # [B, N+K-1]
+    b0_padded = F.pad(b0, (K - 1, 0), value=0.0)  # [B, N+K-1]
 
-    # Unfold to create sliding windows for a1
+    # Unfold to create sliding windows
     a1_windows = a1_padded.unfold(1, K, 1).flip(-1)  # [B, N, K]
+    b0_windows = b0_padded.unfold(1, K, 1).flip(-1)  # [B, N, K]
 
     # Compute cumulative products: prod(a1[n-i] for i in 0..k-1)
     cumprods = torch.cumprod(a1_windows, dim=-1)  # [B, N, K]
@@ -344,12 +343,9 @@ def td_karplus_strong(
         cumprods[:, :, :-1]
     ], dim=-1)  # [B, N, K]
 
-    # Compute IIR coefficients: b0[n] * prod(a1[n-i] for i in 0..k-1)
-    # Use b0[n], NOT b0[n-k]!
-    iir_coeffs = b0.unsqueeze(-1) * cumprods_shifted  # [B, N, K]
+    iir_coeffs = b0_windows * cumprods_shifted  # [B, N, K]
 
     # === Vectorized convolution with Lagrange weights ===
-
     L_len = lagrange_order + 1
     total_len = L_len + K - 1
 
@@ -364,7 +360,6 @@ def td_karplus_strong(
         iir_expanded[:, :, i:i + K] += conv_product[:, :, i, :]
 
     # === Build coefficient matrix A ===
-
     max_delay = int(L_int.max().item()) + total_len
     A = torch.zeros(B, N, max_delay, device=x.device, dtype=x.dtype)
 
@@ -373,7 +368,7 @@ def td_karplus_strong(
     time_idx = torch.arange(N, device=x.device)[None, :].expand(B, N)
 
     for k in range(total_len):
-        delay_idx = (L_int + k).clamp(0, max_delay - 1)
+        delay_idx = (L_int + k - 1).clamp(0, max_delay - 1)
         A[batch_idx, time_idx, delay_idx] -= iir_expanded[..., k]
 
     # Apply sample_wise_lpc
