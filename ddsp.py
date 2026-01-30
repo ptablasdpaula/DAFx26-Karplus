@@ -462,3 +462,94 @@ def td_physical_model(
         lagrange_order=lagrange_order,
         iir_truncation=iir_truncation
     )
+
+
+if __name__ == "__main__":
+    import torch
+
+    duration = 0.5
+    sample_rates = [16000, 32000, 44100]
+    num_frames = 100
+
+    # Default parameters
+    defaults = {
+        'f0': 220.0,
+        'pluck_position': 0.5,
+        'burst_gain': 0.5,
+        'dynamic_level': 0.5,
+        'a1': 0.5,
+        'decay': 0.995,
+    }
+
+    # Sweep ranges
+    sweeps = {
+        'f0': (55.0, 3520.0),
+        'pluck_position': (0.0, 1.0),
+        'burst_gain': (0.0, 1.0),
+        'dynamic_level': (0.0, 1.0),
+        'a1': (0.0, 1.0),
+        'decay': (0.0, 1.0),
+    }
+
+    all_passed = True
+    test_count = 0
+
+    for fs in sample_rates:
+        num_samples = int(fs * duration)
+
+        print(f"\n{'=' * 60}")
+        print(f"Testing at fs={fs}Hz, duration={duration}s ({num_samples} samples, {num_frames} frames)")
+        print(f"{'=' * 60}")
+
+        # Create onset probabilities (onsets at frames 0, 25, 50, 75)
+        onset_probs = torch.zeros(1, num_frames)
+        onset_probs[0, [0, 25, 50, 75]] = 1.0
+
+        # Test individual parameter sweeps
+        for param_name, (min_val, max_val) in sweeps.items():
+            # Create parameters dict with defaults
+            params = {k: torch.full((1, num_frames), v) for k, v in defaults.items()}
+
+            # Override one parameter with sweep
+            params[param_name] = torch.linspace(min_val, max_val, num_frames).unsqueeze(0)
+
+            y = td_physical_model(
+                onset_probs=onset_probs,
+                num_samples=num_samples,
+                fs=fs,
+                **params
+            )
+
+            if torch.isnan(y).any() or torch.isinf(y).any():
+                print(f"  FAIL: {param_name} sweep ({min_val}-{max_val})")
+                all_passed = False
+            else:
+                print(f"  PASS: {param_name} sweep ({min_val}-{max_val})")
+            test_count += 1
+
+        # Test all parameters sweeping simultaneously
+        params = {
+            k: torch.linspace(*v, num_frames).unsqueeze(0)
+            for k, v in sweeps.items()
+        }
+
+        y = td_physical_model(
+            onset_probs=onset_probs,
+            num_samples=num_samples,
+            fs=fs,
+            **params
+        )
+
+        if torch.isnan(y).any() or torch.isinf(y).any():
+            print(f"  FAIL: all parameters sweeping")
+            all_passed = False
+        else:
+            print(f"  PASS: all parameters sweeping")
+        test_count += 1
+
+    print(f"\n{'=' * 60}")
+    if all_passed:
+        print(f"✓ All {test_count} tests passed!")
+    else:
+        print(f"✗ Some tests failed")
+    print(f"{'=' * 60}")
