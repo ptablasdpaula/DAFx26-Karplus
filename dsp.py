@@ -35,7 +35,7 @@ def no_dc_burst(burst_length: int, seed: int=RND_SEED) -> npt.NDArray:
 
 def noise_burst_excitation(
         num_samples: int,
-        trigger_frames: npt.NDArray,  # Frame indices where onsets occur
+        trigger_frames: npt.NDArray,  # [num_frames] binary onset indicators (0 or 1)
         f0: npt.NDArray,  # [num_frames] frame-rate f0
         fs: int,
         seed: int = RND_SEED
@@ -44,7 +44,7 @@ def noise_burst_excitation(
     Create excitation with noise bursts at trigger frames.
 
     :param num_samples: Total length of output signal in samples
-    :param trigger_frames: Array of frame indices where onsets occur
+    :param trigger_frames: [num_frames] Binary array where 1 = onset, 0 = no onset
     :param f0: [num_frames] Fundamental frequencies in Hz at frame-rate
     :param fs: Sample rate in Hz
     :param seed: Random seed
@@ -54,16 +54,17 @@ def noise_burst_excitation(
     num_frames = len(f0)
     hop_length = num_samples / num_frames
 
-    for i in range(len(trigger_frames)):
-        frame_idx = int(trigger_frames[i])
-        if frame_idx >= num_frames:
+    for frame_idx in range(num_frames):
+        if trigger_frames[frame_idx] == 0:
             continue
+
         trigger_sample = int(frame_idx * hop_length)
         f0_at_trigger = f0[frame_idx]
         burst_length = int(fs / f0_at_trigger)
         end_sample = min(trigger_sample + burst_length, num_samples)
         burst_length = end_sample - trigger_sample
         excitation[trigger_sample:end_sample] = no_dc_burst(burst_length, seed=seed)
+
     return excitation
 
 
@@ -417,7 +418,8 @@ if __name__ == "__main__":
 
     for fs in sample_rates:
         signal_length = int(fs * duration)
-        trigger_frames = np.array([0, 25, 50, 75])
+        trigger_frames = np.zeros(num_frames)
+        trigger_frames[[0, 25, 50, 75]] = 1.0
 
         print(f"\n{'=' * 60}")
         print(f"Testing at fs={fs}Hz, duration={duration}s ({signal_length} samples, {num_frames} frames)")
