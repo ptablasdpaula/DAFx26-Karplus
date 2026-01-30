@@ -67,6 +67,42 @@ def noise_burst_excitation(
     return excitation
 
 
+def lagrange_coefficients(D: float, N: int = LAGRANGE_ORDER) -> npt.NDArray:
+    """
+    Compute Lagrange interpolation coefficients for fractional delay.
+
+    :param D: Desired fractional delay
+    :param N: Order of interpolation
+    :return: Coefficients h[0], h[1], ..., h[N]
+    """
+    h = np.zeros(N + 1)
+    for n in range(N + 1):
+        h_n = 1.0
+        for k in range(N + 1):
+            if k != n:
+                h_n *= (D - k) / (n - k)
+        h[n] = h_n
+    return h
+
+
+def lagrange_fractional_delay(L: float, N: int = LAGRANGE_ORDER) -> tuple[int, npt.NDArray]:
+    """
+    Compute Lagrange interpolation coefficients for a given delay.
+    Centers the fractional delay around N/2 for optimal frequency response.
+
+    :param L: Total desired delay in samples
+    :param N: Order of Lagrange filter
+    :return: (L_int, h) where L_int is integer delay and h are coefficients
+    """
+    offset = N // 2
+    L_adjusted = L - offset
+    L_int = int(np.floor(L_adjusted))
+    D = L_adjusted - L_int
+    D_centered = D + offset
+    h = lagrange_coefficients(D_centered, N)
+    return L_int, h
+
+
 def all_zero_comb(
         x: npt.NDArray,
         L: npt.NDArray,
@@ -223,42 +259,6 @@ def one_pole_phase_delay(f0: float, a1: float, fs: int) -> float:
     # Phase delay: τ = -φ(ω) / ω
     phase_delay = -phase / omega0
     return phase_delay
-
-
-def lagrange_coefficients(D: float, N: int = LAGRANGE_ORDER) -> npt.NDArray:
-    """
-    Compute Lagrange interpolation coefficients for fractional delay.
-
-    :param D: Desired fractional delay
-    :param N: Order of interpolation
-    :return: Coefficients h[0], h[1], ..., h[N]
-    """
-    h = np.zeros(N + 1)
-    for n in range(N + 1):
-        h_n = 1.0
-        for k in range(N + 1):
-            if k != n:
-                h_n *= (D - k) / (n - k)
-        h[n] = h_n
-    return h
-
-
-def lagrange_fractional_delay(L: float, N: int = LAGRANGE_ORDER) -> tuple[int, npt.NDArray]:
-    """
-    Compute Lagrange interpolation coefficients for a given delay.
-    Centers the fractional delay around N/2 for optimal frequency response.
-
-    :param L: Total desired delay in samples
-    :param N: Order of Lagrange filter
-    :return: (L_int, h) where L_int is integer delay and h are coefficients
-    """
-    offset = N // 2
-    L_adjusted = L - offset
-    L_int = int(np.floor(L_adjusted))
-    D = L_adjusted - L_int
-    D_centered = D + offset
-    h = lagrange_coefficients(D_centered, N)
-    return L_int, h
 
 
 def karplus_strong(
