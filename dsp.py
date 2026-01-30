@@ -1,4 +1,3 @@
-from numba import njit
 import numpy as np
 import numpy.typing as npt
 
@@ -7,54 +6,67 @@ F0_MIN = 20
 FS_MIN = 16000
 RND_SEED = 42
 
-@njit
-def linear_upsample(x: npt.NDArray, num_samples: int) -> npt.NDArray:
-    return np.interp(np.linspace(0, 1, num_samples),  # new x
-                     np.linspace(0, 1, len(x)),  # old x
-                     x)  # old y
+def upsample_frames_to_samples(
+        signal_length: int,
+        **frame_params: npt.NDArray
+) -> dict[str, npt.NDArray]:
+    """
+    Upsample multiple frame-rate parameters to sample-rate.
 
-@njit
-def no_dc_burst(
-        burst_length: int,
-        seed: int=RND_SEED
-) -> npt.NDArray:
-    np.random.seed(seed)  # Use old-style seed instead of default_rng
+    :param signal_length: Target signal length in samples
+    :param frame_params: Arbitrary number of [num_frames] arrays to upsample
+    :return: Dictionary of upsampled [num_samples] arrays with same keys
+    """
+    upsampled = {}
+    for key, array in frame_params.items():
+        upsampled[key] = np.interp(
+            np.linspace(0, 1, signal_length),
+            np.linspace(0, 1, len(array)),
+            array
+        )
+    return upsampled
+
+def no_dc_burst(burst_length: int, seed: int=RND_SEED) -> npt.NDArray:
+    np.random.seed(seed)
     burst = np.random.random(burst_length)
     burst = burst / np.max(burst)
     return (burst - 0.5) * 2
 
-@njit
+
 def noise_burst_excitation(
         num_samples: int,
-        trigger_samples: npt.NDArray,
-        f0: npt.NDArray,
+        trigger_frames: npt.NDArray,  # Frame indices where onsets occur
+        f0: npt.NDArray,  # [num_frames] frame-rate f0
         fs: int,
-        seed: int=RND_SEED
+        seed: int = RND_SEED
 ) -> npt.NDArray:
     """
-    Each trigger creates a noise burst with length equal to one period
-    of the fundamental frequency at that trigger point.
+    Create excitation with noise bursts at trigger frames.
 
     :param num_samples: Total length of output signal in samples
-    :param trigger_samples: Array of trigger sample indices
-    :param f0: Array of fundamental frequencies in Hz
+    :param trigger_frames: Array of frame indices where onsets occur
+    :param f0: [num_frames] Fundamental frequencies in Hz at frame-rate
     :param fs: Sample rate in Hz
-    :return: Excitation signal with noise bursts at trigger times
+    :param seed: Random seed
+    :return: Excitation signal [num_samples] with noise bursts at trigger times
     """
-    assert len(f0) == num_samples
     excitation = np.zeros(num_samples)
+    num_frames = len(f0)
+    hop_length = num_samples / num_frames
 
-    for i in range(len(trigger_samples)):
-        trigger_sample = int(trigger_samples[i])
-        assert trigger_sample <= num_samples
-        f0_at_trigger = f0[trigger_sample]
+    for i in range(len(trigger_frames)):
+        frame_idx = int(trigger_frames[i])
+        if frame_idx >= num_frames:
+            continue
+        trigger_sample = int(frame_idx * hop_length)
+        f0_at_trigger = f0[frame_idx]
         burst_length = int(fs / f0_at_trigger)
         end_sample = min(trigger_sample + burst_length, num_samples)
         burst_length = end_sample - trigger_sample
         excitation[trigger_sample:end_sample] = no_dc_burst(burst_length, seed=seed)
     return excitation
 
-@njit
+
 def all_zero_comb(
         x: npt.NDArray,
         L: npt.NDArray,
@@ -90,7 +102,7 @@ def all_zero_comb(
         write_idx = (write_idx + 1) % len(delay_buffer)
     return y
 
-@njit
+
 def pluck_position_filter(
         x: npt.NDArray,
         f0: npt.NDArray,
@@ -122,7 +134,7 @@ def pluck_position_filter(
     comb_L = L * position
     return all_zero_comb(x, comb_L, fs, lagrange_order)
 
-@njit
+
 def compute_dynamics_R(
         f0: float,
         bw: float,
@@ -150,7 +162,6 @@ def compute_dynamics_R(
     return R_plus if np.abs(R_plus) < 1 else R_minus
 
 
-@njit
 def dynamics_filter(
         x: npt.NDArray,
         f0: npt.NDArray,
@@ -190,7 +201,7 @@ def dynamics_filter(
 
     return y
 
-@njit
+
 def one_pole_phase_delay(f0: float, a1: float, fs: int) -> float:
     """
     Compute phase delay of one-pole loop filter at fundamental frequency.
@@ -214,7 +225,6 @@ def one_pole_phase_delay(f0: float, a1: float, fs: int) -> float:
     return phase_delay
 
 
-@njit
 def lagrange_coefficients(D: float, N: int = LAGRANGE_ORDER) -> npt.NDArray:
     """
     Compute Lagrange interpolation coefficients for fractional delay.
@@ -233,7 +243,6 @@ def lagrange_coefficients(D: float, N: int = LAGRANGE_ORDER) -> npt.NDArray:
     return h
 
 
-@njit
 def lagrange_fractional_delay(L: float, N: int = LAGRANGE_ORDER) -> tuple[int, npt.NDArray]:
     """
     Compute Lagrange interpolation coefficients for a given delay.
@@ -252,7 +261,6 @@ def lagrange_fractional_delay(L: float, N: int = LAGRANGE_ORDER) -> tuple[int, n
     return L_int, h
 
 
-@njit
 def karplus_strong(
         x: npt.NDArray,
         f0: npt.NDArray,
@@ -305,90 +313,155 @@ def karplus_strong(
         y[n] = output_sample
     return y
 
-@njit
+
 def oracle_physical_model(
+        trigger_frames: npt.NDArray,
+        f0: npt.NDArray,                # [num_frames]
+        pluck_position: npt.NDArray,    # [num_frames]
+        burst_gain: npt.NDArray,        # [num_frames]
+        dynamic_level: npt.NDArray,     # [num_frames]
+        a1: npt.NDArray,                # [num_frames]
+        decay: npt.NDArray,             # [num_frames]
         num_samples: int,
-        trigger_samples: npt.NDArray,
-        f0: npt.NDArray,
-        pluck_position: npt.NDArray,
-        burst_gain: npt.NDArray,
-        dynamic_level: npt.NDArray,
-        a1: npt.NDArray,
-        decay: npt.NDArray,
         fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER,
         random_seed: int = RND_SEED,
 ) -> npt.NDArray:
-    x = noise_burst_excitation(num_samples=num_samples, trigger_samples=trigger_samples, f0=f0, fs=fs, seed=random_seed)
-    x *= burst_gain
-    x = pluck_position_filter(x=x, f0=f0, position=pluck_position, fs=fs, lagrange_order=lagrange_order)
-    x = dynamics_filter(x=x, f0=f0, dynamic_level=dynamic_level, fs=fs)
-    return karplus_strong(x=x, f0=f0, a1=a1, g=decay, fs=fs, lagrange_order=lagrange_order)
+    """
+    Oracle physical model with frame-rate parameter inputs.
+
+    :param trigger_frames: Array of frame indices where onsets occur
+    :param f0: [num_frames] Fundamental frequency in Hz
+    :param pluck_position: [num_frames] Pluck position [0, 1]
+    :param burst_gain: [num_frames] Burst gain [0, 1]
+    :param dynamic_level: [num_frames] Dynamic level [0, 1]
+    :param a1: [num_frames] Filter coefficient [0, 1]
+    :param decay: [num_frames] Decay coefficient [0, 1]
+    :param num_samples: Total signal length in samples
+    :param fs: Sample rate in Hz
+    :param lagrange_order: Order of Lagrange interpolator
+    :param random_seed: Random seed for noise generation
+    :return: Synthesized audio [num_samples]
+    """
+    # Generate excitation using frame-rate f0
+    x = noise_burst_excitation(
+        num_samples=num_samples,
+        trigger_frames=trigger_frames,
+        f0=f0,
+        fs=fs,
+        seed=random_seed
+    )
+
+    # Upsample all parameters to sample-rate
+    p = upsample_frames_to_samples(
+        signal_length=num_samples,
+        f0=f0,
+        pluck_position=pluck_position,
+        burst_gain=burst_gain,
+        dynamic_level=dynamic_level,
+        a1=a1,
+        decay=decay
+    )
+
+    # Apply DSP chain at sample-rate
+    x = x * p['burst_gain']
+    x = pluck_position_filter(
+        x=x,
+        f0=p['f0'],
+        position=p['pluck_position'],
+        fs=fs,
+        lagrange_order=lagrange_order
+    )
+    x = dynamics_filter(
+        x=x,
+        f0=p['f0'],
+        dynamic_level=p['dynamic_level'],
+        fs=fs
+    )
+
+    return karplus_strong(
+        x=x,
+        f0=p['f0'],
+        a1=p['a1'],
+        g=p['decay'],
+        fs=fs,
+        lagrange_order=lagrange_order
+    )
 
 
 if __name__ == "__main__":
-    fs = FS_MIN
-    duration = 0.1
-    num_samples = int(fs * duration)
+    duration = 0.5
+    sample_rates = [16000, 32000, 44100]
+    num_frames = 100
 
-    # Test different f0 values
-    f0_values = [55.0, 110.0, 220.0, 440.0, 880.0, 1760.0, 3520.0]  # A1 to A7
+    defaults = {
+        'f0': 220.0,
+        'pluck_position': 0.5,
+        'burst_gain': 0.5,
+        'dynamic_level': 0.5,
+        'a1': 0.5,
+        'decay': 0.995,
+    }
 
-    # Edge case parameters (valid ranges only)
-    edge_cases = [
-        (0.0, 1.0),
-        (0.0, 0.0),
-        (1.0, 1.0),
-        (1.0, 0.0),
-    ]
+    sweeps = {
+        'f0': (55.0, 3520.0),
+        'pluck_position': (0.0, 1.0),
+        'burst_gain': (0.0, 1.0),
+        'dynamic_level': (0.0, 1.0),
+        'a1': (0.0, 1.0),
+        'decay': (0.0, 1.0),
+    }
 
     all_passed = True
+    test_count = 0
 
-    # Test 1: Edge cases with different f0 values
-    for target_f0 in f0_values:
-        for a1_val, g_val in edge_cases:
-            f0 = np.full(num_samples, target_f0)
-            a1 = np.full(num_samples, a1_val)
-            g = np.full(num_samples, g_val)
+    for fs in sample_rates:
+        signal_length = int(fs * duration)
+        trigger_frames = np.array([0, 25, 50, 75])
 
-            x = np.zeros(num_samples)
-            x[0] = 1.0
+        print(f"\n{'=' * 60}")
+        print(f"Testing at fs={fs}Hz, duration={duration}s ({signal_length} samples, {num_frames} frames)")
+        print(f"{'=' * 60}")
 
-            y = karplus_strong(x, f0, a1, g, fs)
+        # Test individual parameter sweeps
+        for param_name, (min_val, max_val) in sweeps.items():
+            params = {k: np.full(num_frames, v) for k, v in defaults.items()}
+            params[param_name] = np.linspace(min_val, max_val, num_frames)
+
+            y = oracle_physical_model(
+                trigger_frames=trigger_frames,
+                num_samples=signal_length,
+                fs=fs,
+                **params
+            )
 
             if np.isnan(y).any() or np.isinf(y).any():
-                print(f"FAIL: a1={a1_val}, g={g_val}, f0={target_f0:.1f}Hz")
+                print(f"  FAIL: {param_name} sweep ({min_val}-{max_val})")
                 all_passed = False
+            else:
+                print(f"  PASS: {param_name} sweep ({min_val}-{max_val})")
+            test_count += 1
 
-    # Test 2: Parameter sweeps
-    f0_min, f0_max = min(f0_values), max(f0_values)
-    a1_min, a1_max = min(a1 for a1, _ in edge_cases), max(a1 for a1, _ in edge_cases)
-    g_min, g_max = min(g for _, g in edge_cases), max(g for _, g in edge_cases)
+        # Test all parameters sweeping simultaneously
+        params = {k: np.linspace(*v, num_frames) for k, v in sweeps.items()}
 
-    sweep_tests = [
-        (np.linspace(f0_min, f0_max, num_samples),
-         np.linspace(a1_min, a1_max, num_samples),
-         np.linspace(g_min, g_max, num_samples),
-         f"f0 sweep ({f0_min:.0f}-{f0_max:.0f}Hz) with a1 sweep ({a1_min} to {a1_max}) and g sweep ({g_min} to {g_max})"),
-        (np.full(num_samples, f0_values[len(f0_values) // 2]),
-         np.linspace(a1_min, a1_max, num_samples),
-         np.full(num_samples, g_max),
-         f"a1 sweep ({a1_min} to {a1_max}) with f0={f0_values[len(f0_values) // 2]:.0f}Hz and g={g_max}"),
-        (np.linspace(f0_min, f0_max, num_samples),
-         np.full(num_samples, (a1_min + a1_max) / 2),
-         np.full(num_samples, (g_min + g_max) / 2),
-         f"f0 sweep ({f0_min:.0f}-{f0_max:.0f}Hz) with a1={(a1_min + a1_max) / 2} and g={(g_min + g_max) / 2}"),
-    ]
-
-    for f0_sweep, a1_sweep, g_sweep, description in sweep_tests:
-        x = np.zeros(num_samples)
-        x[0] = 1.0
-
-        y = karplus_strong(x, f0_sweep, a1_sweep, g_sweep, fs)
+        y = oracle_physical_model(
+            trigger_frames=trigger_frames,
+            num_samples=signal_length,
+            fs=fs,
+            **params
+        )
 
         if np.isnan(y).any() or np.isinf(y).any():
-            print(f"FAIL: {description}")
+            print(f"  FAIL: all parameters sweeping")
             all_passed = False
+        else:
+            print(f"  PASS: all parameters sweeping")
+        test_count += 1
 
+    print(f"\n{'=' * 60}")
     if all_passed:
-        print("All tests passed")
+        print(f"✓ All {test_count} tests passed!")
+    else:
+        print(f"✗ Some tests failed")
+    print(f"{'=' * 60}")
