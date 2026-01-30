@@ -1,4 +1,4 @@
-from numba import jit
+from numba import njit
 import numpy as np
 import numpy.typing as npt
 
@@ -7,13 +7,13 @@ F0_MIN = 20
 FS_MIN = 16000
 RND_SEED = 42
 
-@jit(nopython=True)
+@njit
 def linear_upsample(x: npt.NDArray, num_samples: int) -> npt.NDArray:
     return np.interp(np.linspace(0, 1, num_samples),  # new x
                      np.linspace(0, 1, len(x)),  # old x
                      x)  # old y
 
-@jit(nopython=True)
+@njit
 def no_dc_burst(
         burst_length: int,
         seed: int=RND_SEED
@@ -23,7 +23,7 @@ def no_dc_burst(
     burst = burst / np.max(burst)
     return (burst - 0.5) * 2
 
-@jit(nopython=True)
+@njit
 def noise_burst_excitation(
         num_samples: int,
         trigger_samples: npt.NDArray,
@@ -54,7 +54,7 @@ def noise_burst_excitation(
         excitation[trigger_sample:end_sample] = no_dc_burst(burst_length, seed=seed)
     return excitation
 
-@jit(nopython=True)
+@njit
 def all_zero_comb(
         x: npt.NDArray,
         L: npt.NDArray,
@@ -90,7 +90,7 @@ def all_zero_comb(
         write_idx = (write_idx + 1) % len(delay_buffer)
     return y
 
-@jit(nopython=True)
+@njit
 def pluck_position_filter(
         x: npt.NDArray,
         f0: npt.NDArray,
@@ -122,7 +122,7 @@ def pluck_position_filter(
     comb_L = L * position
     return all_zero_comb(x, comb_L, fs, lagrange_order)
 
-@jit(nopython=True)
+@njit
 def compute_dynamics_R(
         f0: float,
         bw: float,
@@ -150,7 +150,7 @@ def compute_dynamics_R(
     return R_plus if np.abs(R_plus) < 1 else R_minus
 
 
-@jit(nopython=True)
+@njit
 def dynamics_filter(
         x: npt.NDArray,
         f0: npt.NDArray,
@@ -190,7 +190,7 @@ def dynamics_filter(
 
     return y
 
-@jit(nopython=True)
+@njit
 def one_pole_phase_delay(f0: float, a1: float, fs: int) -> float:
     """
     Compute phase delay of one-pole loop filter at fundamental frequency.
@@ -214,7 +214,7 @@ def one_pole_phase_delay(f0: float, a1: float, fs: int) -> float:
     return phase_delay
 
 
-@jit(nopython=True)
+@njit
 def lagrange_coefficients(D: float, N: int = LAGRANGE_ORDER) -> npt.NDArray:
     """
     Compute Lagrange interpolation coefficients for fractional delay.
@@ -233,7 +233,7 @@ def lagrange_coefficients(D: float, N: int = LAGRANGE_ORDER) -> npt.NDArray:
     return h
 
 
-@jit(nopython=True)
+@njit
 def lagrange_fractional_delay(L: float, N: int = LAGRANGE_ORDER) -> tuple[int, npt.NDArray]:
     """
     Compute Lagrange interpolation coefficients for a given delay.
@@ -252,7 +252,7 @@ def lagrange_fractional_delay(L: float, N: int = LAGRANGE_ORDER) -> tuple[int, n
     return L_int, h
 
 
-@jit(nopython=True)
+@njit
 def karplus_strong(
         x: npt.NDArray,
         f0: npt.NDArray,
@@ -305,7 +305,7 @@ def karplus_strong(
         y[n] = output_sample
     return y
 
-@jit(nopython=True)
+@njit
 def oracle_physical_model(
         num_samples: int,
         trigger_samples: npt.NDArray,
