@@ -5,6 +5,32 @@ from philtorch.lpv import fir, allpole
 from torchlpc import sample_wise_lpc
 from dsp import FS_MIN, LAGRANGE_ORDER, RND_SEED, F0_MIN
 
+IIR_TRUNCATION = 20
+ONSET_THRESHOLD = 0.5
+
+def upsample_frames_to_samples(
+        signal_length: int,
+        mode: str = 'linear',
+        **frame_params: T
+) -> dict[str, T]:
+    """
+    Upsample multiple frame-rate parameters to sample-rate.
+
+    :param signal_length: Target signal length in samples
+    :param mode: Interpolation mode ('linear', 'nearest', etc.)
+    :param frame_params: Arbitrary number of [B, num_frames] tensors to upsample
+    :return: Dictionary of upsampled [B, num_samples] tensors with same keys
+    """
+    upsampled = {}
+    for key, tensor in frame_params.items():
+        upsampled[key] = F.interpolate(
+            tensor.unsqueeze(1),
+            size=signal_length,
+            mode=mode,
+            align_corners=False if mode == 'linear' else None
+        ).squeeze(1)
+    return upsampled
+
 def no_dc_burst(
         burst_length: int,
         seed: int = RND_SEED,
@@ -32,7 +58,7 @@ def diff_excitation_onset(
         fs: int = FS_MIN,
         noise_seed: int = RND_SEED,
         training: bool = True,
-        threshold: float = 0.5,
+        threshold: float = ONSET_THRESHOLD,
 ) -> tuple[T, T]:
     """
     Create excitation with per-frame onset decisions
@@ -44,7 +70,7 @@ def diff_excitation_onset(
     :param noise_seed: seed for deterministic noise generation
     :param training: if True, continuous gates [0,1]; if False, binary {0,1}
     :param threshold: threshold for binary gating at inference
-    :return excitation: [batch, signal_length]; noise burst excitation signal
+    :return excitation: [batch, num_samples]; noise burst excitation signal
     :return onset_gates: [batch, num_frames]; onset gates (continuous if training=True)
     """
     assert onset_probs.dim() == 2 == f0.dim()
@@ -304,7 +330,7 @@ def td_karplus_strong(
         g: T,
         fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER,
-        iir_truncation: int = 20,
+        iir_truncation: int = IIR_TRUNCATION,
 ) -> T:
     """
     Time-varying Karplus-Strong with truncated IIR expansion.
@@ -374,3 +400,65 @@ def td_karplus_strong(
     y = sample_wise_lpc(x, A)
 
     return y
+
+def td_physical_model(
+        onset_probs: T,     # [B, num_frames]
+        f0: T,              # [B, num_frames]
+        pluck_position: T,  # [B, num_frames]
+        burst_gain: T,      # [B, num_frames]
+        dynamic_level: T,   # [B, num_frames]
+        a1: T,              # [B, num_frames]
+        decay: T,           # [B, num_frames]
+        num_samples: int,
+        fs: int = FS_MIN,
+        lagrange_order: int = LAGRANGE_ORDER,
+        iir_truncation: int = IIR_TRUNCATION,
+        random_seed: int = RND_SEED,
+        training: bool = True,
+        onset_threshold: float = ONSET_THRESHOLD,
+) -> T:
+    x, _ = diff_excitation_onset(
+        onset_probs=onset_probs,
+        signal_length=num_samples,
+        f0=f0,
+        fs=fs,
+        noise_seed=random_seed,
+        training=training,
+        threshold=onset_threshold
+    )
+
+    p = upsample_frames_to_samples(
+        signal_length=num_samples,
+        mode='linear',
+        f0=f0,
+        pluck_position=pluck_position,
+        burst_gain=burst_gain,
+        dynamic_level=dynamic_level,
+        a1=a1,
+        decay=decay
+    )
+
+    x = x * p['burst_gain']
+    x = td_pluck_position_filter(
+        x=x,
+        f0=p['f0'],
+        position=p['pluck_position'],
+        fs=fs,
+        lagrange_order=lagrange_order
+    )
+    x = td_dynamics_filter(
+        x=x,
+        f0=p['f0'],
+        dynamic_level=p['dynamic_level'],
+        fs=fs
+    )
+
+    return td_karplus_strong(
+        x=x,
+        f0=p['f0'],
+        a1=p['a1'],
+        g=p['decay'],
+        fs=fs,
+        lagrange_order=lagrange_order,
+        iir_truncation=iir_truncation
+    )
