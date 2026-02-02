@@ -11,6 +11,8 @@ FS_MIN = 16000
 RND_SEED = 42
 IIR_TRUNCATION = 20
 ONSET_THRESHOLD = 0.5
+N_FFT = 2048
+HOP_LENGTH = N_FFT // 4
 
 class Implementation(Enum):
     LOOP = "loop"
@@ -21,27 +23,23 @@ class Implementation(Enum):
 #                           SHARED UTILITIES
 # =============================================================================
 
-def upsample_frames_to_samples(
+def lin_upsample(x: T, signal_length: int) -> T:
+    return F.interpolate(x.unsqueeze(1), size=signal_length, mode='linear', align_corners=False).squeeze(1)
+
+def lin_upsample_many(
         signal_length: int,
-        mode: str = 'linear',
         **frame_params: T
 ) -> dict[str, T]:
     """
     Upsample multiple frame-rate parameters to sample-rate.
 
     :param signal_length: Target signal length in samples
-    :param mode: Interpolation mode ('linear', 'nearest', etc.)
     :param frame_params: Arbitrary number of [B, num_frames] tensors to upsample
     :return: Dictionary of upsampled [B, num_samples] tensors with same keys
     """
     upsampled = {}
     for key, tensor in frame_params.items():
-        upsampled[key] = F.interpolate(
-            tensor.unsqueeze(1),
-            size=signal_length,
-            mode=mode,
-            align_corners=False if mode == 'linear' else None
-        ).squeeze(1)
+        upsampled[key] = lin_upsample(tensor, signal_length)
     return upsampled
 
 def no_dc_burst(
@@ -224,7 +222,9 @@ def pluck_position_filter(
         position: T,
         implementation: Implementation = Implementation.LOOP,
         fs: int = FS_MIN,
-        lagrange_order: int = LAGRANGE_ORDER
+        lagrange_order: int = LAGRANGE_ORDER,
+        n_fft: int = N_FFT,
+        hop_length: int = HOP_LENGTH,
 ) -> T:
     """
     Simulate pluck position using an all-zero comb filter as per section
@@ -334,7 +334,9 @@ def dynamics_filter(
         f0: T,
         dynamic_level: T,
         implementation: Implementation = Implementation.LOOP,
-        fs: int = FS_MIN
+        fs: int = FS_MIN,
+        n_fft: int = N_FFT,
+        hop_length: int = HOP_LENGTH,
 ) -> T:
     """
     Apply dynamics filter to excitation with time-varying dynamic level.
@@ -471,6 +473,8 @@ def karplus_strong(
         fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER,
         iir_truncation: int = IIR_TRUNCATION,
+        n_fft: int = N_FFT,
+        hop_length: int = HOP_LENGTH,
 ) -> T:
     """
     Karplus-Strong string synthesis with fractional delay and loop filtering.
@@ -501,16 +505,18 @@ def karplus_strong(
 # =============================================================================
 
 def physical_model(
-        onset_probs: T,
-        f0: T,
-        pluck_position: T,
-        burst_gain: T,
-        dynamic_level: T,
-        a1: T,
-        decay: T,
+        onset_probs: T,     # [B, num_frames]
+        f0: T,              # [B, num_frames]
+        pluck_position: T,  # [B, num_frames]
+        burst_gain: T,      # [B, num_frames]
+        dynamic_level: T,   # [B, num_frames]
+        a1: T,              # [B, num_frames]
+        decay: T,           # [B, num_frames]
         num_samples: int,
         implementation: Implementation = Implementation.LOOP,
         fs: int = FS_MIN,
+        n_fft: int = N_FFT,
+        hop_length: int = HOP_LENGTH,
         lagrange_order: int = LAGRANGE_ORDER,
         iir_truncation: int = IIR_TRUNCATION,
         random_seed: int = RND_SEED,
@@ -527,18 +533,19 @@ def physical_model(
         threshold=onset_threshold
     )
 
-    p = upsample_frames_to_samples(
-        signal_length=num_samples,
-        mode='linear',
-        f0=f0,
-        pluck_position=pluck_position,
-        burst_gain=burst_gain,
-        dynamic_level=dynamic_level,
-        a1=a1,
-        decay=decay
-    )
+    x = x * lin_upsample(burst_gain, num_samples)
 
-    x = x * p['burst_gain']
+    p = {
+        'f0': f0,
+        'pluck_position': pluck_position,
+        'burst_gain': burst_gain,
+        'dynamic_level': dynamic_level,
+        'a1': a1,
+        'decay': decay
+    }
+
+    if implementation != Implementation.FREQUENCY_SAMPLING:
+        p = lin_upsample_many(signal_length=num_samples, **p)
 
     x = pluck_position_filter(
         x=x,
@@ -546,6 +553,8 @@ def physical_model(
         position=p['pluck_position'],
         implementation=implementation,
         fs=fs,
+        n_fft=n_fft,
+        hop_length=hop_length,
         lagrange_order=lagrange_order
     )
 
@@ -554,7 +563,9 @@ def physical_model(
         f0=p['f0'],
         dynamic_level=p['dynamic_level'],
         implementation=implementation,
-        fs=fs
+        fs=fs,
+        n_fft=n_fft,
+        hop_length=hop_length
     )
 
     return karplus_strong(
@@ -564,6 +575,8 @@ def physical_model(
         g=p['decay'],
         implementation=implementation,
         fs=fs,
+        n_fft=n_fft,
+        hop_length=hop_length,
         lagrange_order=lagrange_order,
         iir_truncation=iir_truncation
     )
