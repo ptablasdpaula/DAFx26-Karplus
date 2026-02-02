@@ -3,10 +3,23 @@ from torch import Tensor as T
 import torch.nn.functional as F
 from philtorch.lpv import fir, allpole
 from torchlpc import sample_wise_lpc
-from dsp import FS_MIN, LAGRANGE_ORDER, RND_SEED, F0_MIN
+from enum import Enum
 
+LAGRANGE_ORDER = 5
+F0_MIN = 20
+FS_MIN = 16000
+RND_SEED = 42
 IIR_TRUNCATION = 20
 ONSET_THRESHOLD = 0.5
+
+class Implementation(Enum):
+    LOOP = "loop"
+    DIFFABLE_TIME_DOMAIN = "diff_td"
+    FREQUENCY_SAMPLING = "frequency_sampling"
+
+# =============================================================================
+#                           SHARED UTILITIES
+# =============================================================================
 
 def upsample_frames_to_samples(
         signal_length: int,
@@ -51,7 +64,7 @@ def no_dc_burst(
     burst = (burst - 0.5) * 2
     return burst
 
-def diff_excitation_onset(
+def excitation_onset(
         onset_probs: T,
         signal_length: int,
         f0: T,
@@ -99,9 +112,9 @@ def diff_excitation_onset(
     return excitation, onset_gates
 
 
-#================================================================================================
-#                   DIFFERENTIABLE TIME-DOMAIN
-#================================================================================================
+# =============================================================================
+#                           LAGRANGE INTERPOLATION
+# =============================================================================
 
 def lagrange_coefficients(D: T, N: int = LAGRANGE_ORDER) -> T:
     """
@@ -158,55 +171,60 @@ def lagrange_fractional_delay(
     h = lagrange_coefficients(D_centered, N)
     return L_int, h
 
-def td_all_zero_comb(
-        x: T,
-        L: T,
-        fs: int = FS_MIN,
-        lagrange_order: int = LAGRANGE_ORDER
-) -> T:
-    """
-    All-zero comb filter with time-varying fractional delay: y(n) = x(n) - x(n - L)
-    Uses Lagrange interpolation for fractional delays.
+# =============================================================================
+#                           PLUCK POSITION FILTER
+# =============================================================================
 
-    :param x: Input signal [B, N]
-    :param L: Delay in samples [B, N], can be fractional
-    :param fs: Sample rate (used to determine max buffer size)
-    :param lagrange_order: Order of Lagrange interpolator
-    :return: Filtered signal [B, N]
-    """
-    assert x.shape == L.shape
+def _loop_all_zero_comb(x: T, L: T, fs: int, lagrange_order: int) -> T:
+    B, N = x.shape
+    device, dtype = x.device, x.dtype
+
+    y = torch.zeros_like(x)
+    max_delay = int(fs / F0_MIN)
+    delay_buffer = torch.zeros(B, max_delay, device=device, dtype=dtype)
+    write_idx = 0
+
+    for n in range(N):
+        L_int, h = lagrange_fractional_delay(L[:, n:n+1], lagrange_order)
+        L_int = L_int.squeeze(-1)
+        h = h.squeeze(1)
+
+        delayed_sample = torch.zeros(B, device=device, dtype=dtype)
+        for k in range(lagrange_order + 1):
+            read_idx = (write_idx - L_int - k) % max_delay
+            for b in range(B):
+                delayed_sample[b] += h[b, k] * delay_buffer[b, read_idx[b]]
+
+        y[:, n] = x[:, n] - delayed_sample
+        delay_buffer[:, write_idx] = x[:, n]
+        write_idx = (write_idx + 1) % max_delay
+
+    return y
+
+def _diff_td_all_zero_comb(x: T, L: T, lagrange_order: int) -> T:
     B, N = x.shape
 
-    # Get integer and centered fractional delays
     L_int, h = lagrange_fractional_delay(L=L, N=lagrange_order)
-
-    # Determine filter length needed
     max_delay = int(L_int.max().item()) + lagrange_order + 1
-    M = max_delay
 
-    # Build FIR coefficient matrix [B, N, M + 1]
-    b = torch.zeros(B, N, M + 1, device=x.device, dtype=x.dtype)
-
-    # Set direct path: b[:, :, 0] = 1
+    b = torch.zeros(B, N, max_delay + 1, device=x.device, dtype=x.dtype)
     b[:, :, 0] = 1.0
 
-    # Scatter Lagrange weights at appropriate delays
-    # For each batch and time sample, place -h at positions [L_int, L_int+1, ..., L_int+lagrange_order]
     batch_idx = torch.arange(B, device=x.device)[:, None].expand(B, N)
     time_idx = torch.arange(N, device=x.device)[None, :].expand(B, N)
 
     for k in range(lagrange_order + 1):
-        delay_idx = (L_int + k)
+        delay_idx = L_int + k
         b[batch_idx, time_idx, delay_idx] -= h[:, :, k]
 
-    # Apply time-varying FIR filter
     return fir(b, x)
 
 
-def td_pluck_position_filter(
+def pluck_position_filter(
         x: T,
         f0: T,
         position: T,
+        implementation: Implementation = Implementation.LOOP,
         fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER
 ) -> T:
@@ -223,6 +241,7 @@ def td_pluck_position_filter(
     :param x: Input signal (excitation) [B, N]
     :param f0: Fundamental frequency in Hz [B, N]
     :param position: Pluck position as fraction of string length, range [0, 1] [B, N]
+    :param implementation: Type of computation to use: options are "loop", "diff_td" or "frequency_sampling"
     :param fs: Sample rate in Hz
     :param lagrange_order: Order of Lagrange interpolator
     :return: Filtered excitation signal [B, N]
@@ -232,7 +251,19 @@ def td_pluck_position_filter(
 
     L = fs / f0
     comb_L = L * position
-    return td_all_zero_comb(x, comb_L, fs, lagrange_order)
+
+    if implementation == Implementation.LOOP:
+        return _loop_all_zero_comb(x, comb_L, fs, lagrange_order)
+    elif implementation == Implementation.DIFFABLE_TIME_DOMAIN:
+        return _diff_td_all_zero_comb(x, comb_L, lagrange_order)
+    elif implementation == Implementation.FREQUENCY_SAMPLING:
+        raise NotImplementedError
+    else:
+        raise NotImplementedError
+
+# =============================================================================
+#                           DYNAMICS FILTER
+# =============================================================================
 
 def compute_dynamics_R(
         f0: T,
@@ -280,11 +311,31 @@ def compute_dynamics_R(
 
     return R
 
+def _loop_dynamics_filter(x: T, f0: T, dynamic_level: T, fs: int) -> T:
+    B, N = x.shape
+    device, dtype = x.device, x.dtype
 
-def td_dynamics_filter(
+    y = torch.zeros_like(x)
+    y_prev = torch.zeros(B, device=device, dtype=dtype)
+
+    for n in range(N):
+        R = compute_dynamics_R(f0[:, n], dynamic_level[:, n], fs)
+        y[:, n] = (1.0 - R) * x[:, n] + R * y_prev
+        y_prev = y[:, n].clone()
+
+    return y
+
+def _diff_td_dynamics_filter(x: T, f0: T, dynamic_level: T, fs: int) -> T:
+    R = compute_dynamics_R(f0, dynamic_level, fs)
+    x_eff = (1.0 - R) * x
+    a = -R.unsqueeze(-1)
+    return allpole(a, x_eff)
+
+def dynamics_filter(
         x: T,
         f0: T,
         dynamic_level: T,
+        implementation: Implementation = Implementation.LOOP,
         fs: int = FS_MIN
 ) -> T:
     """
@@ -292,20 +343,24 @@ def td_dynamics_filter(
 
     :param x: Input signal (excitation) [B, N]
     :param f0: Fundamental frequency in Hz [B, N]
-    :param dynamic_level: Dynamic level parameter [B, N]
-                          0.0 = soft/dark (narrow bandwidth)
-                          1.0 = loud/bright (wide bandwidth)
-    :param fs: Sample rate in Hz
-    :return: Filtered excitation signal [B, N]
+    :param dynamic_level: 0.0 = soft/dark, 1.0 = loud/bright
+    :param implementation: "loop" for sample-by-sample, "diff_td" for philtorch
     """
     assert x.shape == f0.shape == dynamic_level.shape
     assert torch.all((dynamic_level >= 0.0) & (dynamic_level <= 1.0))
-    R = compute_dynamics_R(f0, dynamic_level, fs)
-    x_eff = (1.0 - R) * x  # [B, N]
-    a = -R.unsqueeze(-1)  # [B, N, 1]
-    y = allpole(a, x_eff)
-    return y
 
+    if implementation == Implementation.LOOP:
+        return _loop_dynamics_filter(x, f0, dynamic_level, fs)
+    elif implementation == Implementation.DIFFABLE_TIME_DOMAIN:
+        return _diff_td_dynamics_filter(x, f0, dynamic_level, fs)
+    elif implementation == Implementation.FREQUENCY_SAMPLING:
+        raise NotImplementedError
+    else:
+        raise NotImplementedError
+
+# =============================================================================
+#                           KARPLUS-STRONG
+# =============================================================================
 
 def one_pole_phase_delay(f0: T, a1: T, fs: int) -> T:
     """
@@ -323,72 +378,84 @@ def one_pole_phase_delay(f0: T, a1: T, fs: int) -> T:
     return phase_delay
 
 
-def td_karplus_strong(
-        x: T,
-        f0: T,
-        a1: T,
-        g: T,
-        fs: int = FS_MIN,
-        lagrange_order: int = LAGRANGE_ORDER,
-        iir_truncation: int = IIR_TRUNCATION,
+def _loop_karplus_strong(x: T, f0: T, a1: T, g: T, fs: int, lagrange_order: int) -> T:
+    B, N = x.shape
+    device, dtype = x.device, x.dtype
+
+    y = torch.zeros_like(x)
+    L = fs / f0
+    max_delay = int(fs / F0_MIN)
+    delay_buffer = torch.zeros(B, max_delay, device=device, dtype=dtype)
+    filter_state = torch.zeros(B, device=device, dtype=dtype)
+    write_idx = 0
+
+    for n in range(N):
+        phase_delay = one_pole_phase_delay(f0[:, n], a1[:, n], fs)
+        L_corrected = L[:, n] + phase_delay
+
+        L_int, h = lagrange_fractional_delay(L_corrected.unsqueeze(-1), lagrange_order)
+        L_int = L_int.squeeze(-1)
+        h = h.squeeze(1)
+
+        delayed_sample = torch.zeros(B, device=device, dtype=dtype)
+        for k in range(lagrange_order + 1):
+            read_idx = (write_idx - L_int - k) % max_delay
+            for b in range(B):
+                delayed_sample[b] += h[b, k] * delay_buffer[b, read_idx[b]]
+
+        b0 = g[:, n] * (1.0 - a1[:, n])
+        filtered_sample = b0 * delayed_sample + a1[:, n] * filter_state
+        filter_state = filtered_sample.clone()
+
+        output_sample = x[:, n] + filtered_sample
+        delay_buffer[:, write_idx] = output_sample
+        write_idx = (write_idx + 1) % max_delay
+        y[:, n] = output_sample
+
+    return y
+
+
+def _diff_td_karplus_strong(
+        x: T, f0: T, a1: T, g: T, fs: int, lagrange_order: int, iir_truncation: int
 ) -> T:
-    """
-    Time-varying Karplus-Strong with truncated IIR expansion.
-    """
-    assert x.shape == f0.shape == a1.shape == g.shape
     B, N = x.shape
     K = iir_truncation
 
-    # Compute loop filter coefficients
-    b0 = g * (1.0 - a1)  # [B, N]
-
+    b0 = g * (1.0 - a1)
     phase_delay = one_pole_phase_delay(f0, a1, fs)
     L = fs / f0
     L_corrected = L + phase_delay
 
-    # Get Lagrange coefficients
     L_int, weights = lagrange_fractional_delay(L_corrected, lagrange_order)
 
-    # === Vectorized time-varying IIR coefficient computation ===
+    a1_padded = F.pad(a1, (K - 1, 0), value=1.0)
+    b0_padded = F.pad(b0, (K - 1, 0), value=0.0)
 
-    # Pad a1 AND b0 at the start for boundary handling
-    a1_padded = F.pad(a1, (K - 1, 0), value=1.0)  # [B, N+K-1]
-    b0_padded = F.pad(b0, (K - 1, 0), value=0.0)  # [B, N+K-1]
+    a1_windows = a1_padded.unfold(1, K, 1).flip(-1)
+    b0_windows = b0_padded.unfold(1, K, 1).flip(-1)
 
-    # Unfold to create sliding windows
-    a1_windows = a1_padded.unfold(1, K, 1).flip(-1)  # [B, N, K]
-    b0_windows = b0_padded.unfold(1, K, 1).flip(-1)  # [B, N, K]
-
-    # Compute cumulative products: prod(a1[n-i] for i in 0..k-1)
-    cumprods = torch.cumprod(a1_windows, dim=-1)  # [B, N, K]
-
-    # Prepend 1.0 for k=0 case (empty product)
+    cumprods = torch.cumprod(a1_windows, dim=-1)
     cumprods_shifted = torch.cat([
         torch.ones(B, N, 1, device=x.device, dtype=x.dtype),
         cumprods[:, :, :-1]
-    ], dim=-1)  # [B, N, K]
+    ], dim=-1)
 
-    iir_coeffs = b0_windows * cumprods_shifted  # [B, N, K]
+    iir_coeffs = b0_windows * cumprods_shifted
 
-    # === Vectorized convolution with Lagrange weights ===
     L_len = lagrange_order + 1
     total_len = L_len + K - 1
 
-    # Efficient convolution using broadcasting
-    weights_expanded = weights.unsqueeze(-1)  # [B, N, L_len, 1]
-    iir_coeffs_expanded = iir_coeffs.unsqueeze(2)  # [B, N, 1, K]
-    conv_product = weights_expanded * iir_coeffs_expanded  # [B, N, L_len, K]
+    weights_expanded = weights.unsqueeze(-1)
+    iir_coeffs_expanded = iir_coeffs.unsqueeze(2)
+    conv_product = weights_expanded * iir_coeffs_expanded
 
-    # Sum along diagonals to get convolution
     iir_expanded = torch.zeros(B, N, total_len, device=x.device, dtype=x.dtype)
     for i in range(L_len):
         iir_expanded[:, :, i:i + K] += conv_product[:, :, i, :]
 
-    # === Build coefficient matrix A ===
     max_delay = int(L_int.max().item()) + total_len
     A = torch.zeros(B, N, max_delay, device=x.device, dtype=x.dtype)
 
-    # Vectorized scattering
     batch_idx = torch.arange(B, device=x.device)[:, None].expand(B, N)
     time_idx = torch.arange(N, device=x.device)[None, :].expand(B, N)
 
@@ -396,20 +463,58 @@ def td_karplus_strong(
         delay_idx = (L_int + k - 1).clamp(0, max_delay - 1)
         A[batch_idx, time_idx, delay_idx] -= iir_expanded[..., k]
 
-    # Apply sample_wise_lpc
-    y = sample_wise_lpc(x, A)
+    return sample_wise_lpc(x, A)
 
-    return y
 
-def td_physical_model(
-        onset_probs: T,     # [B, num_frames]
-        f0: T,              # [B, num_frames]
-        pluck_position: T,  # [B, num_frames]
-        burst_gain: T,      # [B, num_frames]
-        dynamic_level: T,   # [B, num_frames]
-        a1: T,              # [B, num_frames]
-        decay: T,           # [B, num_frames]
+def karplus_strong(
+        x: T,
+        f0: T,
+        a1: T,
+        g: T,
+        implementation: Implementation = Implementation.LOOP,
+        fs: int = FS_MIN,
+        lagrange_order: int = LAGRANGE_ORDER,
+        iir_truncation: int = IIR_TRUNCATION,
+) -> T:
+    """
+    Karplus-Strong string synthesis with fractional delay and loop filtering.
+
+    :param x: Input signal
+    :param f0: Fundamental Frequency (Hz)
+    :param a1: Coefficient Value of DC normalised, first-order IIR loop-filter
+    :param implementation: Implementation.LOOP for sample-by-sample, 
+                           Implementation.DIFFABLE_TIME_DOMAIN for torchlpc
+    :param fs: Sampling frequency
+    :param lagrange_order: Lagrange order
+    :param iir_truncation: IIR truncation of loop filter (DIFFABLE_TIME_DOMAIN only)
+    """
+    assert x.shape == f0.shape == a1.shape == g.shape
+    assert torch.all((a1 >= 0.0) & (a1 <= 1.0))
+    assert torch.all((g >= 0.0) & (g <= 1.0))
+
+    if implementation == Implementation.LOOP:
+        return _loop_karplus_strong(x, f0, a1, g, fs, lagrange_order)
+    elif implementation == Implementation.DIFFABLE_TIME_DOMAIN:
+        return _diff_td_karplus_strong(x, f0, a1, g, fs, lagrange_order, iir_truncation)
+    elif implementation == Implementation.FREQUENCY_SAMPLING:
+        raise NotImplementedError
+    else:
+        raise NotImplementedError
+
+# =============================================================================
+#                           PHYSICAL MODEL
+# =============================================================================
+
+def physical_model(
+        onset_probs: T,
+        f0: T,
+        pluck_position: T,
+        burst_gain: T,
+        dynamic_level: T,
+        a1: T,
+        decay: T,
         num_samples: int,
+        implementation: Implementation = Implementation.LOOP,
         fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER,
         iir_truncation: int = IIR_TRUNCATION,
@@ -417,7 +522,7 @@ def td_physical_model(
         training: bool = True,
         onset_threshold: float = ONSET_THRESHOLD,
 ) -> T:
-    x, _ = diff_excitation_onset(
+    x, _ = excitation_onset(
         onset_probs=onset_probs,
         signal_length=num_samples,
         f0=f0,
@@ -439,39 +544,46 @@ def td_physical_model(
     )
 
     x = x * p['burst_gain']
-    x = td_pluck_position_filter(
+
+    x = pluck_position_filter(
         x=x,
         f0=p['f0'],
         position=p['pluck_position'],
+        implementation=implementation,
         fs=fs,
         lagrange_order=lagrange_order
     )
-    x = td_dynamics_filter(
+
+    x = dynamics_filter(
         x=x,
         f0=p['f0'],
         dynamic_level=p['dynamic_level'],
+        implementation=implementation,
         fs=fs
     )
 
-    return td_karplus_strong(
+    return karplus_strong(
         x=x,
         f0=p['f0'],
         a1=p['a1'],
         g=p['decay'],
+        implementation=implementation,
         fs=fs,
         lagrange_order=lagrange_order,
         iir_truncation=iir_truncation
     )
 
 
-if __name__ == "__main__":
-    import torch
 
-    duration = 0.5
+# =============================================================================
+#                           TESTS
+# =============================================================================
+
+if __name__ == "__main__":
+    duration = 1
     sample_rates = [16000, 32000, 44100]
     num_frames = 100
 
-    # Default parameters
     defaults = {
         'f0': 220.0,
         'pluck_position': 0.5,
@@ -481,7 +593,6 @@ if __name__ == "__main__":
         'decay': 0.995,
     }
 
-    # Sweep ranges
     sweeps = {
         'f0': (55.0, 3520.0),
         'pluck_position': (0.0, 1.0),
@@ -494,62 +605,53 @@ if __name__ == "__main__":
     all_passed = True
     test_count = 0
 
-    for fs in sample_rates:
-        num_samples = int(fs * duration)
+    for impl in [Implementation.LOOP, Implementation.DIFFABLE_TIME_DOMAIN]:
+        for fs in sample_rates:
+            num_samples = int(fs * duration)
 
-        print(f"\n{'=' * 60}")
-        print(f"Testing at fs={fs}Hz, duration={duration}s ({num_samples} samples, {num_frames} frames)")
-        print(f"{'=' * 60}")
+            print(f"\n{'=' * 60}")
+            print(f"Testing [{impl}] at fs={fs}Hz ({num_samples} samples)")
+            print(f"{'=' * 60}")
 
-        # Create onset probabilities (onsets at frames 0, 25, 50, 75)
-        onset_probs = torch.zeros(1, num_frames)
-        onset_probs[0, [0, 25, 50, 75]] = 1.0
+            onset_probs = torch.zeros(1, num_frames)
+            onset_probs[0, [0, 25, 50, 75]] = 1.0
 
-        # Test individual parameter sweeps
-        for param_name, (min_val, max_val) in sweeps.items():
-            # Create parameters dict with defaults
-            params = {k: torch.full((1, num_frames), v) for k, v in defaults.items()}
+            for param_name, (min_val, max_val) in sweeps.items():
+                params = {k: torch.full((1, num_frames), v) for k, v in defaults.items()}
+                params[param_name] = torch.linspace(min_val, max_val, num_frames).unsqueeze(0)
 
-            # Override one parameter with sweep
-            params[param_name] = torch.linspace(min_val, max_val, num_frames).unsqueeze(0)
+                y = physical_model(
+                    onset_probs=onset_probs,
+                    num_samples=num_samples,
+                    implementation=impl,
+                    fs=fs,
+                    **params
+                )
 
-            y = td_physical_model(
+                if torch.isnan(y).any() or torch.isinf(y).any():
+                    print(f"  FAIL: {param_name} sweep")
+                    all_passed = False
+                else:
+                    print(f"  PASS: {param_name} sweep")
+                test_count += 1
+
+            # All params sweeping
+            params = {k: torch.linspace(*v, num_frames).unsqueeze(0) for k, v in sweeps.items()}
+            y = physical_model(
                 onset_probs=onset_probs,
                 num_samples=num_samples,
+                implementation=impl,
                 fs=fs,
                 **params
             )
 
             if torch.isnan(y).any() or torch.isinf(y).any():
-                print(f"  FAIL: {param_name} sweep ({min_val}-{max_val})")
+                print(f"  FAIL: all parameters sweeping")
                 all_passed = False
             else:
-                print(f"  PASS: {param_name} sweep ({min_val}-{max_val})")
+                print(f"  PASS: all parameters sweeping")
             test_count += 1
 
-        # Test all parameters sweeping simultaneously
-        params = {
-            k: torch.linspace(*v, num_frames).unsqueeze(0)
-            for k, v in sweeps.items()
-        }
-
-        y = td_physical_model(
-            onset_probs=onset_probs,
-            num_samples=num_samples,
-            fs=fs,
-            **params
-        )
-
-        if torch.isnan(y).any() or torch.isinf(y).any():
-            print(f"  FAIL: all parameters sweeping")
-            all_passed = False
-        else:
-            print(f"  PASS: all parameters sweeping")
-        test_count += 1
-
     print(f"\n{'=' * 60}")
-    if all_passed:
-        print(f"✓ All {test_count} tests passed!")
-    else:
-        print(f"✗ Some tests failed")
+    print(f"✓ All {test_count} tests passed!" if all_passed else "✗ Some tests failed")
     print(f"{'=' * 60}")
