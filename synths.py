@@ -184,16 +184,14 @@ def _loop_all_zero_comb(x: T, L: T, lagrange_order: int) -> T:
     delay_buffer = torch.zeros(B, max_delay, device=device, dtype=dtype)
     write_idx = 0
 
-    for n in range(N):
-        L_int, h = lagrange_fractional_delay(L[:, n:n+1], lagrange_order)
-        L_int = L_int.squeeze(-1)
-        h = h.squeeze(1)
+    L_int, h = lagrange_fractional_delay(L, lagrange_order)  # [B, N] and [B, N, lagrange_order+1]
+    batch_indices = torch.arange(B, device=device)
 
+    for n in range(N):
         delayed_sample = torch.zeros(B, device=device, dtype=dtype)
         for k in range(lagrange_order + 1):
-            read_idx = (write_idx - L_int - k) % max_delay
-            for b in range(B):
-                delayed_sample[b] += h[b, k] * delay_buffer[b, read_idx[b]]
+            read_idx = (write_idx - L_int[:, n] - k) % max_delay
+            delayed_sample += h[:, n, k] * delay_buffer[batch_indices, read_idx]
 
         y[:, n] = x[:, n] - delayed_sample
         delay_buffer[:, write_idx] = x[:, n]
@@ -392,16 +390,14 @@ def _loop_karplus_strong(x: T, f0: T, a1: T, g: T, fs: int, lagrange_order: int)
     filter_state = torch.zeros(B, device=device, dtype=dtype)
     write_idx = 0
 
-    for n in range(N):
-        L_int, h = lagrange_fractional_delay(L_corrected[:, n:n + 1], lagrange_order)
-        L_int = L_int.squeeze(-1)
-        h = h.squeeze(1)
+    L_int, h = lagrange_fractional_delay(L_corrected, lagrange_order)  # [B, N] and [B, N, lagrange_order+1]
+    batch_indices = torch.arange(B, device=device)  # Pre-compute
 
+    for n in range(N):
         delayed_sample = torch.zeros(B, device=device, dtype=dtype)
         for k in range(lagrange_order + 1):
-            read_idx = (write_idx - L_int - k) % max_delay
-            for b in range(B):
-                delayed_sample[b] += h[b, k] * delay_buffer[b, read_idx[b]]
+            read_idx = (write_idx - L_int[:, n] - k) % max_delay
+            delayed_sample += h[:, n, k] * delay_buffer[batch_indices, read_idx]
 
         b0 = g[:, n] * (1.0 - a1[:, n])
         filtered_sample = b0 * delayed_sample + a1[:, n] * filter_state
