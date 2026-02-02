@@ -175,7 +175,7 @@ def lagrange_fractional_delay(
 #                           PLUCK POSITION FILTER
 # =============================================================================
 
-def _loop_all_zero_comb(x: T, L: T, fs: int, lagrange_order: int) -> T:
+def _loop_all_zero_comb(x: T, L: T, lagrange_order: int) -> T:
     B, N = x.shape
     device, dtype = x.device, x.dtype
 
@@ -253,7 +253,7 @@ def pluck_position_filter(
     comb_L = 1.0 + position * (L - 1)
 
     if implementation == Implementation.LOOP:
-        return _loop_all_zero_comb(x, comb_L, fs, lagrange_order)
+        return _loop_all_zero_comb(x, comb_L, lagrange_order)
     elif implementation == Implementation.DIFFABLE_TIME_DOMAIN:
         return _diff_td_all_zero_comb(x, comb_L, lagrange_order)
     elif implementation == Implementation.FREQUENCY_SAMPLING:
@@ -384,16 +384,16 @@ def _loop_karplus_strong(x: T, f0: T, a1: T, g: T, fs: int, lagrange_order: int)
 
     y = torch.zeros_like(x)
     L = fs / f0
-    max_delay = int(fs / F0_MIN)
+    phase_delay = one_pole_phase_delay(f0, a1, fs)
+    L_corrected = L + phase_delay
+
+    max_delay = int(L_corrected.max().item()) + lagrange_order + 1
     delay_buffer = torch.zeros(B, max_delay, device=device, dtype=dtype)
     filter_state = torch.zeros(B, device=device, dtype=dtype)
     write_idx = 0
 
     for n in range(N):
-        phase_delay = one_pole_phase_delay(f0[:, n], a1[:, n], fs)
-        L_corrected = L[:, n] + phase_delay
-
-        L_int, h = lagrange_fractional_delay(L_corrected.unsqueeze(-1), lagrange_order)
+        L_int, h = lagrange_fractional_delay(L_corrected[:, n:n + 1], lagrange_order)
         L_int = L_int.squeeze(-1)
         h = h.squeeze(1)
 
