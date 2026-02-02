@@ -241,7 +241,7 @@ def pluck_position_filter(
     :param x: Input signal (excitation) [B, N]
     :param f0: Fundamental frequency in Hz [B, N]
     :param position: Pluck position as fraction of string length, range [0, 1] [B, N]
-    :param implementation: Type of computation to use: options are "loop", "diff_td" or "frequency_sampling"
+    :param implementation: Implementation.LOOP, Implementation.DIFFABLE_TIME_DOMAIN, Implementation.FREQUENCY_SAMPLING
     :param fs: Sample rate in Hz
     :param lagrange_order: Order of Lagrange interpolator
     :return: Filtered excitation signal [B, N]
@@ -344,7 +344,7 @@ def dynamics_filter(
     :param x: Input signal (excitation) [B, N]
     :param f0: Fundamental frequency in Hz [B, N]
     :param dynamic_level: 0.0 = soft/dark, 1.0 = loud/bright
-    :param implementation: "loop" for sample-by-sample, "diff_td" for philtorch
+    :param implementation: Implementation.LOOP, Implementation.DIFFABLE_TIME_DOMAIN, Implementation.FREQUENCY_SAMPLING
     """
     assert x.shape == f0.shape == dynamic_level.shape
     assert torch.all((dynamic_level >= 0.0) & (dynamic_level <= 1.0))
@@ -482,8 +482,7 @@ def karplus_strong(
     :param x: Input signal
     :param f0: Fundamental Frequency (Hz)
     :param a1: Coefficient Value of DC normalised, first-order IIR loop-filter
-    :param implementation: Implementation.LOOP for sample-by-sample, 
-                           Implementation.DIFFABLE_TIME_DOMAIN for torchlpc
+    :param implementation: Implementation.LOOP, Implementation.DIFFABLE_TIME_DOMAIN, Implementation.FREQUENCY_SAMPLING
     :param fs: Sampling frequency
     :param lagrange_order: Lagrange order
     :param iir_truncation: IIR truncation of loop filter (DIFFABLE_TIME_DOMAIN only)
