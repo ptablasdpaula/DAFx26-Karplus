@@ -180,7 +180,7 @@ def _loop_all_zero_comb(x: T, L: T, fs: int, lagrange_order: int) -> T:
     device, dtype = x.device, x.dtype
 
     y = torch.zeros_like(x)
-    max_delay = int(fs / F0_MIN)
+    max_delay = int(L.max().item()) + lagrange_order + 1
     delay_buffer = torch.zeros(B, max_delay, device=device, dtype=dtype)
     write_idx = 0
 
@@ -205,7 +205,7 @@ def _diff_td_all_zero_comb(x: T, L: T, lagrange_order: int) -> T:
     B, N = x.shape
 
     L_int, h = lagrange_fractional_delay(L=L, N=lagrange_order)
-    max_delay = int(L_int.max().item()) + lagrange_order + 1
+    max_delay = int(L.max().item()) + lagrange_order + 1
 
     b = torch.zeros(B, N, max_delay + 1, device=x.device, dtype=x.dtype)
     b[:, :, 0] = 1.0
@@ -250,7 +250,7 @@ def pluck_position_filter(
     assert torch.all((position >= 0.0) & (position <= 1.0))
 
     L = fs / f0
-    comb_L = L * position
+    comb_L = 1.0 + position * (L - 1)
 
     if implementation == Implementation.LOOP:
         return _loop_all_zero_comb(x, comb_L, fs, lagrange_order)
