@@ -23,10 +23,10 @@ class Implementation(Enum):
 #                           SHARED UTILITIES
 # =============================================================================
 
-def lin_upsample(x: T, signal_length: int) -> T:
+def lin_resample(x: T, signal_length: int) -> T:
     return F.interpolate(x.unsqueeze(1), size=signal_length, mode='linear', align_corners=False).squeeze(1)
 
-def lin_upsample_many(
+def lin_resample_many(
         signal_length: int,
         **frame_params: T
 ) -> dict[str, T]:
@@ -39,7 +39,7 @@ def lin_upsample_many(
     """
     upsampled = {}
     for key, tensor in frame_params.items():
-        upsampled[key] = lin_upsample(tensor, signal_length)
+        upsampled[key] = lin_resample(tensor, signal_length)
     return upsampled
 
 def no_dc_burst(
@@ -533,7 +533,7 @@ def physical_model(
         threshold=onset_threshold
     )
 
-    x = x * lin_upsample(burst_gain, num_samples)
+    x = x * lin_resample(burst_gain, num_samples)
 
     p = {
         'f0': f0,
