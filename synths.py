@@ -12,7 +12,6 @@ RND_SEED = 42
 IIR_TRUNCATION = 20
 ONSET_THRESHOLD = 0.5
 N_FFT = 2048
-HOP_LENGTH = N_FFT // 4
 
 class Implementation(Enum):
     LOOP = "loop"
@@ -216,6 +215,19 @@ def _diff_td_all_zero_comb(x: T, L: T, lagrange_order: int) -> T:
     return fir(b, x)
 
 
+def freq_all_zero_comb(
+        X: T,
+        comb_L: T,  # [B, num_frames]
+        n_fft: int = N_FFT,
+) -> T:
+    bins = torch.arange(0, n_fft // 2 + 1, device=X.device).view(1, 1, -1)
+    angle = -torch.pi * comb_L.unsqueeze(-1) / (n_fft / 2)
+    mod_sig = torch.polar(torch.ones_like(angle), angle)
+    z_L = mod_sig ** bins
+    H = 1.0 - z_L
+    return X * H
+
+
 def pluck_position_filter(
         x: T,
         f0: T,
@@ -224,7 +236,6 @@ def pluck_position_filter(
         fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER,
         n_fft: int = N_FFT,
-        hop_length: int = HOP_LENGTH,
 ) -> T:
     """
     Simulate pluck position using an all-zero comb filter as per section
@@ -244,7 +255,12 @@ def pluck_position_filter(
     :param lagrange_order: Order of Lagrange interpolator
     :return: Filtered excitation signal [B, N]
     """
-    assert x.shape == f0.shape == position.shape
+    if implementation == Implementation.FREQUENCY_SAMPLING:
+        assert x.ndim == 3 and f0.ndim == 2 and position.ndim == 2
+        assert x.shape[:2] == f0.shape == position.shape
+    else:
+        assert x.shape == f0.shape == position.shape
+
     assert torch.all((position >= 0.0) & (position <= 1.0))
 
     L = fs / f0
@@ -255,7 +271,7 @@ def pluck_position_filter(
     elif implementation == Implementation.DIFFABLE_TIME_DOMAIN:
         return _diff_td_all_zero_comb(x, comb_L, lagrange_order)
     elif implementation == Implementation.FREQUENCY_SAMPLING:
-        raise NotImplementedError
+        return freq_all_zero_comb(x, comb_L, n_fft)
     else:
         raise NotImplementedError
 
