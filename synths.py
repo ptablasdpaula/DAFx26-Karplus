@@ -172,6 +172,7 @@ def lagrange_fractional_delay(
 #                           PLUCK POSITION FILTER
 # =============================================================================
 
+#TODO: Use Numba Instead
 def _loop_all_zero_comb(x: T, L: T, lagrange_order: int) -> T:
     B, N = x.shape
     device, dtype = x.device, x.dtype
@@ -325,6 +326,7 @@ def compute_dynamics_R(
 
     return R
 
+#TODO: Use Numba Instead
 def _loop_dynamics_filter(x: T, R: T) -> T:
     B, N = x.shape
     device, dtype = x.device, x.dtype
@@ -421,7 +423,7 @@ def one_pole_phase_delay(f0: T, a1: T, fs: int) -> T:
     phase_delay = -phase / omega0
     return phase_delay
 
-
+#TODO: Use Numba Instead
 def _loop_karplus_strong(x: T, L: T, a1: T, g: T, lagrange_order: int) -> T:
     B, N = x.shape
     device, dtype = x.device, x.dtype
@@ -588,6 +590,7 @@ def karplus_strong(
 #                           PHYSICAL MODEL
 # =============================================================================
 
+#TODO: Make class with modular components (fs pluck filter + td dynamic filter, etc...)
 def physical_model(
         onset_probs: T,     # [B, num_frames]
         f0: T,              # [B, num_frames]
@@ -627,12 +630,13 @@ def physical_model(
         'decay': decay
     }
 
+    # TODO: Transformations should happen dynamically depending on which is the next module
     if implementation == Implementation.FREQUENCY_SAMPLING:
         if hop_length is None:
-            hop_length = n_fft // 4  # 75% overlap
+            hop_length = n_fft // 4  # 75% overlap TODO: find out best-performing overlap
 
         device = x.device
-        window = torch.ones(n_fft, device=device)
+        window = torch.ones(n_fft, device=device) # TODO: find out best-performing window
 
         x = torch.stft(x, n_fft=n_fft, hop_length=hop_length, window=window, return_complex=True)
         num_stft_frames = x.shape[-1]
