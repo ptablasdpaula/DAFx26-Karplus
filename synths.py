@@ -502,6 +502,44 @@ def _diff_td_karplus_strong(
     return sample_wise_lpc(x, A)
 
 
+def _freq_karplus_strong(
+        X: T,  # [B, num_frames, n_bins]
+        L: T,  # [B, num_frames] - delay in samples
+        a1: T,  # [B, num_frames]
+        g: T,  # [B, num_frames]
+        n_fft: int,
+) -> T:
+    """Apply Karplus-Strong using closed-loop transfer function."""
+    device = X.device
+    n_bins = n_fft // 2 + 1
+
+    # Frequency bins [0, 1, 2, ..., n_fft//2]
+    bins = torch.arange(0, n_bins, device=device).float()
+
+    # z^(-1) at each bin: exp(-j * 2π * k / n_fft)
+    # This is the unit delay phasor
+    omega = 2.0 * torch.pi * bins / n_fft  # [n_bins]
+    z_inv = torch.exp(-1j * omega)  # [n_bins]
+
+    # z^(-L) - fractional delay of L samples
+    # angle = -π * L / (n_fft/2) per bin, then raised to bin power
+    angle = -omega.unsqueeze(0).unsqueeze(0) * L.unsqueeze(-1)  # [B, num_frames, n_bins]
+    z_minus_L = torch.exp(1j * angle)  # [B, num_frames, n_bins] - this is z^(-L)
+
+    # Loop filter: H_loop(z) = g * (1 - a1) / (1 - a1 * z^(-1))
+    b0 = (g * (1.0 - a1)).unsqueeze(-1)  # [B, num_frames, 1]
+    a1_exp = a1.unsqueeze(-1)  # [B, num_frames, 1]
+
+    # Denominator of loop filter: 1 - a1 * z^(-1)
+    H_loop_denom = 1.0 - a1_exp * z_inv.unsqueeze(0).unsqueeze(0)  # [B, num_frames, n_bins]
+    H_loop = b0 / H_loop_denom  # [B, num_frames, n_bins]
+
+    # Closed-loop transfer function for KS:
+    # Y(z) = X(z) / (1 - H_loop(z) * z^(-L))
+    denominator = 1.0 - H_loop * z_minus_L  # [B, num_frames, n_bins]
+    Y = X / denominator
+    return Y
+
 def karplus_strong(
         x: T,
         f0: T,
@@ -512,7 +550,6 @@ def karplus_strong(
         lagrange_order: int = LAGRANGE_ORDER,
         iir_truncation: int = IIR_TRUNCATION,
         n_fft: int = N_FFT,
-        hop_length: int = HOP_LENGTH,
 ) -> T:
     """
     Karplus-Strong string synthesis with fractional delay and loop filtering.
@@ -525,7 +562,12 @@ def karplus_strong(
     :param lagrange_order: Lagrange order
     :param iir_truncation: IIR truncation of loop filter (DIFFABLE_TIME_DOMAIN only)
     """
-    assert x.shape == f0.shape == a1.shape == g.shape
+    if implementation == Implementation.FREQUENCY_SAMPLING:
+        assert x.ndim == 3 and f0.ndim == 2 and a1.ndim == 2 and g.ndim == 2
+        assert x.shape[:2] == f0.shape == a1.shape == g.shape
+    else:
+        assert x.shape == f0.shape == a1.shape == g.shape
+
     assert torch.all((a1 >= 0.0) & (a1 <= 1.0))
     assert torch.all((g >= 0.0) & (g <= 1.0))
 
@@ -538,7 +580,7 @@ def karplus_strong(
     elif implementation == Implementation.DIFFABLE_TIME_DOMAIN:
         return _diff_td_karplus_strong(x, L_corrected, a1, g, lagrange_order, iir_truncation)
     elif implementation == Implementation.FREQUENCY_SAMPLING:
-        raise NotImplementedError
+        return _freq_karplus_strong(x, L_corrected, a1, g, n_fft)
     else:
         raise NotImplementedError
 
