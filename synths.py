@@ -340,6 +340,33 @@ def _diff_td_dynamics_filter(x: T, R: T) -> T:
     a = -R.unsqueeze(-1)
     return allpole(a, x_eff)
 
+
+def _freq_dynamics_filter(X: T, R: T, n_fft: int) -> T:
+    """Apply one-pole IIR dynamics filter using closed-loop transfer function."""
+    device = X.device
+
+    # Feedforward: B = (1-R) * X
+    b0 = (1.0 - R).unsqueeze(-1)  # [B, num_frames, 1]
+    B = b0 * X  # [B, num_frames, n_bins]
+
+    # Feedback: H_fb = R * z^(-1)
+    # z^(-1) in frequency domain is exp(-j*omega) where omega = 2*pi*k/(n_fft)
+    bins = torch.arange(0, n_fft // 2 + 1, device=device)
+    omega = 2.0 * torch.pi * bins / n_fft  # [n_bins]
+    z_inv = torch.exp(-1j * omega)  # [n_bins] - one sample delay
+
+    # Identity matrix [B, num_frames, n_bins]
+    I = torch.ones_like(X)
+
+    # A = I - R * z^(-1)
+    a1 = R.unsqueeze(-1)  # [B, num_frames, 1]
+    A = I - a1 * z_inv.unsqueeze(0).unsqueeze(0)  # [B, num_frames, n_bins]
+
+    # Solve: Y = A^(-1) * B
+    Y = B / A
+
+    return Y
+
 def dynamics_filter(
         x: T,
         f0: T,
@@ -347,7 +374,6 @@ def dynamics_filter(
         implementation: Implementation = Implementation.LOOP,
         fs: int = FS_MIN,
         n_fft: int = N_FFT,
-        hop_length: int = HOP_LENGTH,
 ) -> T:
     """
     Apply dynamics filter to excitation with time-varying dynamic level.
@@ -357,7 +383,12 @@ def dynamics_filter(
     :param dynamic_level: 0.0 = soft/dark, 1.0 = loud/bright
     :param implementation: Implementation.LOOP, Implementation.DIFFABLE_TIME_DOMAIN, Implementation.FREQUENCY_SAMPLING
     """
-    assert x.shape == f0.shape == dynamic_level.shape
+    if implementation == Implementation.FREQUENCY_SAMPLING:
+        assert x.ndim == 3 and f0.ndim == 2 and dynamic_level.ndim == 2
+        assert x.shape[:2] == f0.shape == dynamic_level.shape
+    else:
+        assert x.shape == f0.shape == dynamic_level.shape
+
     assert torch.all((dynamic_level >= 0.0) & (dynamic_level <= 1.0))
 
     R = compute_dynamics_R(f0, dynamic_level, fs)
@@ -367,7 +398,7 @@ def dynamics_filter(
     elif implementation == Implementation.DIFFABLE_TIME_DOMAIN:
         return _diff_td_dynamics_filter(x, R)
     elif implementation == Implementation.FREQUENCY_SAMPLING:
-        raise NotImplementedError
+        return _freq_dynamics_filter(x, R, n_fft)
     else:
         raise NotImplementedError
 
