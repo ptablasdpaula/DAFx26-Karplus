@@ -325,22 +325,17 @@ def compute_dynamics_R(
 
     return R
 
-def _loop_dynamics_filter(x: T, f0: T, dynamic_level: T, fs: int) -> T:
+def _loop_dynamics_filter(x: T, R: T) -> T:
     B, N = x.shape
     device, dtype = x.device, x.dtype
-
     y = torch.zeros_like(x)
     y_prev = torch.zeros(B, device=device, dtype=dtype)
-
     for n in range(N):
-        R = compute_dynamics_R(f0[:, n], dynamic_level[:, n], fs)
-        y[:, n] = (1.0 - R) * x[:, n] + R * y_prev
+        y[:, n] = (1.0 - R[:, n]) * x[:, n] + R[:, n] * y_prev
         y_prev = y[:, n].clone()
-
     return y
 
-def _diff_td_dynamics_filter(x: T, f0: T, dynamic_level: T, fs: int) -> T:
-    R = compute_dynamics_R(f0, dynamic_level, fs)
+def _diff_td_dynamics_filter(x: T, R: T) -> T:
     x_eff = (1.0 - R) * x
     a = -R.unsqueeze(-1)
     return allpole(a, x_eff)
@@ -365,10 +360,12 @@ def dynamics_filter(
     assert x.shape == f0.shape == dynamic_level.shape
     assert torch.all((dynamic_level >= 0.0) & (dynamic_level <= 1.0))
 
+    R = compute_dynamics_R(f0, dynamic_level, fs)
+
     if implementation == Implementation.LOOP:
-        return _loop_dynamics_filter(x, f0, dynamic_level, fs)
+        return _loop_dynamics_filter(x, R)
     elif implementation == Implementation.DIFFABLE_TIME_DOMAIN:
-        return _diff_td_dynamics_filter(x, f0, dynamic_level, fs)
+        return _diff_td_dynamics_filter(x, R)
     elif implementation == Implementation.FREQUENCY_SAMPLING:
         raise NotImplementedError
     else:
