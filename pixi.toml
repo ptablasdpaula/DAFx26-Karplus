@@ -24,8 +24,10 @@ cmake = ">=4.2.3,<5"
 ninja = ">=1.13.2,<2"
 netcdf4 = ">=1.7.4,<2"
 hdf5 = ">=1.14.6,<2"
-pysoundfile = ">=0.13.1,<0.14"
 librosa = ">=0.11.0,<0.12"
+pip = ">=26.0,<27"
+libsndfile = ">=1.2.2,<2"
 
 [pypi-dependencies]
 philtorch = ">=0.2, <0.3"
+soundfile = "*"

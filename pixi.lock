@@ -265,6 +265,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pcre2-10.47-h30297fc_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pexpect-4.9.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pillow-12.1.0-py313h45e5a15_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pip-26.0-pyh145f28c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pixman-0.46.4-h81086ad_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/platformdirs-4.5.1-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pooch-1.9.0-pyhd8ed1ab_0.conda
@@ -3886,6 +3887,17 @@ packages:
   - pkg:pypi/pillow?source=hash-mapping
   size: 966296
   timestamp: 1767353279679
+- conda: https://conda.anaconda.org/conda-forge/noarch/pip-26.0-pyh145f28c_0.conda
+  sha256: 4349de61caaa05e19be38a20a084e001d325b9c70ac10e3c88d8743d3fc9aefb
+  md5: f08a17c938eb6bc1b928bd8cdd37e20f
+  depends:
+  - python >=3.13.0a0
+  license: MIT
+  license_family: MIT
+  purls:
+  - pkg:pypi/pip?source=compressed-mapping
+  size: 1181224
+  timestamp: 1769850913286
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pixman-0.46.4-h81086ad_1.conda
   sha256: 29c9b08a9b8b7810f9d4f159aecfd205fce051633169040005c0b7efad4bc718
   md5: 17c3d745db6ea72ae2fce17e7338547f
