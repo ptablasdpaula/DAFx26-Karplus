@@ -422,21 +422,18 @@ def one_pole_phase_delay(f0: T, a1: T, fs: int) -> T:
     return phase_delay
 
 
-def _loop_karplus_strong(x: T, f0: T, a1: T, g: T, fs: int, lagrange_order: int) -> T:
+def _loop_karplus_strong(x: T, L: T, a1: T, g: T, lagrange_order: int) -> T:
     B, N = x.shape
     device, dtype = x.device, x.dtype
 
     y = torch.zeros_like(x)
-    L = fs / f0
-    phase_delay = one_pole_phase_delay(f0, a1, fs)
-    L_corrected = L + phase_delay
 
-    max_delay = int(L_corrected.max().item()) + lagrange_order + 1
+    max_delay = int(L.max().item()) + lagrange_order + 1
     delay_buffer = torch.zeros(B, max_delay, device=device, dtype=dtype)
     filter_state = torch.zeros(B, device=device, dtype=dtype)
     write_idx = 0
 
-    L_int, h = lagrange_fractional_delay(L_corrected, lagrange_order)  # [B, N] and [B, N, lagrange_order+1]
+    L_int, h = lagrange_fractional_delay(L, lagrange_order)  # [B, N] and [B, N, lagrange_order+1]
     batch_indices = torch.arange(B, device=device)  # Pre-compute
 
     for n in range(N):
@@ -458,17 +455,14 @@ def _loop_karplus_strong(x: T, f0: T, a1: T, g: T, fs: int, lagrange_order: int)
 
 
 def _diff_td_karplus_strong(
-        x: T, f0: T, a1: T, g: T, fs: int, lagrange_order: int, iir_truncation: int
+        x: T, L: T, a1: T, g: T, lagrange_order: int, iir_truncation: int
 ) -> T:
     B, N = x.shape
     K = iir_truncation
 
     b0 = g * (1.0 - a1)
-    phase_delay = one_pole_phase_delay(f0, a1, fs)
-    L = fs / f0
-    L_corrected = L + phase_delay
 
-    L_int, weights = lagrange_fractional_delay(L_corrected, lagrange_order)
+    L_int, weights = lagrange_fractional_delay(L, lagrange_order)
 
     a1_padded = F.pad(a1, (K - 1, 0), value=1.0)
     b0_padded = F.pad(b0, (K - 1, 0), value=0.0)
@@ -535,10 +529,14 @@ def karplus_strong(
     assert torch.all((a1 >= 0.0) & (a1 <= 1.0))
     assert torch.all((g >= 0.0) & (g <= 1.0))
 
+    L = fs / f0
+    phase_delay = one_pole_phase_delay(f0, a1, fs)
+    L_corrected = L + phase_delay
+
     if implementation == Implementation.LOOP:
-        return _loop_karplus_strong(x, f0, a1, g, fs, lagrange_order)
+        return _loop_karplus_strong(x, L_corrected, a1, g, lagrange_order)
     elif implementation == Implementation.DIFFABLE_TIME_DOMAIN:
-        return _diff_td_karplus_strong(x, f0, a1, g, fs, lagrange_order, iir_truncation)
+        return _diff_td_karplus_strong(x, L_corrected, a1, g, lagrange_order, iir_truncation)
     elif implementation == Implementation.FREQUENCY_SAMPLING:
         raise NotImplementedError
     else:
