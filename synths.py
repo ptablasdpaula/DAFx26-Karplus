@@ -600,7 +600,7 @@ def physical_model(
         implementation: Implementation = Implementation.LOOP,
         fs: int = FS_MIN,
         n_fft: int = N_FFT,
-        hop_length: int = HOP_LENGTH,
+        hop_length: int = None,
         lagrange_order: int = LAGRANGE_ORDER,
         iir_truncation: int = IIR_TRUNCATION,
         random_seed: int = RND_SEED,
@@ -622,14 +622,25 @@ def physical_model(
     p = {
         'f0': f0,
         'pluck_position': pluck_position,
-        'burst_gain': burst_gain,
         'dynamic_level': dynamic_level,
         'a1': a1,
         'decay': decay
     }
 
-    if implementation != Implementation.FREQUENCY_SAMPLING:
-        p = lin_upsample_many(signal_length=num_samples, **p)
+    if implementation == Implementation.FREQUENCY_SAMPLING:
+        if hop_length is None:
+            hop_length = n_fft // 4  # 75% overlap
+
+        device = x.device
+        window = torch.ones(n_fft, device=device)
+
+        x = torch.stft(x, n_fft=n_fft, hop_length=hop_length, window=window, return_complex=True)
+        num_stft_frames = x.shape[-1]
+        x = x.permute(0, 2, 1)  # [B, num_stft_frames, n_bins]
+
+        p = lin_resample_many(signal_length=num_stft_frames, **p)
+    else:
+        p = lin_resample_many(signal_length=num_samples, **p)
 
     x = pluck_position_filter(
         x=x,
@@ -638,7 +649,6 @@ def physical_model(
         implementation=implementation,
         fs=fs,
         n_fft=n_fft,
-        hop_length=hop_length,
         lagrange_order=lagrange_order
     )
 
@@ -649,10 +659,9 @@ def physical_model(
         implementation=implementation,
         fs=fs,
         n_fft=n_fft,
-        hop_length=hop_length
     )
 
-    return karplus_strong(
+    x = karplus_strong(
         x=x,
         f0=p['f0'],
         a1=p['a1'],
@@ -660,10 +669,15 @@ def physical_model(
         implementation=implementation,
         fs=fs,
         n_fft=n_fft,
-        hop_length=hop_length,
         lagrange_order=lagrange_order,
         iir_truncation=iir_truncation
     )
+
+    if implementation == Implementation.FREQUENCY_SAMPLING:
+        x = x.permute(0, 2, 1)  # [B, n_bins, num_stft_frames]
+        x = torch.istft(x, n_fft=n_fft, hop_length=hop_length, window=window, length=num_samples)
+
+    return x
 
 
 
@@ -697,7 +711,7 @@ if __name__ == "__main__":
     all_passed = True
     test_count = 0
 
-    for impl in [Implementation.LOOP, Implementation.DIFFABLE_TIME_DOMAIN]:
+    for impl in [Implementation.FREQUENCY_SAMPLING, Implementation.DIFFABLE_TIME_DOMAIN, Implementation.LOOP]:
         for fs in sample_rates:
             num_samples = int(fs * duration)
 
