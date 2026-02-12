@@ -14,8 +14,7 @@ ONSET_THRESHOLD = 0.5
 N_FFT = 2048
 
 class Implementation(Enum):
-    LOOP = "loop"
-    DIFFABLE_TIME_DOMAIN = "diff_td"
+    TIME_DOMAIN = "time_domain"
     FREQUENCY_SAMPLING = "frequency_sampling"
 
 # =============================================================================
@@ -172,32 +171,7 @@ def lagrange_fractional_delay(
 #                           PLUCK POSITION FILTER
 # =============================================================================
 
-#TODO: Use Numba Instead
-def _loop_all_zero_comb(x: T, L: T, lagrange_order: int) -> T:
-    B, N = x.shape
-    device, dtype = x.device, x.dtype
-
-    y = torch.zeros_like(x)
-    max_delay = int(L.max().item()) + lagrange_order + 1
-    delay_buffer = torch.zeros(B, max_delay, device=device, dtype=dtype)
-    write_idx = 0
-
-    L_int, h = lagrange_fractional_delay(L, lagrange_order)  # [B, N] and [B, N, lagrange_order+1]
-    batch_indices = torch.arange(B, device=device)
-
-    for n in range(N):
-        delayed_sample = torch.zeros(B, device=device, dtype=dtype)
-        for k in range(lagrange_order + 1):
-            read_idx = (write_idx - L_int[:, n] - k) % max_delay
-            delayed_sample += h[:, n, k] * delay_buffer[batch_indices, read_idx]
-
-        y[:, n] = x[:, n] - delayed_sample
-        delay_buffer[:, write_idx] = x[:, n]
-        write_idx = (write_idx + 1) % max_delay
-
-    return y
-
-def _diff_td_all_zero_comb(x: T, L: T, lagrange_order: int) -> T:
+def _time_all_zero_comb(x: T, L: T, lagrange_order: int) -> T:
     B, N = x.shape
 
     L_int, h = lagrange_fractional_delay(L=L, N=lagrange_order)
@@ -216,7 +190,7 @@ def _diff_td_all_zero_comb(x: T, L: T, lagrange_order: int) -> T:
     return fir(b, x)
 
 
-def freq_all_zero_comb(
+def _freq_all_zero_comb(
         X: T,
         comb_L: T,  # [B, num_frames]
         n_fft: int = N_FFT,
@@ -233,7 +207,7 @@ def pluck_position_filter(
         x: T,
         f0: T,
         position: T,
-        implementation: Implementation = Implementation.LOOP,
+        implementation: Implementation = Implementation.TIME_DOMAIN,
         fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER,
         n_fft: int = N_FFT,
@@ -251,9 +225,10 @@ def pluck_position_filter(
     :param x: Input signal (excitation) [B, N]
     :param f0: Fundamental frequency in Hz [B, N]
     :param position: Pluck position as fraction of string length, range [0, 1] [B, N]
-    :param implementation: Implementation.LOOP, Implementation.DIFFABLE_TIME_DOMAIN, Implementation.FREQUENCY_SAMPLING
+    :param implementation: Implementation.TIME_DOMAIN, Implementation.FREQUENCY_SAMPLING
     :param fs: Sample rate in Hz
     :param lagrange_order: Order of Lagrange interpolator
+    :param n_fft: length of the FFT
     :return: Filtered excitation signal [B, N]
     """
     if implementation == Implementation.FREQUENCY_SAMPLING:
@@ -267,12 +242,10 @@ def pluck_position_filter(
     L = fs / f0
     comb_L = 1.0 + position * (L - 1)
 
-    if implementation == Implementation.LOOP:
-        return _loop_all_zero_comb(x, comb_L, lagrange_order)
-    elif implementation == Implementation.DIFFABLE_TIME_DOMAIN:
-        return _diff_td_all_zero_comb(x, comb_L, lagrange_order)
+    if implementation == Implementation.TIME_DOMAIN:
+        return _time_all_zero_comb(x, comb_L, lagrange_order)
     elif implementation == Implementation.FREQUENCY_SAMPLING:
-        return freq_all_zero_comb(x, comb_L, n_fft)
+        return _freq_all_zero_comb(x, comb_L, n_fft)
     else:
         raise NotImplementedError
 
@@ -326,83 +299,25 @@ def compute_dynamics_R(
 
     return R
 
-#TODO: Use Numba Instead
-def _loop_dynamics_filter(x: T, R: T) -> T:
-    B, N = x.shape
-    device, dtype = x.device, x.dtype
-    y = torch.zeros_like(x)
-    y_prev = torch.zeros(B, device=device, dtype=dtype)
-    for n in range(N):
-        y[:, n] = (1.0 - R[:, n]) * x[:, n] + R[:, n] * y_prev
-        y_prev = y[:, n].clone()
-    return y
-
-def _diff_td_dynamics_filter(x: T, R: T) -> T:
-    x_eff = (1.0 - R) * x
-    a = -R.unsqueeze(-1)
-    return allpole(a, x_eff)
-
-
-def _freq_dynamics_filter(X: T, R: T, n_fft: int) -> T:
-    """Apply one-pole IIR dynamics filter using closed-loop transfer function."""
-    device = X.device
-
-    # Feedforward: B = (1-R) * X
-    b0 = (1.0 - R).unsqueeze(-1)  # [B, num_frames, 1]
-    B = b0 * X  # [B, num_frames, n_bins]
-
-    # Feedback: H_fb = R * z^(-1)
-    # z^(-1) in frequency domain is exp(-j*omega) where omega = 2*pi*k/(n_fft)
-    bins = torch.arange(0, n_fft // 2 + 1, device=device)
-    omega = 2.0 * torch.pi * bins / n_fft  # [n_bins]
-    z_inv = torch.exp(-1j * omega)  # [n_bins] - one sample delay
-
-    # Identity matrix [B, num_frames, n_bins]
-    I = torch.ones_like(X)
-
-    # A = I - R * z^(-1)
-    a1 = R.unsqueeze(-1)  # [B, num_frames, 1]
-    A = I - a1 * z_inv.unsqueeze(0).unsqueeze(0)  # [B, num_frames, n_bins]
-
-    # Solve: Y = A^(-1) * B
-    Y = B / A
-
-    return Y
-
 def dynamics_filter(
         x: T,
         f0: T,
         dynamic_level: T,
-        implementation: Implementation = Implementation.LOOP,
         fs: int = FS_MIN,
-        n_fft: int = N_FFT,
 ) -> T:
     """
     Apply dynamics filter to excitation with time-varying dynamic level.
-
     :param x: Input signal (excitation) [B, N]
     :param f0: Fundamental frequency in Hz [B, N]
     :param dynamic_level: 0.0 = soft/dark, 1.0 = loud/bright
-    :param implementation: Implementation.LOOP, Implementation.DIFFABLE_TIME_DOMAIN, Implementation.FREQUENCY_SAMPLING
+    :param fs: Sample rate in Hz
     """
-    if implementation == Implementation.FREQUENCY_SAMPLING:
-        assert x.ndim == 3 and f0.ndim == 2 and dynamic_level.ndim == 2
-        assert x.shape[:2] == f0.shape == dynamic_level.shape
-    else:
-        assert x.shape == f0.shape == dynamic_level.shape
-
+    assert x.shape == f0.shape == dynamic_level.shape, f"{x.shape}, {f0.shape}, {dynamic_level.shape}"
     assert torch.all((dynamic_level >= 0.0) & (dynamic_level <= 1.0))
-
     R = compute_dynamics_R(f0, dynamic_level, fs)
-
-    if implementation == Implementation.LOOP:
-        return _loop_dynamics_filter(x, R)
-    elif implementation == Implementation.DIFFABLE_TIME_DOMAIN:
-        return _diff_td_dynamics_filter(x, R)
-    elif implementation == Implementation.FREQUENCY_SAMPLING:
-        return _freq_dynamics_filter(x, R, n_fft)
-    else:
-        raise NotImplementedError
+    x_eff = (1.0 - R) * x
+    a = -R.unsqueeze(-1)
+    return allpole(a, x_eff)
 
 # =============================================================================
 #                           KARPLUS-STRONG
@@ -423,40 +338,7 @@ def one_pole_phase_delay(f0: T, a1: T, fs: int) -> T:
     phase_delay = -phase / omega0
     return phase_delay
 
-#TODO: Use Numba Instead
-def _loop_karplus_strong(x: T, L: T, a1: T, g: T, lagrange_order: int) -> T:
-    B, N = x.shape
-    device, dtype = x.device, x.dtype
-
-    y = torch.zeros_like(x)
-
-    max_delay = int(L.max().item()) + lagrange_order + 1
-    delay_buffer = torch.zeros(B, max_delay, device=device, dtype=dtype)
-    filter_state = torch.zeros(B, device=device, dtype=dtype)
-    write_idx = 0
-
-    L_int, h = lagrange_fractional_delay(L, lagrange_order)  # [B, N] and [B, N, lagrange_order+1]
-    batch_indices = torch.arange(B, device=device)  # Pre-compute
-
-    for n in range(N):
-        delayed_sample = torch.zeros(B, device=device, dtype=dtype)
-        for k in range(lagrange_order + 1):
-            read_idx = (write_idx - L_int[:, n] - k) % max_delay
-            delayed_sample += h[:, n, k] * delay_buffer[batch_indices, read_idx]
-
-        b0 = g[:, n] * (1.0 - a1[:, n])
-        filtered_sample = b0 * delayed_sample + a1[:, n] * filter_state
-        filter_state = filtered_sample.clone()
-
-        output_sample = x[:, n] + filtered_sample
-        delay_buffer[:, write_idx] = output_sample
-        write_idx = (write_idx + 1) % max_delay
-        y[:, n] = output_sample
-
-    return y
-
-
-def _diff_td_karplus_strong(
+def _time_karplus_strong(
         x: T, L: T, a1: T, g: T, lagrange_order: int, iir_truncation: int
 ) -> T:
     B, N = x.shape
@@ -547,7 +429,7 @@ def karplus_strong(
         f0: T,
         a1: T,
         g: T,
-        implementation: Implementation = Implementation.LOOP,
+        implementation: Implementation = Implementation.TIME_DOMAIN,
         fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER,
         iir_truncation: int = IIR_TRUNCATION,
@@ -559,10 +441,12 @@ def karplus_strong(
     :param x: Input signal
     :param f0: Fundamental Frequency (Hz)
     :param a1: Coefficient Value of DC normalised, first-order IIR loop-filter
-    :param implementation: Implementation.LOOP, Implementation.DIFFABLE_TIME_DOMAIN, Implementation.FREQUENCY_SAMPLING
+    :param g: Coefficient of DC normalised
+    :param implementation: Implementation.TIME_DOMAIN, Implementation.FREQUENCY_SAMPLING
     :param fs: Sampling frequency
     :param lagrange_order: Lagrange order
-    :param iir_truncation: IIR truncation of loop filter (DIFFABLE_TIME_DOMAIN only)
+    :param iir_truncation: IIR truncation of loop filter (TIME_DOMAIN only)
+    :param n_fft: FFT size (in samples)
     """
     if implementation == Implementation.FREQUENCY_SAMPLING:
         assert x.ndim == 3 and f0.ndim == 2 and a1.ndim == 2 and g.ndim == 2
@@ -577,10 +461,8 @@ def karplus_strong(
     phase_delay = one_pole_phase_delay(f0, a1, fs)
     L_corrected = L + phase_delay
 
-    if implementation == Implementation.LOOP:
-        return _loop_karplus_strong(x, L_corrected, a1, g, lagrange_order)
-    elif implementation == Implementation.DIFFABLE_TIME_DOMAIN:
-        return _diff_td_karplus_strong(x, L_corrected, a1, g, lagrange_order, iir_truncation)
+    if implementation == Implementation.TIME_DOMAIN:
+        return _time_karplus_strong(x, L_corrected, a1, g, lagrange_order, iir_truncation)
     elif implementation == Implementation.FREQUENCY_SAMPLING:
         return _freq_karplus_strong(x, L_corrected, a1, g, n_fft)
     else:
@@ -600,7 +482,7 @@ def physical_model(
         a1: T,              # [B, num_frames]
         decay: T,           # [B, num_frames]
         num_samples: int,
-        implementation: Implementation = Implementation.LOOP,
+        implementation: Implementation = Implementation.TIME_DOMAIN,
         fs: int = FS_MIN,
         n_fft: int = N_FFT,
         hop_length: int = None,
@@ -620,7 +502,7 @@ def physical_model(
         threshold=onset_threshold
     )
 
-    x = x * lin_resample(burst_gain, num_samples)
+    x = x * lin_resample(burst_gain, num_samples)  # TODO: resampling should happen only once
 
     p = {
         'f0': f0,
@@ -629,6 +511,13 @@ def physical_model(
         'a1': a1,
         'decay': decay
     }
+
+    x = dynamics_filter(
+        x=x,
+        f0=lin_resample(p['f0'], num_samples), # TODO: resampling should happen only once
+        dynamic_level=lin_resample(p['dynamic_level'], num_samples),  # TODO: resampling should happen only once
+        fs=fs,
+    )
 
     # TODO: Transformations should happen dynamically depending on which is the next module
     if implementation == Implementation.FREQUENCY_SAMPLING:
@@ -654,15 +543,6 @@ def physical_model(
         fs=fs,
         n_fft=n_fft,
         lagrange_order=lagrange_order
-    )
-
-    x = dynamics_filter(
-        x=x,
-        f0=p['f0'],
-        dynamic_level=p['dynamic_level'],
-        implementation=implementation,
-        fs=fs,
-        n_fft=n_fft,
     )
 
     x = karplus_strong(
@@ -715,7 +595,7 @@ if __name__ == "__main__":
     all_passed = True
     test_count = 0
 
-    for impl in [Implementation.FREQUENCY_SAMPLING, Implementation.DIFFABLE_TIME_DOMAIN, Implementation.LOOP]:
+    for impl in [Implementation.FREQUENCY_SAMPLING, Implementation.TIME_DOMAIN]:
         for fs in sample_rates:
             num_samples = int(fs * duration)
 
