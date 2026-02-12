@@ -472,7 +472,6 @@ def karplus_strong(
 #                           PHYSICAL MODEL
 # =============================================================================
 
-#TODO: Make class with modular components (fs pluck filter + td dynamic filter, etc...)
 def physical_model(
         onset_probs: T,     # [B, num_frames]
         f0: T,              # [B, num_frames]
@@ -482,9 +481,11 @@ def physical_model(
         a1: T,              # [B, num_frames]
         decay: T,           # [B, num_frames]
         num_samples: int,
-        implementation: Implementation = Implementation.TIME_DOMAIN,
+        use_freq_pluck: bool = False,
+        use_freq_ksa: bool = False,
         fs: int = FS_MIN,
         n_fft: int = N_FFT,
+        window = None,
         hop_length: int = None,
         lagrange_order: int = LAGRANGE_ORDER,
         iir_truncation: int = IIR_TRUNCATION,
@@ -502,64 +503,96 @@ def physical_model(
         threshold=onset_threshold
     )
 
-    x = x * lin_resample(burst_gain, num_samples)  # TODO: resampling should happen only once
-
     p = {
         'f0': f0,
         'pluck_position': pluck_position,
+        'burst_gain': burst_gain,
         'dynamic_level': dynamic_level,
         'a1': a1,
-        'decay': decay
+        'decay': decay,
     }
 
-    x = dynamics_filter(
-        x=x,
-        f0=lin_resample(p['f0'], num_samples), # TODO: resampling should happen only once
-        dynamic_level=lin_resample(p['dynamic_level'], num_samples),  # TODO: resampling should happen only once
-        fs=fs,
-    )
+    p_time = lin_resample_many(signal_length=num_samples, **p)
 
-    # TODO: Transformations should happen dynamically depending on which is the next module
-    if implementation == Implementation.FREQUENCY_SAMPLING:
+    if use_freq_pluck or use_freq_ksa:
+        device = x.device
+        # Convert to freq
         if hop_length is None:
             hop_length = n_fft // 4  # 75% overlap TODO: find out best-performing overlap
+        if window is None:
+            window = torch.ones(n_fft, device=device)
 
-        device = x.device
-        window = torch.ones(n_fft, device=device) # TODO: find out best-performing window
+        X = torch.stft(x, n_fft=n_fft, hop_length=hop_length, window=window, return_complex=True)
+        num_stft_frames = X.shape[-1]
+        X = X.permute(0, 2, 1)  # [B, num_stft_frames, n_bins]
+        stft_p = lin_resample_many(signal_length=num_stft_frames, **p)
 
-        x = torch.stft(x, n_fft=n_fft, hop_length=hop_length, window=window, return_complex=True)
-        num_stft_frames = x.shape[-1]
-        x = x.permute(0, 2, 1)  # [B, num_stft_frames, n_bins]
+    x = x * p_time['burst_gain']
+    x = dynamics_filter(
+        x=x,
+        f0= p_time['f0'],
+        dynamic_level= p_time['dynamic_level'],
+        fs=fs,
+    )
 
-        p = lin_resample_many(signal_length=num_stft_frames, **p)
+    if use_freq_pluck:
+        # do freq_pluck
+        X = pluck_position_filter(
+            x=X,
+            f0=stft_p['f0'],
+            position=stft_p['pluck_position'],
+            implementation=Implementation.FREQUENCY_SAMPLING,
+            fs=fs,
+            n_fft=n_fft,
+            lagrange_order=lagrange_order
+        )
+
+        if not use_freq_ksa:
+            # convert back to time
+            X = X.permute(0, 2, 1)  # [B, n_bins, num_stft_frames]
+            x = torch.istft(X, n_fft=n_fft, hop_length=hop_length, window=window, length=num_samples)
     else:
-        p = lin_resample_many(signal_length=num_samples, **p)
+        # do time-domain pluck
+        x = pluck_position_filter(
+            x=x,
+            f0=p_time['f0'],
+            position=p_time['pluck_position'],
+            implementation=Implementation.TIME_DOMAIN,
+            fs=fs,
+            n_fft=n_fft,
+            lagrange_order=lagrange_order
+        )
 
-    x = pluck_position_filter(
-        x=x,
-        f0=p['f0'],
-        position=p['pluck_position'],
-        implementation=implementation,
-        fs=fs,
-        n_fft=n_fft,
-        lagrange_order=lagrange_order
-    )
+    if use_freq_ksa:
+        # do freq-domain ksa
+        X = karplus_strong(
+            x=X,
+            f0=stft_p['f0'],
+            a1=stft_p['a1'],
+            g=stft_p['decay'],
+            implementation=Implementation.FREQUENCY_SAMPLING,
+            fs=fs,
+            n_fft=n_fft,
+            lagrange_order=lagrange_order,
+            iir_truncation=iir_truncation
+        )
 
-    x = karplus_strong(
-        x=x,
-        f0=p['f0'],
-        a1=p['a1'],
-        g=p['decay'],
-        implementation=implementation,
-        fs=fs,
-        n_fft=n_fft,
-        lagrange_order=lagrange_order,
-        iir_truncation=iir_truncation
-    )
-
-    if implementation == Implementation.FREQUENCY_SAMPLING:
-        x = x.permute(0, 2, 1)  # [B, n_bins, num_stft_frames]
-        x = torch.istft(x, n_fft=n_fft, hop_length=hop_length, window=window, length=num_samples)
+        # convert to time
+        X = X.permute(0, 2, 1)  # [B, n_bins, num_stft_frames]
+        x = torch.istft(X, n_fft=n_fft, hop_length=hop_length, window=window, length=num_samples)
+    else:
+        # do time-domain pluck
+        x = karplus_strong(
+            x=x,
+            f0=p_time['f0'],
+            a1=p_time['a1'],
+            g=p_time['decay'],
+            implementation=Implementation.TIME_DOMAIN,
+            fs=fs,
+            n_fft=n_fft,
+            lagrange_order=lagrange_order,
+            iir_truncation=iir_truncation
+        )
 
     return x
 
@@ -595,12 +628,20 @@ if __name__ == "__main__":
     all_passed = True
     test_count = 0
 
-    for impl in [Implementation.FREQUENCY_SAMPLING, Implementation.TIME_DOMAIN]:
+    # All four combinations of frequency/time-domain implementations
+    impl_combinations = [
+        (False, False, "TD pluck + TD KS"),
+        (False, True, "TD pluck + FD KS"),
+        (True, False, "FD pluck + TD KS"),
+        (True, True, "FD pluck + FD KS"),
+    ]
+
+    for use_freq_pluck, use_freq_ksa, impl_name in impl_combinations:
         for fs in sample_rates:
             num_samples = int(fs * duration)
 
             print(f"\n{'=' * 60}")
-            print(f"Testing [{impl}] at fs={fs}Hz ({num_samples} samples)")
+            print(f"Testing [{impl_name}] at fs={fs}Hz ({num_samples} samples)")
             print(f"{'=' * 60}")
 
             onset_probs = torch.zeros(1, num_frames)
@@ -613,7 +654,8 @@ if __name__ == "__main__":
                 y = physical_model(
                     onset_probs=onset_probs,
                     num_samples=num_samples,
-                    implementation=impl,
+                    use_freq_pluck=use_freq_pluck,
+                    use_freq_ksa=use_freq_ksa,
                     fs=fs,
                     **params
                 )
@@ -630,7 +672,8 @@ if __name__ == "__main__":
             y = physical_model(
                 onset_probs=onset_probs,
                 num_samples=num_samples,
-                implementation=impl,
+                use_freq_pluck=use_freq_pluck,
+                use_freq_ksa=use_freq_ksa,
                 fs=fs,
                 **params
             )
