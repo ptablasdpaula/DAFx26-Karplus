@@ -1,9 +1,12 @@
 import torch
+import torch.nn as nn
 from torch import Tensor as T
 import torch.nn.functional as F
 from philtorch.lpv import fir, allpole
 from torchlpc import sample_wise_lpc
 from enum import Enum
+from dataclasses import dataclass
+from omegaconf import DictConfig
 
 LAGRANGE_ORDER = 5
 F0_MIN = 20
@@ -474,139 +477,172 @@ def karplus_strong(
 # =============================================================================
 #                           PHYSICAL MODEL
 # =============================================================================
+@dataclass
+class PhysicalModelConfig:
+    """Configuration for PhysicalModel structure and hyperparameters."""
+    num_samples: int
+    fs: int = FS_MIN
+    device: str = 'cpu'
+    n_fft: int = N_FFT
+    hop_length: int | None = None
+    lagrange_order: int = LAGRANGE_ORDER
+    iir_truncation: int = IIR_TRUNCATION
+    random_seed: int = RND_SEED
+    use_freq_pluck: bool = False
+    use_freq_ksa: bool = False
+    training: bool = True
+    onset_threshold: float = ONSET_THRESHOLD
 
-def physical_model(
-        onset_probs: T,     # [B, num_frames]
-        f0: T,              # [B, num_frames]
-        pluck_position: T,  # [B, num_frames]
-        burst_gain: T,      # [B, num_frames]
-        dynamic_level: T,   # [B, num_frames]
-        a1: T,              # [B, num_frames]
-        decay: T,           # [B, num_frames]
-        num_samples: int,
-        use_freq_pluck: bool = False,
-        use_freq_ksa: bool = False,
-        fs: int = FS_MIN,
-        n_fft: int = N_FFT,
-        window = None,
-        hop_length: int = None,
-        lagrange_order: int = LAGRANGE_ORDER,
-        iir_truncation: int = IIR_TRUNCATION,
-        random_seed: int = RND_SEED,
-        training: bool = True,
-        onset_threshold: float = ONSET_THRESHOLD,
-) -> T:
-    x, _ = excitation_onset(
-        onset_probs=onset_probs,
-        signal_length=num_samples,
-        f0=f0,
-        fs=fs,
-        noise_seed=random_seed,
-        training=training,
-        threshold=onset_threshold
-    )
+class PhysicalModel(nn.Module):
+    def __init__(self, config: PhysicalModelConfig | DictConfig):
+        super().__init__()
+        if isinstance(config, DictConfig):
+            config = PhysicalModelConfig(**config)
 
-    p = {
-        'f0': f0,
-        'pluck_position': pluck_position,
-        'burst_gain': burst_gain,
-        'dynamic_level': dynamic_level,
-        'a1': a1,
-        'decay': decay,
-    }
+        self.num_samples = config.num_samples
+        self.fs = config.fs
+        self.device = torch.device(config.device)
+        self.n_fft = config.n_fft
+        self.hop_length = config.hop_length if config.hop_length is not None else config.n_fft // 4
+        self.lagrange_order = config.lagrange_order
+        self.iir_truncation = config.iir_truncation
+        self.random_seed = config.random_seed
+        self.use_freq_pluck = config.use_freq_pluck
+        self.use_freq_ksa = config.use_freq_ksa
+        self._training = config.training
+        self.onset_threshold = config.onset_threshold
 
-    p_time = lin_resample_many(signal_length=num_samples, **p)
+        window_tensor = torch.ones(self.n_fft)  # or config.window if you add it
+        self.register_buffer('window', window_tensor.to(self.device))
 
-    if use_freq_pluck or use_freq_ksa:
-        device = x.device
-        # Convert to freq
-        if hop_length is None:
-            hop_length = n_fft // 4  # 75% overlap TODO: find out best-performing overlap
-        if window is None:
-            window = torch.ones(n_fft, device=device)
+    def forward(self, params: dict[str, T]) -> T:
+        """
+        Synthesize plucked string audio.
 
-        X = torch.stft(x, n_fft=n_fft, hop_length=hop_length, window=window, return_complex=True)
-        num_stft_frames = X.shape[-1]
-        X = X.permute(0, 2, 1)  # [B, num_stft_frames, n_bins]
-        stft_p = lin_resample_many(signal_length=num_stft_frames, **p)
+        Args:
+            params: Dictionary containing:
+                - onset_probs: [B, num_frames] - onset probability per frame [0, 1]
+                - f0: [B, num_frames] - fundamental frequency in Hz
+                - pluck_position: [B, num_frames] - pluck position [0, 1]
+                - burst_gain: [B, num_frames] - excitation gain [0, 1]
+                - dynamic_level: [B, num_frames] - dynamic level (0=soft, 1=bright)
+                - a1: [B, num_frames] - loop filter coefficient [0, 1]
+                - decay: [B, num_frames] - decay/damping coefficient [0, 1]
 
-    x = x * p_time['burst_gain']
-    x = dynamics_filter(
-        x=x,
-        f0= p_time['f0'],
-        dynamic_level= p_time['dynamic_level'],
-        fs=fs,
-    )
+        Returns:
+            Synthesized audio [B, num_samples]
+        """
+        self.resample_parameters(params)
 
-    if use_freq_pluck:
-        # do freq_pluck
-        X = pluck_position_filter(
-            x=X,
-            f0=stft_p['f0'],
-            position=stft_p['pluck_position'],
-            implementation=Implementation.FREQUENCY_SAMPLING,
-            fs=fs,
-            n_fft=n_fft,
-            lagrange_order=lagrange_order
+        x = self._generate_excitation(params['onset_probs'], params['f0'])
+        x = x * self.p_time['burst_gain']
+        x = self._apply_dynamics_filter(x)
+        x = self._apply_pluck_filter(x)
+        x = self._apply_karplus_strong(x)
+
+        return x
+
+    def resample_parameters(self, params: dict[str, T]) -> None:
+        self._params = params
+        self.p_time = lin_resample_many(signal_length=self.num_samples, **params)
+        self.p_stft = None
+
+    def _get_stft_params(self, num_stft_frames: int) -> dict[str, T]:
+        """Get STFT-rate parameters, computing them lazily."""
+        if self.p_stft is None:
+            self.p_stft = lin_resample_many(signal_length=num_stft_frames, **self._params)
+        return self.p_stft
+
+    def _generate_excitation(self, onset_probs: T, f0: T) -> T:
+        """Generate noise burst excitation with onset gating."""
+        x, _ = excitation_onset(
+            onset_probs=onset_probs,
+            signal_length=self.num_samples,
+            f0=f0,
+            fs=self.fs,
+            noise_seed=self.random_seed,
+            training=self._training,
+            threshold=self.onset_threshold
         )
+        return x
 
-        if not use_freq_ksa:
-            # convert back to time
-            X = X.permute(0, 2, 1)  # [B, n_bins, num_stft_frames]
-            x = torch.istft(X, n_fft=n_fft, hop_length=hop_length, window=window, length=num_samples)
-    else:
-        # do time-domain pluck
-        x = pluck_position_filter(
+    def _apply_dynamics_filter(self, x: T) -> T:
+        """Apply dynamics filter (always in time domain)."""
+        return dynamics_filter(
             x=x,
-            f0=p_time['f0'],
-            position=p_time['pluck_position'],
-            implementation=Implementation.TIME_DOMAIN,
-            fs=fs,
-            n_fft=n_fft,
-            lagrange_order=lagrange_order
+            f0=self.p_time['f0'],
+            dynamic_level=self.p_time['dynamic_level'],
+            fs=self.fs,
         )
 
-    if use_freq_ksa:
-        # do freq-domain ksa
-        X = karplus_strong(
-            x=X,
-            f0=stft_p['f0'],
-            a1=stft_p['a1'],
-            g=stft_p['decay'],
-            implementation=Implementation.FREQUENCY_SAMPLING,
-            fs=fs,
-            n_fft=n_fft,
-            lagrange_order=lagrange_order,
-            iir_truncation=iir_truncation
+    def _apply_pluck_filter(self, x: T) -> T:
+        """Apply pluck position filter."""
+        if self.use_freq_pluck:
+            x, num_frames = self._to_freq_domain(x)
+            p = self._get_stft_params(num_frames)
+            implementation = Implementation.FREQUENCY_SAMPLING
+        else:
+            p = self.p_time
+            implementation = Implementation.TIME_DOMAIN
+
+        return pluck_position_filter(
+            x=x,
+            f0=p['f0'],
+            position=p['pluck_position'],
+            implementation=implementation,
+            fs=self.fs,
+            lagrange_order=self.lagrange_order,
+            n_fft=self.n_fft,
         )
 
-        # convert to time
-        X = X.permute(0, 2, 1)  # [B, n_bins, num_stft_frames]
-        x = torch.istft(X, n_fft=n_fft, hop_length=hop_length, window=window, length=num_samples)
-    else:
-        # do time-domain pluck
+    def _apply_karplus_strong(self, x: T) -> T:
+        """Apply Karplus-Strong algorithm."""
+        if self.use_freq_ksa:
+            if not self.use_freq_pluck:
+                x, num_frames = self._to_freq_domain(x)
+            else:
+                num_frames = x.shape[1]  # Already in freq domain
+            p = self._get_stft_params(num_frames)
+            implementation = Implementation.FREQUENCY_SAMPLING
+        else:
+            if self.use_freq_pluck:
+                x = self._to_time_domain(x)
+            p = self.p_time
+            implementation = Implementation.TIME_DOMAIN
+
         x = karplus_strong(
             x=x,
-            f0=p_time['f0'],
-            a1=p_time['a1'],
-            g=p_time['decay'],
-            implementation=Implementation.TIME_DOMAIN,
-            fs=fs,
-            n_fft=n_fft,
-            lagrange_order=lagrange_order,
-            iir_truncation=iir_truncation
+            f0=p['f0'],
+            a1=p['a1'],
+            g=p['decay'],
+            implementation=implementation,
+            fs=self.fs,
+            lagrange_order=self.lagrange_order,
+            iir_truncation=self.iir_truncation,
+            n_fft=self.n_fft,
         )
 
-    return x
+        return self._to_time_domain(x) if self.use_freq_ksa else x
 
+    def _to_freq_domain(self, x: T) -> tuple[T, int]:
+        """Convert time-domain signal to frequency domain and return frame count."""
+        X = torch.stft(x, n_fft=self.n_fft, hop_length=self.hop_length,
+                       window=self.window, return_complex=True)
+        X = X.permute(0, 2, 1)  # [B, num_stft_frames, n_bins]
+        return X, X.shape[1]
+
+    def _to_time_domain(self, X: T) -> T:
+        """Convert frequency-domain signal to time domain."""
+        X_perm = X.permute(0, 2, 1)
+        return torch.istft(X_perm, n_fft=self.n_fft, hop_length=self.hop_length,
+                           window=self.window, length=self.num_samples)
 
 
 # =============================================================================
 #                           TESTS
 # =============================================================================
-
 if __name__ == "__main__":
-    duration = 1
+    duration = 4
     sample_rates = [16000, 32000, 44100]
     num_frames = 100
 
@@ -631,7 +667,6 @@ if __name__ == "__main__":
     all_passed = True
     test_count = 0
 
-    # All four combinations of frequency/time-domain implementations
     impl_combinations = [
         (False, False, "TD pluck + TD KS"),
         (False, True, "TD pluck + FD KS"),
@@ -647,21 +682,27 @@ if __name__ == "__main__":
             print(f"Testing [{impl_name}] at fs={fs}Hz ({num_samples} samples)")
             print(f"{'=' * 60}")
 
+            # Create config
+            config = PhysicalModelConfig(
+                num_samples=num_samples,
+                fs=fs,
+                device='cpu',
+                use_freq_pluck=use_freq_pluck,
+                use_freq_ksa=use_freq_ksa,
+            )
+
+            # Create model with config
+            model = PhysicalModel(config)
+
             onset_probs = torch.zeros(1, num_frames)
             onset_probs[0, [0, 25, 50, 75]] = 1.0
 
             for param_name, (min_val, max_val) in sweeps.items():
                 params = {k: torch.full((1, num_frames), v) for k, v in defaults.items()}
                 params[param_name] = torch.linspace(min_val, max_val, num_frames).unsqueeze(0)
+                params['onset_probs'] = onset_probs
 
-                y = physical_model(
-                    onset_probs=onset_probs,
-                    num_samples=num_samples,
-                    use_freq_pluck=use_freq_pluck,
-                    use_freq_ksa=use_freq_ksa,
-                    fs=fs,
-                    **params
-                )
+                y = model(params)
 
                 if torch.isnan(y).any() or torch.isinf(y).any():
                     print(f"  FAIL: {param_name} sweep")
@@ -672,14 +713,8 @@ if __name__ == "__main__":
 
             # All params sweeping
             params = {k: torch.linspace(*v, num_frames).unsqueeze(0) for k, v in sweeps.items()}
-            y = physical_model(
-                onset_probs=onset_probs,
-                num_samples=num_samples,
-                use_freq_pluck=use_freq_pluck,
-                use_freq_ksa=use_freq_ksa,
-                fs=fs,
-                **params
-            )
+            params['onset_probs'] = onset_probs
+            y = model(params)
 
             if torch.isnan(y).any() or torch.isinf(y).any():
                 print(f"  FAIL: all parameters sweeping")
