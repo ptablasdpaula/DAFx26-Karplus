@@ -464,7 +464,10 @@ def karplus_strong(
     if implementation == Implementation.TIME_DOMAIN:
         return _time_karplus_strong(x, L_corrected, a1, g, lagrange_order, iir_truncation)
     elif implementation == Implementation.FREQUENCY_SAMPLING:
-        return _freq_karplus_strong(x, L_corrected, a1, g, n_fft)
+        eps = 1e-7
+        a1_stable = torch.clamp(a1, 0.0, 1.0 - eps)
+        g_stable = torch.clamp(g, 0.0, 1.0 - eps)
+        return _freq_karplus_strong(x, L_corrected, a1_stable, g_stable, n_fft)
     else:
         raise NotImplementedError
 
