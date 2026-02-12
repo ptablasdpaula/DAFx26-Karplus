@@ -2,10 +2,12 @@ import numpy as np
 import numpy.typing as npt
 from numba import njit
 
-LAGRANGE_ORDER = 5
-F0_MIN = 20
-FS_MIN = 16000
-RND_SEED = 42
+from synths.constants import (
+    F0_MIN,
+    DEFAULT_LAGRANGE_ORDER as LAGRANGE_ORDER,
+    DEFAULT_FS as FS_MIN,
+    DEFAULT_RND_SEED as RND_SEED,
+)
 
 def upsample_frames_to_samples(
         signal_length: int,
