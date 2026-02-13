@@ -24,8 +24,8 @@ from synths.ddsp import (
 
 
 @dataclass
-class PhysicalModelConfig:
-    """Configuration for PhysicalModel structure and hyperparameters."""
+class SynthConfig:
+    """Configuration for Synth structure and hyperparameters."""
     num_samples: int
     fs: int = DEFAULT_FS
     device: str = 'cpu'
@@ -40,11 +40,11 @@ class PhysicalModelConfig:
     onset_threshold: float = DEFAULT_ONSET_THRESHOLD
 
 
-class PhysicalModel(nn.Module):
-    def __init__(self, config: PhysicalModelConfig | DictConfig):
+class Synth(nn.Module):
+    def __init__(self, config: SynthConfig | DictConfig):
         super().__init__()
         if isinstance(config, DictConfig):
-            config = PhysicalModelConfig(**config)
+            config = SynthConfig(**config)
 
         self.num_samples = config.num_samples
         self.fs = config.fs
@@ -274,14 +274,14 @@ if __name__ == "__main__":
             print(f"Testing [{impl_name}] at fs={fs}Hz ({num_samples} samples)")
             print(f"{'=' * 60}")
 
-            config = PhysicalModelConfig(
+            config = SynthConfig(
                 num_samples=num_samples,
                 fs=fs,
                 device='cpu',
                 use_freq_pluck=use_freq_pluck,
                 use_freq_ksa=use_freq_ksa,
             )
-            model = PhysicalModel(config)
+            model = Synth(config)
 
             onset_probs = torch.zeros(1, num_frames)
             onset_probs[0, [0, 25, 50, 75]] = 1.0
@@ -313,13 +313,13 @@ if __name__ == "__main__":
         print(f"Testing [oracle_synth] at fs={fs}Hz ({num_samples} samples)")
         print(f"{'=' * 60}")
 
-        config = PhysicalModelConfig(
+        config = SynthConfig(
             num_samples=num_samples,
             fs=fs,
             device='cpu',
             training=False,
         )
-        model = PhysicalModel(config)
+        model = Synth(config)
 
         onset_probs = torch.zeros(1, num_frames)
         onset_probs[0, [0, 25, 50, 75]] = 1.0
