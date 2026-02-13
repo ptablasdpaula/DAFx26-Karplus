@@ -387,6 +387,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-ng-2.3.2-hed4e4f5_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hbf9d68e_6.conda
       - pypi: https://files.pythonhosted.org/packages/bf/26/8be82a9eed808a43703882556e6734df8f7734c6c18d1a9d38d1140ef868/philtorch-0.2.tar.gz
+      - pypi: https://files.pythonhosted.org/packages/4d/b9/3b00ac340a1aab3389ebcc52c779914a44aadf7b0cb7a3bf053195735607/resampy-0.4.3-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/9b/a9/799d00b9dc7a18bb0ff53fccc187b1d83c690e337d078345c17ec0a1a224/torchcrepe-0.0.24-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c6/7c/c9771f9cb770b3ec60e71d239a8bdd9cf62f89693f7398535df37f343076/torchlpc-0.7.2.tar.gz
 packages:
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/_openmp_mutex-4.5-7_kmp_llvm.conda
@@ -4634,6 +4636,20 @@ packages:
   - pkg:pypi/requests?source=compressed-mapping
   size: 63602
   timestamp: 1766926974520
+- pypi: https://files.pythonhosted.org/packages/4d/b9/3b00ac340a1aab3389ebcc52c779914a44aadf7b0cb7a3bf053195735607/resampy-0.4.3-py3-none-any.whl
+  name: resampy
+  version: 0.4.3
+  sha256: ad2ed64516b140a122d96704e32bc0f92b23f45419e8b8f478e5a05f83edcebd
+  requires_dist:
+  - numpy>=1.17
+  - numba>=0.53
+  - importlib-resources ; python_full_version < '3.9'
+  - optuna>=2.10.0 ; extra == 'design'
+  - numpydoc ; extra == 'docs'
+  - sphinx!=1.3.1 ; extra == 'docs'
+  - pytest<8 ; extra == 'tests'
+  - pytest-cov ; extra == 'tests'
+  - scipy>=1.1 ; extra == 'tests'
 - conda: https://conda.anaconda.org/conda-forge/noarch/rfc3339-validator-0.1.4-pyhd8ed1ab_1.conda
   sha256: 2e4372f600490a6e0b3bac60717278448e323cab1c0fecd5f43f7c56535a99c5
   md5: 36de09a8d3e5d5e6f4ee63af49e59706
@@ -5162,6 +5178,17 @@ packages:
   - pkg:pypi/torchcodec?source=hash-mapping
   size: 409542
   timestamp: 1764336030984
+- pypi: https://files.pythonhosted.org/packages/9b/a9/799d00b9dc7a18bb0ff53fccc187b1d83c690e337d078345c17ec0a1a224/torchcrepe-0.0.24-py3-none-any.whl
+  name: torchcrepe
+  version: 0.0.24
+  sha256: ec054c23c9d45328f213f93a0131570a3f0e5903e9382792bed95f17a8c36d5a
+  requires_dist:
+  - librosa>=0.9.1
+  - resampy
+  - scipy
+  - torch
+  - torchaudio
+  - tqdm
 - pypi: https://files.pythonhosted.org/packages/c6/7c/c9771f9cb770b3ec60e71d239a8bdd9cf62f89693f7398535df37f343076/torchlpc-0.7.2.tar.gz
   name: torchlpc
   version: 0.7.2
