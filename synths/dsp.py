@@ -265,7 +265,7 @@ def one_pole_phase_delay(f0: float, a1: float, fs: int) -> float:
     phase_delay = -phase / omega0
     return phase_delay
 
-@jit
+@njit
 def karplus_strong(
         x: npt.NDArray,
         f0: npt.NDArray,
@@ -273,8 +273,7 @@ def karplus_strong(
         g: npt.NDArray,
         fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER,
-        compute_rt60: bool = False,
-) -> tuple[npt.NDArray,float] | npt.NDArray:
+) -> npt.NDArray:
     """
     Karplus-Strong string synthesis with fractional delay, loop filtering and phase delay tuning.
     See "Physical Modeling of Plucked String Instruments with Application to Real-Time Sound Synthesis"
@@ -287,9 +286,7 @@ def karplus_strong(
     :param fs: Sample rate in Hz
     :param lagrange_order: Order of interpolator
     :param compute_rt60: Computes RT60 of pole nearest to f0
-    :return:
-        - If compute_rt60=False: audio signal [num_samples]
-        - If computes_rt60=True: (audio signal, RT60 in seconds)
+    :return audio signal [num_samples]
     """
     assert len(x) == len(f0) == len(a1) == len(g)
     assert np.all((a1 >= 0.0) & (a1 <= 1.0))
@@ -301,7 +298,6 @@ def karplus_strong(
     delay_buffer = np.zeros(int(fs / F0_MIN))
     filter_state = 0.0
     write_idx = 0
-    rt60 = 0.0
 
     for n in range(num_samples):
         phase_delay = one_pole_phase_delay(f0[n], a1[n], fs)
@@ -309,9 +305,6 @@ def karplus_strong(
 
         L_int, h = lagrange_fractional_delay(L_corrected, lagrange_order)
         delayed_sample = 0.0
-
-        if compute_rt60 and n == 0:
-            rt60 = ksa_f0_pole_rt60(f0=f0[n], a1=a1[n], g=g[n], L_int=L_int, h=h, fs=fs)
 
         for k in range(lagrange_order + 1):
             read_idx = (write_idx - L_int - k) % len(delay_buffer)
@@ -326,27 +319,24 @@ def karplus_strong(
         write_idx = (write_idx + 1) % len(delay_buffer)
         y[n] = output_sample
 
-    return y, rt60 if compute_rt60 else y
+    return y
 
-def ksa_f0_pole_rt60(
+def compute_ksa_rt60(
         f0: float,
         a1: float,
         g: float,
-        L_int: int,
-        h: npt.NDArray,  # Lagrange coefficients [lagrange_order + 1]
-        fs: int,
+        fs: int =FS_MIN,
+        lagrange_order: int = LAGRANGE_ORDER,
 ) -> float:
     """
-    Calculate RT60 using intermediate values.
-
-    :param f0: Fundamental frequency in Hz
-    :param a1: Loop filter pole coefficient
-    :param g: Loop gain
-    :param L_int: Integer delay line length
-    :param h: Lagrange interpolation coefficients
-    :param fs: Sample rate
+    Computes the RT60 of the pole closest to f0 in our extended Karplus-Strong.
     :return: RT60 in seconds
     """
+    L = fs / f0
+    phase_delay = one_pole_phase_delay(f0, a1, fs)
+    L_corrected = L + phase_delay
+    L_int, h = lagrange_fractional_delay(L=L_corrected, N=lagrange_order)
+
     # Build polynomial
     # z^{L_int + N} - a1·z^{L_int + N - 1} - g(1-a1)·Σ h_k·z^{N-k} = 0
     N = len(h) - 1
