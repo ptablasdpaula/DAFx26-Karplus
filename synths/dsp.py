@@ -1,6 +1,6 @@
 import numpy as np
 import numpy.typing as npt
-from numba import njit
+from numba import njit, jit
 
 from synths.constants import (
     F0_MIN,
@@ -265,7 +265,7 @@ def one_pole_phase_delay(f0: float, a1: float, fs: int) -> float:
     phase_delay = -phase / omega0
     return phase_delay
 
-@njit
+@jit
 def karplus_strong(
         x: npt.NDArray,
         f0: npt.NDArray,
@@ -273,7 +273,8 @@ def karplus_strong(
         g: npt.NDArray,
         fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER,
-) -> npt.NDArray:
+        compute_rt60: bool = False,
+) -> tuple[npt.NDArray,float] | npt.NDArray:
     """
     Karplus-Strong string synthesis with fractional delay, loop filtering and phase delay tuning.
     See "Physical Modeling of Plucked String Instruments with Application to Real-Time Sound Synthesis"
@@ -285,7 +286,10 @@ def karplus_strong(
     :param g: Loop gain, range (0, 1) [num_samples]
     :param fs: Sample rate in Hz
     :param lagrange_order: Order of interpolator
-    :return: Synthesized audio signal [num_samples]
+    :param compute_rt60: Computes RT60 of pole nearest to f0
+    :return:
+        - If compute_rt60=False: audio signal [num_samples]
+        - If computes_rt60=True: (audio signal, RT60 in seconds)
     """
     assert len(x) == len(f0) == len(a1) == len(g)
     assert np.all((a1 >= 0.0) & (a1 <= 1.0))
@@ -297,6 +301,7 @@ def karplus_strong(
     delay_buffer = np.zeros(int(fs / F0_MIN))
     filter_state = 0.0
     write_idx = 0
+    rt60 = 0.0
 
     for n in range(num_samples):
         phase_delay = one_pole_phase_delay(f0[n], a1[n], fs)
@@ -304,6 +309,10 @@ def karplus_strong(
 
         L_int, h = lagrange_fractional_delay(L_corrected, lagrange_order)
         delayed_sample = 0.0
+
+        if compute_rt60 and n == 0:
+            rt60 = ksa_f0_pole_rt60(f0=f0[n], a1=a1[n], g=g[n], L_int=L_int, h=h, fs=fs)
+
         for k in range(lagrange_order + 1):
             read_idx = (write_idx - L_int - k) % len(delay_buffer)
             delayed_sample += h[k] * delay_buffer[read_idx]
@@ -316,7 +325,55 @@ def karplus_strong(
         delay_buffer[write_idx] = output_sample
         write_idx = (write_idx + 1) % len(delay_buffer)
         y[n] = output_sample
-    return y
+
+    return y, rt60 if compute_rt60 else y
+
+def ksa_f0_pole_rt60(
+        f0: float,
+        a1: float,
+        g: float,
+        L_int: int,
+        h: npt.NDArray,  # Lagrange coefficients [lagrange_order + 1]
+        fs: int,
+) -> float:
+    """
+    Calculate RT60 using intermediate values.
+
+    :param f0: Fundamental frequency in Hz
+    :param a1: Loop filter pole coefficient
+    :param g: Loop gain
+    :param L_int: Integer delay line length
+    :param h: Lagrange interpolation coefficients
+    :param fs: Sample rate
+    :return: RT60 in seconds
+    """
+    # Build polynomial
+    # z^{L_int + N} - a1·z^{L_int + N - 1} - g(1-a1)·Σ h_k·z^{N-k} = 0
+    N = len(h) - 1
+    total_order = L_int + N
+    poly = np.zeros(total_order + 1)
+    poly[0] = 1.0
+    poly[1] = -a1
+    b0 = g * (1 - a1)
+    for k in range(N + 1):
+        poly[L_int + k] -= b0 * h[k]
+
+    roots = np.roots(poly)
+
+    # Find pole closest to fundamental frequency
+    target_angle = 2 * np.pi * f0 / fs
+    positive_freq = roots[np.angle(roots) > 0]
+    if len(positive_freq) == 0:
+        return np.nan
+
+    angle_diffs = np.abs(np.angle(positive_freq) - target_angle)
+    pole = positive_freq[np.argmin(angle_diffs)]
+    pole_r = np.abs(pole)
+
+    if pole_r <= 0 or pole_r >= 1:
+        return np.inf if pole_r >= 1 else 0.0
+
+    return -60 / (20 * np.log10(pole_r)) / fs
 
 def oracle_physical_model(
         trigger_frames: npt.NDArray,
