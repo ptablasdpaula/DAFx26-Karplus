@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from dataclasses import dataclass
 from torch.utils.data import IterableDataset
 from synths.synth import Synth, SynthConfig
 
@@ -14,6 +15,35 @@ def midi_to_hz(midi):
 
 def hz_to_midi(hz):
     return 69 + 12 * np.log2(hz / 440)
+
+
+@dataclass
+class Segments:
+    """
+    Compact representation of a note segment sequence.
+
+    Attributes:
+        indices    : (N,) int array   — frame index of each segment boundary
+        f0_hz      : (N,) float array — fundamental frequency in Hz per segment
+        is_pluck   : (N,) bool array  — whether a pluck fires at this boundary
+        num_frames : total number of frames in the sequence
+    """
+    indices    : np.ndarray  # (N,) int
+    f0_hz      : np.ndarray  # (N,) float
+    is_pluck   : np.ndarray  # (N,) bool
+    num_frames : int
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __iter__(self):
+        return zip(self.indices, self.f0_hz, self.is_pluck)
+
+    def segment_range(self, i: int) -> tuple[int, int]:
+        """Return (start, end) frame indices for segment i."""
+        start = self.indices[i]
+        end   = self.indices[i + 1] if i + 1 < len(self) else self.num_frames
+        return start, end
 
 
 class SyntheticDataset(IterableDataset):
@@ -52,8 +82,7 @@ class SyntheticDataset(IterableDataset):
         self.blend_lti = blend_lti
         self.random_seed = random_seed
 
-        # Single source of truth for all distributions.
-        # log_scale=True → sampled in dB space via _sample_db.
+        # log_scale=True → sampled in dB space.
         # low/high → linear range for _sample_param.
         self.priors = {
             'first_onset':       dict(mean=0.5,  conc=1,  low_s=0.0,  high_s=0.5),
@@ -139,117 +168,99 @@ class SyntheticDataset(IterableDataset):
         onset_frame = int(low_frame + raw * (high_frame - low_frame))
         return int(self._mirror(onset_frame, low=low_frame, high=high_frame))
 
-    def _gen_triggers_and_f0(self, rng):
-        """
-        Generate trigger positions and f0 trajectory.
-        Each trigger enforces a minimum gap of one delay-line period (L = fs/f0).
-        Segment generation continues until no further segment fits within num_frames.
-
-        Returns:
-            f0_frames : (num_frames,) float32 array
-            segments  : (num_segments, 2) int array where each row is
-                        [frame_index, is_pluck] — is_pluck is 1 if the
-                        segment boundary fires a pluck, 0 if it is silent
-                        (note change still occurs, onset is suppressed).
-        """
-        num_frames = self.num_frames
+    def _choose_next_midi(self, rng, current_midi: float) -> float:
         ALL_INTERVALS = np.array([-7, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 7])
-        tg    = self.priors['trigger_gap']
         p_note   = self.priors['prob_note_change']['prob']
         p_octave = self.priors['prob_octave_shift']['prob']
-        p_slide  = self.priors['prob_slide']['prob']
-        p_vib    = self.priors['prob_vibrato']['prob']
-        p_skip_trigger = self.priors['prob_skip_trigger']['prob']
-        vib_rate_low,  vib_rate_high  = self.priors['vibrato_rate']['low'],  self.priors['vibrato_rate']['high']
-        vib_depth_low, vib_depth_high = self.priors['vibrato_depth']['low'], self.priors['vibrato_depth']['high']
 
-        base_midi     = rng.uniform(MIDI_E1, MIDI_B5 + 1)
-        first_onset   = self._get_first_onset_frame(rng)
-        # segments: list of [frame_index, is_pluck]; first segment always plucks
-        segments_list = [[first_onset, 1]]
-        trigger_midis = [base_midi]
-        current_midi  = base_midi
+        if rng.random() < p_note:
+            current_midi += rng.choice(ALL_INTERVALS)
+
+        while rng.random() < p_octave:
+            current_midi += rng.choice([12, -12])
+
+        return float(self._mirror(current_midi, low=MIDI_E1, high=MIDI_B5))
+
+    def _f0_period_to_frames(self, f0_hz: float) -> int:
+        return max(int(np.ceil(self._fps / f0_hz)), 1)
+
+    def _make_segments(self, rng) -> Segments:
+        """
+        Sample segment boundary positions, f0 values, and pluck flags.
+        Segment generation continues until no further segment fits within num_frames.
+        """
+        tg             = self.priors['trigger_gap']
+        p_skip_trigger = self.priors['prob_skip_trigger']['prob']
+
+        current_midi = rng.uniform(MIDI_E1, MIDI_B5 + 1)
+        first_onset  = self._get_first_onset_frame(rng)
+        indices      = [first_onset]
+        f0_hz        = [midi_to_hz(current_midi)]
+        is_pluck     = [True]  # first segment always plucks
 
         while True:
-            current_hz = midi_to_hz(current_midi)
-            min_gap    = max(int(np.ceil(num_frames * self.fs / (self.num_audio_samples * current_hz))), 1)
+            last_idx = indices[-1]
+            min_gap  = self._f0_period_to_frames(f0_hz[-1])
 
-            if segments_list[-1][0] + min_gap >= num_frames:
+            if last_idx + min_gap >= self.num_frames:
                 break
 
             raw        = float(self._sample_beta(rng, tg['mean'], tg['conc'])[0])
             gap_s      = tg['low_s'] + raw * (tg['high_s'] - tg['low_s'])
             gap_frames = self._seconds_to_frames(gap_s)
-            next_idx   = segments_list[-1][0] + max(gap_frames, min_gap)
-            if next_idx >= num_frames:
+            next_idx   = last_idx + max(gap_frames, min_gap)
+
+            if next_idx >= self.num_frames:
                 break
 
-            if rng.random() < p_note:
-                valid_intervals = ALL_INTERVALS[
-                    (current_midi + ALL_INTERVALS >= MIDI_E1) &
-                    (current_midi + ALL_INTERVALS <= MIDI_B5)
-                ]
-                if len(valid_intervals) == 0:
-                    valid_intervals = np.array([0])
-                interval = rng.choice(valid_intervals)
+            current_midi = self._choose_next_midi(rng, current_midi)
+            indices.append(next_idx)
+            f0_hz.append(midi_to_hz(current_midi))
+            is_pluck.append(rng.random() >= p_skip_trigger)
 
-                cumulative_octave_shift = 0
-                while rng.random() < p_octave:
-                    candidate_midi = current_midi + interval + cumulative_octave_shift
-                    can_go_up   = (candidate_midi + 12) <= MIDI_B5
-                    can_go_down = (candidate_midi - 12) >= MIDI_E1
-                    if not can_go_up and not can_go_down:
-                        break
-                    octave_choices = (
-                        ([12] if can_go_up else []) +
-                        ([-12] if can_go_down else [])
-                    )
-                    cumulative_octave_shift += rng.choice(octave_choices)
-                    if np.abs(cumulative_octave_shift) >= 36:
-                        break
+        return Segments(
+            indices    = np.array(indices,  dtype=int),
+            f0_hz      = np.array(f0_hz,    dtype=float),
+            is_pluck   = np.array(is_pluck, dtype=bool),
+            num_frames = self.num_frames,
+        )
 
-                interval += cumulative_octave_shift
-                new_midi = float(np.clip(current_midi + interval, MIDI_E1, MIDI_B5))
-            else:
-                new_midi = current_midi
+    def _apply_slide(self, f0_frames: np.ndarray, segs: Segments, i: int) -> None:
+        start, end = segs.segment_range(i)
+        f0_frames[start:end] = np.linspace(segs.f0_hz[i], segs.f0_hz[i + 1], end - start)
 
-            trigger_midis.append(new_midi)
-            current_midi = new_midi
+    def _apply_vibrato(self, rng, f0_frames: np.ndarray, segs: Segments, i: int) -> None:
+        start, end    = segs.segment_range(i)
+        seg_len       = end - start
+        vibrato_rate  = rng.uniform(self.priors['vibrato_rate']['low'], self.priors['vibrato_rate']['high'])
+        vibrato_depth = rng.uniform(self.priors['vibrato_depth']['low'], self.priors['vibrato_depth']['high'])
+        t             = np.linspace(0, seg_len / self._fps, seg_len)
+        vibrato       = vibrato_depth * np.sin(2 * np.pi * vibrato_rate * t)
+        seg_midi      = hz_to_midi(f0_frames[start:end]) + vibrato
+        f0_frames[start:end] = midi_to_hz(np.clip(seg_midi, MIDI_E1, MIDI_B5))
 
-            is_pluck = 0 if rng.random() < p_skip_trigger else 1
-            segments_list.append([next_idx, is_pluck])
+    def _build_f0_trajectory(self, rng, segs: Segments) -> np.ndarray:
+        p_slide = self.priors['prob_slide']['prob']
+        p_vib   = self.priors['prob_vibrato']['prob']
 
-        trigger_midis = np.array(trigger_midis)
-        segments      = np.array(segments_list, dtype=int)  # (num_segments, 2)
-        num_segments  = len(segments)
+        f0_frames = np.full(self.num_frames, segs.f0_hz[0], dtype=np.float64)
 
-        f0_frames = np.full(num_frames, midi_to_hz(trigger_midis[0]), dtype=np.float64)
+        for i in range(len(segs)):
+            start, end = segs.segment_range(i)
+            f0_frames[start:end] = segs.f0_hz[i]
 
-        for i in range(num_segments):
-            start  = segments[i, 0]
-            end    = segments[i + 1, 0] if i + 1 < num_segments else num_frames
-            seg_hz = midi_to_hz(trigger_midis[i])
-            f0_frames[start:end] = seg_hz
+            chance = rng.random()
+            if chance < p_slide and i + 1 < len(segs):
+                self._apply_slide(f0_frames, segs, i)
+            elif chance > 1 - p_vib:
+                self._apply_vibrato(rng, f0_frames, segs, i)
 
-            do_slide   = (i + 1 < num_segments) and (rng.random() < p_slide)
-            do_vibrato = rng.random() < p_vib
+        return f0_frames.astype(np.float32)
 
-            if do_slide and do_vibrato:
-                do_slide, do_vibrato = (True, False) if rng.random() < 0.5 else (False, True)
-
-            if do_slide:
-                f0_frames[start:end] = np.linspace(seg_hz, midi_to_hz(trigger_midis[i + 1]), end - start)
-
-            if do_vibrato:
-                seg_len       = end - start
-                vibrato_rate  = rng.uniform(vib_rate_low,  vib_rate_high)
-                vibrato_depth = rng.uniform(vib_depth_low, vib_depth_high)
-                t = np.linspace(0, seg_len / self._fps, seg_len)
-                vibrato = vibrato_depth * np.sin(2 * np.pi * vibrato_rate * t)
-                seg_midi = hz_to_midi(f0_frames[start:end]) + vibrato
-                f0_frames[start:end] = midi_to_hz(np.clip(seg_midi, MIDI_E1, MIDI_B5))
-
-        return f0_frames.astype(np.float32), segments
+    def _gen_triggers_and_f0(self, rng) -> tuple[np.ndarray, Segments]:
+        segs      = self._make_segments(rng)
+        f0_frames = self._build_f0_trajectory(rng, segs)
+        return f0_frames, segs
 
     def _generate_varying_param(self, rng, segment_indices, mean, conc, change_prob,
                                  low=None, high=None, log_scale=False,
@@ -287,7 +298,7 @@ class SyntheticDataset(IterableDataset):
 
     def _generate_lti_params(self, rng) -> dict:
         """Single pluck, static parameters throughout."""
-        num_frames = self.num_frames
+        num_frames  = self.num_frames
         onset_probs = np.zeros(num_frames, dtype=np.float32)
         onset_probs[self._get_first_onset_frame(rng)] = 1.0
 
@@ -314,28 +325,25 @@ class SyntheticDataset(IterableDataset):
         if self.lti or (self.blend_lti and rng.random() < 0.25):
             return self._generate_lti_params(rng)
 
-        f0, segments = self._gen_triggers_and_f0(rng)
-        # segments[:, 0] → frame indices; segments[:, 1] → is_pluck flags
+        f0, segs = self._gen_triggers_and_f0(rng)
 
         onset_probs = np.zeros(self.num_frames, dtype=np.float32)
-        for idx, is_pluck in segments:
-            if is_pluck:
+        for idx, hz, pluck in segs:
+            if pluck:
                 onset_probs[idx] = 1.0
-
-        segment_indices = list(segments[:, 0])
 
         p  = self.priors
         ex = self.ltv_extras
-        a1_highs = [self._a1_max(hz_to_midi(float(f0[idx]))) for idx in segment_indices]
+        a1_highs = [self._a1_max(hz_to_midi(hz)) for hz in segs.f0_hz]
 
         return {
             'onset_probs':    onset_probs,
             'f0':             f0,
-            'pluck_position': self._generate_varying_param(rng, segment_indices, **p['pluck_position'], **ex['pluck_position']),
-            'burst_gain':     self._generate_varying_param(rng, segment_indices, **p['burst_gain'],     **ex['burst_gain'],     low=0.0, high=1.0),
-            'dynamic_level':  self._generate_varying_param(rng, segment_indices, **p['dynamic_level'],  **ex['dynamic_level'],  low=0.0, high=1.0),
-            'a1':             self._generate_varying_param(rng, segment_indices, **p['a1'],             **ex['a1'],             high_schedule=a1_highs),
-            'decay':          self._generate_varying_param(rng, segment_indices, **p['decay'],          **ex['decay']),
+            'pluck_position': self._generate_varying_param(rng, segs.indices, **p['pluck_position'], **ex['pluck_position']),
+            'burst_gain':     self._generate_varying_param(rng, segs.indices, **p['burst_gain'],     **ex['burst_gain'],     low=0.0, high=1.0),
+            'dynamic_level':  self._generate_varying_param(rng, segs.indices, **p['dynamic_level'],  **ex['dynamic_level'],  low=0.0, high=1.0),
+            'a1':             self._generate_varying_param(rng, segs.indices, **p['a1'],             **ex['a1'],             high_schedule=a1_highs),
+            'decay':          self._generate_varying_param(rng, segs.indices, **p['decay'],          **ex['decay']),
         }
 
     def _synthesise(self, params_np: dict) -> np.ndarray:
