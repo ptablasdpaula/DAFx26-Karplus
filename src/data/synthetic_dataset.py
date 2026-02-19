@@ -57,7 +57,6 @@ class SyntheticDataset(IterableDataset):
         # low/high → linear range for _sample_param.
         self.priors = {
             'first_onset':       dict(mean=0.5,  conc=1,  low_s=0.0,  high_s=0.5),
-            'num_triggers':      dict(mean=0.2,  conc=8,  low_n=2,    high_n=20),
             'trigger_gap':       dict(mean=0.25, conc=3,  low_s=0.1,  high_s=4.0),
             'prob_note_change':  dict(prob=0.30),
             'prob_octave_shift': dict(prob=0.20),
@@ -140,10 +139,11 @@ class SyntheticDataset(IterableDataset):
         onset_frame = int(low_frame + raw * (high_frame - low_frame))
         return int(self._mirror(onset_frame, low=low_frame, high=high_frame))
 
-    def _gen_triggers_and_f0(self, rng, num_triggers_max: int):
+    def _gen_triggers_and_f0(self, rng):
         """
         Generate trigger positions and f0 trajectory.
         Each trigger enforces a minimum gap of one delay-line period (L = fs/f0).
+        Segment generation continues until no further segment fits within num_frames.
 
         Returns:
             f0_frames : (num_frames,) float32 array
@@ -170,7 +170,7 @@ class SyntheticDataset(IterableDataset):
         trigger_midis = [base_midi]
         current_midi  = base_midi
 
-        for _ in range(num_triggers_max - 1):
+        while True:
             current_hz = midi_to_hz(current_midi)
             min_gap    = max(int(np.ceil(num_frames * self.fs / (self.num_audio_samples * current_hz))), 1)
 
@@ -314,13 +314,7 @@ class SyntheticDataset(IterableDataset):
         if self.lti or (self.blend_lti and rng.random() < 0.25):
             return self._generate_lti_params(rng)
 
-        nt = self.priors['num_triggers']
-        raw = self._sample_beta(rng, nt['mean'], nt['conc'])[0]
-        num_triggers_max = int(np.clip(
-            np.round(raw * nt['high_n']), nt['low_n'], nt['high_n']
-        ))
-
-        f0, segments = self._gen_triggers_and_f0(rng, num_triggers_max)
+        f0, segments = self._gen_triggers_and_f0(rng)
         # segments[:, 0] → frame indices; segments[:, 1] → is_pluck flags
 
         onset_probs = np.zeros(self.num_frames, dtype=np.float32)
