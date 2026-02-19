@@ -63,6 +63,7 @@ class SyntheticDataset(IterableDataset):
             'prob_octave_shift': dict(prob=0.20),
             'prob_slide':        dict(prob=0.20),
             'prob_vibrato':      dict(prob=0.20),
+            'prob_skip_trigger': dict(prob=0.20),
             'vibrato_rate':      dict(low=0.1,   high=7.0),
             'vibrato_depth':     dict(low=0.1,   high=0.5),
             'pluck_position':    dict(mean=0.5,  conc=5,  low=0.01,   high=0.99),
@@ -145,8 +146,11 @@ class SyntheticDataset(IterableDataset):
         Each trigger enforces a minimum gap of one delay-line period (L = fs/f0).
 
         Returns:
-            f0_frames       : (num_frames,) float32 array
-            trigger_indices : list[int]
+            f0_frames : (num_frames,) float32 array
+            segments  : (num_segments, 2) int array where each row is
+                        [frame_index, is_pluck] — is_pluck is 1 if the
+                        segment boundary fires a pluck, 0 if it is silent
+                        (note change still occurs, onset is suppressed).
         """
         num_frames = self.num_frames
         ALL_INTERVALS = np.array([-7, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 7])
@@ -155,28 +159,30 @@ class SyntheticDataset(IterableDataset):
         p_octave = self.priors['prob_octave_shift']['prob']
         p_slide  = self.priors['prob_slide']['prob']
         p_vib    = self.priors['prob_vibrato']['prob']
+        p_skip_trigger = self.priors['prob_skip_trigger']['prob']
         vib_rate_low,  vib_rate_high  = self.priors['vibrato_rate']['low'],  self.priors['vibrato_rate']['high']
         vib_depth_low, vib_depth_high = self.priors['vibrato_depth']['low'], self.priors['vibrato_depth']['high']
 
-        base_midi       = rng.uniform(MIDI_E1, MIDI_B5 + 1)
-        trigger_indices = [self._get_first_onset_frame(rng)]
-        trigger_midis   = [base_midi]
-        current_midi    = base_midi
+        base_midi     = rng.uniform(MIDI_E1, MIDI_B5 + 1)
+        first_onset   = self._get_first_onset_frame(rng)
+        # segments: list of [frame_index, is_pluck]; first segment always plucks
+        segments_list = [[first_onset, 1]]
+        trigger_midis = [base_midi]
+        current_midi  = base_midi
 
         for _ in range(num_triggers_max - 1):
             current_hz = midi_to_hz(current_midi)
             min_gap    = max(int(np.ceil(num_frames * self.fs / (self.num_audio_samples * current_hz))), 1)
 
-            if trigger_indices[-1] + min_gap >= num_frames:
+            if segments_list[-1][0] + min_gap >= num_frames:
                 break
 
-            raw       = float(self._sample_beta(rng, tg['mean'], tg['conc'])[0])
-            gap_s     = tg['low_s'] + raw * (tg['high_s'] - tg['low_s'])
+            raw        = float(self._sample_beta(rng, tg['mean'], tg['conc'])[0])
+            gap_s      = tg['low_s'] + raw * (tg['high_s'] - tg['low_s'])
             gap_frames = self._seconds_to_frames(gap_s)
-            next_idx  = trigger_indices[-1] + max(gap_frames, min_gap)
+            next_idx   = segments_list[-1][0] + max(gap_frames, min_gap)
             if next_idx >= num_frames:
                 break
-            trigger_indices.append(next_idx)
 
             if rng.random() < p_note:
                 valid_intervals = ALL_INTERVALS[
@@ -210,19 +216,24 @@ class SyntheticDataset(IterableDataset):
             trigger_midis.append(new_midi)
             current_midi = new_midi
 
+            is_pluck = 0 if rng.random() < p_skip_trigger else 1
+            segments_list.append([next_idx, is_pluck])
+
         trigger_midis = np.array(trigger_midis)
-        num_triggers  = len(trigger_indices)
+        segments      = np.array(segments_list, dtype=int)  # (num_segments, 2)
+        num_segments  = len(segments)
 
         f0_frames = np.full(num_frames, midi_to_hz(trigger_midis[0]), dtype=np.float64)
 
-        for i in range(num_triggers):
-            start  = trigger_indices[i]
-            end    = trigger_indices[i + 1] if i + 1 < num_triggers else num_frames
+        for i in range(num_segments):
+            start  = segments[i, 0]
+            end    = segments[i + 1, 0] if i + 1 < num_segments else num_frames
             seg_hz = midi_to_hz(trigger_midis[i])
             f0_frames[start:end] = seg_hz
 
-            do_slide   = (i + 1 < num_triggers) and (rng.random() < p_slide)
+            do_slide   = (i + 1 < num_segments) and (rng.random() < p_slide)
             do_vibrato = rng.random() < p_vib
+
             if do_slide and do_vibrato:
                 do_slide, do_vibrato = (True, False) if rng.random() < 0.5 else (False, True)
 
@@ -238,15 +249,15 @@ class SyntheticDataset(IterableDataset):
                 seg_midi = hz_to_midi(f0_frames[start:end]) + vibrato
                 f0_frames[start:end] = midi_to_hz(np.clip(seg_midi, MIDI_E1, MIDI_B5))
 
-        return f0_frames.astype(np.float32), trigger_indices
+        return f0_frames.astype(np.float32), segments
 
-    def _generate_varying_param(self, rng, trigger_indices, mean, conc, change_prob,
+    def _generate_varying_param(self, rng, segment_indices, mean, conc, change_prob,
                                  low=None, high=None, log_scale=False,
                                  low_db=-60.0, high_db=0.0, high_schedule=None):
         """
-        Generate a frame-rate parameter that may change at trigger points.
+        Generate a frame-rate parameter that may change at segment boundaries.
         log_scale=True → dB-space sampling; low/high ignored, use low_db/high_db.
-        high_schedule   → per-trigger upper bounds (e.g. pitch-dependent a1 ceilings).
+        high_schedule   → per-segment upper bounds (e.g. pitch-dependent a1 ceilings).
         """
         num_frames = self.num_frames
         param = np.zeros(num_frames, dtype=np.float32)
@@ -261,8 +272,8 @@ class SyntheticDataset(IterableDataset):
 
         current_val = _draw(high_schedule[0] if high_schedule else high)
 
-        for i, start in enumerate(trigger_indices):
-            end    = trigger_indices[i + 1] if i + 1 < len(trigger_indices) else num_frames
+        for i, start in enumerate(segment_indices):
+            end    = segment_indices[i + 1] if i + 1 < len(segment_indices) else num_frames
             high_i = high_schedule[i] if high_schedule else high
 
             if i > 0 and rng.random() < change_prob:
@@ -309,24 +320,28 @@ class SyntheticDataset(IterableDataset):
             np.round(raw * nt['high_n']), nt['low_n'], nt['high_n']
         ))
 
-        f0, trigger_indices = self._gen_triggers_and_f0(rng, num_triggers_max)
+        f0, segments = self._gen_triggers_and_f0(rng, num_triggers_max)
+        # segments[:, 0] → frame indices; segments[:, 1] → is_pluck flags
 
         onset_probs = np.zeros(self.num_frames, dtype=np.float32)
-        for idx in trigger_indices:
-            onset_probs[idx] = 1.0
+        for idx, is_pluck in segments:
+            if is_pluck:
+                onset_probs[idx] = 1.0
+
+        segment_indices = list(segments[:, 0])
 
         p  = self.priors
         ex = self.ltv_extras
-        a1_highs = [self._a1_max(hz_to_midi(float(f0[idx]))) for idx in trigger_indices]
+        a1_highs = [self._a1_max(hz_to_midi(float(f0[idx]))) for idx in segment_indices]
 
         return {
             'onset_probs':    onset_probs,
             'f0':             f0,
-            'pluck_position': self._generate_varying_param(rng, trigger_indices, **p['pluck_position'], **ex['pluck_position']),
-            'burst_gain':     self._generate_varying_param(rng, trigger_indices, **p['burst_gain'],     **ex['burst_gain'],     low=0.0, high=1.0),
-            'dynamic_level':  self._generate_varying_param(rng, trigger_indices, **p['dynamic_level'],  **ex['dynamic_level'],  low=0.0, high=1.0),
-            'a1':             self._generate_varying_param(rng, trigger_indices, **p['a1'],             **ex['a1'],             high_schedule=a1_highs),
-            'decay':          self._generate_varying_param(rng, trigger_indices, **p['decay'],          **ex['decay']),
+            'pluck_position': self._generate_varying_param(rng, segment_indices, **p['pluck_position'], **ex['pluck_position']),
+            'burst_gain':     self._generate_varying_param(rng, segment_indices, **p['burst_gain'],     **ex['burst_gain'],     low=0.0, high=1.0),
+            'dynamic_level':  self._generate_varying_param(rng, segment_indices, **p['dynamic_level'],  **ex['dynamic_level'],  low=0.0, high=1.0),
+            'a1':             self._generate_varying_param(rng, segment_indices, **p['a1'],             **ex['a1'],             high_schedule=a1_highs),
+            'decay':          self._generate_varying_param(rng, segment_indices, **p['decay'],          **ex['decay']),
         }
 
     def _synthesise(self, params_np: dict) -> np.ndarray:
