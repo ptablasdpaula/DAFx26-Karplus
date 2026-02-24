@@ -39,27 +39,27 @@ def no_dc_burst(burst_length: int, seed: int=RND_SEED) -> npt.NDArray:
 @njit
 def noise_burst_excitation(
         num_samples: int,
-        trigger_frames: npt.NDArray,  # [num_frames] binary onset indicators (0 or 1)
+        burst_gain: npt.NDArray,  # [num_frames]
         f0: npt.NDArray,  # [num_frames] frame-rate f0
         fs: int,
         seed: int = RND_SEED
 ) -> npt.NDArray:
     """
-    Create excitation with noise bursts at trigger frames.
+    Create excitation with noise bursts where burst_gain > 0.
 
     :param num_samples: Total length of output signal in samples
-    :param trigger_frames: [num_frames] Binary array where 1 = onset, 0 = no onset
+    :param burst_gain: [num_frames] Zero = no onset, positive = onset with that gain
     :param f0: [num_frames] Fundamental frequencies in Hz at frame-rate
     :param fs: Sample rate in Hz
     :param seed: Random seed
-    :return: Excitation signal [num_samples] with noise bursts at trigger times
+    :return: Excitation signal [num_samples] with scaled noise bursts
     """
     excitation = np.zeros(num_samples)
     num_frames = len(f0)
     hop_length = num_samples / num_frames
 
     for frame_idx in range(num_frames):
-        if trigger_frames[frame_idx] == 0:
+        if burst_gain[frame_idx] == 0:
             continue
 
         trigger_sample = int(frame_idx * hop_length)
@@ -67,7 +67,7 @@ def noise_burst_excitation(
         burst_length = int(fs / f0_at_trigger)
         end_sample = min(trigger_sample + burst_length, num_samples)
         burst_length = end_sample - trigger_sample
-        excitation[trigger_sample:end_sample] = no_dc_burst(burst_length, seed=seed)
+        excitation[trigger_sample:end_sample] = burst_gain[frame_idx] * no_dc_burst(burst_length, seed=seed)
 
     return excitation
 
@@ -366,7 +366,6 @@ def compute_ksa_rt60(
     return -60 / (20 * np.log10(pole_r)) / fs
 
 def oracle_physical_model(
-        trigger_frames: npt.NDArray,
         f0: npt.NDArray,                # [num_frames]
         pluck_position: npt.NDArray,    # [num_frames]
         burst_gain: npt.NDArray,        # [num_frames]
@@ -381,10 +380,9 @@ def oracle_physical_model(
     """
     Oracle physical model with frame-rate parameter inputs.
 
-    :param trigger_frames: Array of frame indices where onsets occur
     :param f0: [num_frames] Fundamental frequency in Hz
     :param pluck_position: [num_frames] Pluck position [0, 1]
-    :param burst_gain: [num_frames] Burst gain [0, 1]
+    :param burst_gain: [num_frames] Zero = no onset, positive = onset with that gain
     :param dynamic_level: [num_frames] Dynamic level [0, 1]
     :param a1: [num_frames] Filter coefficient [0, 1]
     :param decay: [num_frames] Decay coefficient [0, 1]
@@ -394,10 +392,9 @@ def oracle_physical_model(
     :param random_seed: Random seed for noise generation
     :return: Synthesized audio [num_samples]
     """
-    # Generate excitation using frame-rate f0
     x = noise_burst_excitation(
         num_samples=num_samples,
-        trigger_frames=trigger_frames,
+        burst_gain=burst_gain,
         f0=f0,
         fs=fs,
         seed=random_seed
@@ -408,14 +405,11 @@ def oracle_physical_model(
         signal_length=num_samples,
         f0=f0,
         pluck_position=pluck_position,
-        burst_gain=burst_gain,
         dynamic_level=dynamic_level,
         a1=a1,
         decay=decay
     )
 
-    # Apply DSP chain at sample-rate
-    x = x * p['burst_gain']
     x = pluck_position_filter(
         x=x,
         f0=p['f0'],
@@ -470,8 +464,6 @@ if __name__ == "__main__":
 
     for fs in sample_rates:
         signal_length = int(fs * duration)
-        trigger_frames = np.zeros(num_frames)
-        trigger_frames[[0, 25, 50, 75]] = 1.0
 
         print(f"\n{'=' * 60}")
         print(f"Testing at fs={fs}Hz, duration={duration}s ({signal_length} samples, {num_frames} frames)")
@@ -482,8 +474,13 @@ if __name__ == "__main__":
             params = {k: np.full(num_frames, v) for k, v in defaults.items()}
             params[param_name] = np.linspace(min_val, max_val, num_frames)
 
+            # Set burst_gain to trigger at onset frames
+            params['burst_gain'] = np.zeros(num_frames)
+            params['burst_gain'][[0, 25, 50, 75]] = defaults['burst_gain']
+            if param_name == 'burst_gain':
+                params['burst_gain'][[0, 25, 50, 75]] = np.linspace(min_val + 0.01, max_val, 4)
+
             y = oracle_physical_model(
-                trigger_frames=trigger_frames,
                 num_samples=signal_length,
                 fs=fs,
                 **params
@@ -498,11 +495,12 @@ if __name__ == "__main__":
 
         # Test all parameters sweeping simultaneously
         params = {k: np.linspace(*v, num_frames) for k, v in sweeps.items()}
+        params['burst_gain'] = np.zeros(num_frames)
+        params['burst_gain'][[0, 25, 50, 75]] = 0.5
 
         start = time.time()
 
         y = oracle_physical_model(
-            trigger_frames=trigger_frames,
             num_samples=signal_length,
             fs=fs,
             **params

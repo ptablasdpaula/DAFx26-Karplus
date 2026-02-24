@@ -103,7 +103,6 @@ class SyntheticDataset(IterableDataset):
 
         self.ltv_extras = {
             'pluck_position': dict(change_prob=0.70),
-            'burst_gain':     dict(change_prob=0.70),
             'dynamic_level':  dict(change_prob=0.70),
             'a1':             dict(change_prob=0.70),
             'decay':          dict(change_prob=0.70),
@@ -294,31 +293,32 @@ class SyntheticDataset(IterableDataset):
                 current_val = low + self._mirror(current_val - low, low=0.0, high=span)
             param[start:end] = current_val
 
+        if segment_indices[0] > 0:
+            param[:segment_indices[0]] = param[segment_indices[0]]
+
         return param
 
     def _generate_lti_params(self, rng) -> dict:
         """Single pluck, static parameters throughout."""
         num_frames  = self.num_frames
-        onset_probs = np.zeros(num_frames, dtype=np.float32)
-        onset_probs[self._get_first_onset_frame(rng)] = 1.0
+        onset_frame = self._get_first_onset_frame(rng)
 
         base_midi = rng.uniform(MIDI_E1, MIDI_B5)
         f0_val    = midi_to_hz(base_midi)
         a1_max    = self._a1_max(hz_to_midi(f0_val))
 
         p = self.priors
-        scalar_params = {
-            'pluck_position': self._sample_param(rng, p['pluck_position']),
-            'burst_gain':     self._sample_param(rng, p['burst_gain']),
-            'dynamic_level':  self._sample_param(rng, p['dynamic_level']),
-            'a1':             self._sample_param(rng, p['a1'], high_override=a1_max),
-            'decay':          self._sample_param(rng, p['decay']),
-        }
+
+        burst_gain = np.zeros(num_frames, dtype=np.float32)
+        burst_gain[onset_frame] = self._sample_param(rng, p['burst_gain'])
 
         return {
-            'onset_probs': onset_probs,
-            'f0':          np.full(num_frames, f0_val, dtype=np.float32),
-            **{k: np.full(num_frames, v, dtype=np.float32) for k, v in scalar_params.items()},
+            'f0':             np.full(num_frames, f0_val, dtype=np.float32),
+            'burst_gain':     burst_gain,
+            'pluck_position': np.full(num_frames, self._sample_param(rng, p['pluck_position']), dtype=np.float32),
+            'dynamic_level':  np.full(num_frames, self._sample_param(rng, p['dynamic_level']), dtype=np.float32),
+            'a1':             np.full(num_frames, self._sample_param(rng, p['a1'], high_override=a1_max), dtype=np.float32),
+            'decay':          np.full(num_frames, self._sample_param(rng, p['decay']), dtype=np.float32),
         }
 
     def _generate_params(self, rng) -> dict:
@@ -327,20 +327,20 @@ class SyntheticDataset(IterableDataset):
 
         f0, segs = self._gen_triggers_and_f0(rng)
 
-        onset_probs = np.zeros(self.num_frames, dtype=np.float32)
-        for idx, hz, pluck in segs:
-            if pluck:
-                onset_probs[idx] = 1.0
-
         p  = self.priors
         ex = self.ltv_extras
+
+        burst_gain = np.zeros(self.num_frames, dtype=np.float32)
+        for idx, hz, pluck in segs:
+            if pluck:
+                burst_gain[idx] = self._sample_param(rng, p['burst_gain'])
+
         a1_highs = [self._a1_max(hz_to_midi(hz)) for hz in segs.f0_hz]
 
         return {
-            'onset_probs':    onset_probs,
             'f0':             f0,
+            'burst_gain':     burst_gain,
             'pluck_position': self._generate_varying_param(rng, segs.indices, **p['pluck_position'], **ex['pluck_position']),
-            'burst_gain':     self._generate_varying_param(rng, segs.indices, **p['burst_gain'],     **ex['burst_gain'],     low=0.0, high=1.0),
             'dynamic_level':  self._generate_varying_param(rng, segs.indices, **p['dynamic_level'],  **ex['dynamic_level'],  low=0.0, high=1.0),
             'a1':             self._generate_varying_param(rng, segs.indices, **p['a1'],             **ex['a1'],             high_schedule=a1_highs),
             'decay':          self._generate_varying_param(rng, segs.indices, **p['decay'],          **ex['decay']),
@@ -351,7 +351,6 @@ class SyntheticDataset(IterableDataset):
             num_samples=self.num_audio_samples,
             fs=self.fs,
             lagrange_order=self.lagrange_order,
-            training=False,
         )
         synth = Synth(config)
         params_torch = {k: torch.from_numpy(v).unsqueeze(0).float() for k, v in params_np.items()}

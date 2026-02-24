@@ -10,12 +10,11 @@ from synths.constants import (
     DEFAULT_LAGRANGE_ORDER,
     DEFAULT_IIR_TRUNCATION,
     DEFAULT_RND_SEED,
-    DEFAULT_ONSET_THRESHOLD,
 )
 from synths.dsp import oracle_physical_model
 from synths.ddsp import (
     lin_resample_many,
-    excitation_onset,
+    excitation,
     dynamics_filter,
     Implementation,
     pluck_position_filter,
@@ -36,8 +35,6 @@ class SynthConfig:
     random_seed: int = DEFAULT_RND_SEED
     use_freq_pluck: bool = False
     use_freq_ksa: bool = False
-    training: bool = True
-    onset_threshold: float = DEFAULT_ONSET_THRESHOLD
 
 
 class Synth(nn.Module):
@@ -56,8 +53,6 @@ class Synth(nn.Module):
         self.random_seed = config.random_seed
         self.use_freq_pluck = config.use_freq_pluck
         self.use_freq_ksa = config.use_freq_ksa
-        self._training = config.training
-        self.onset_threshold = config.onset_threshold
 
         window_tensor = torch.ones(self.n_fft)
         self.register_buffer('window', window_tensor.to(self.device))
@@ -68,10 +63,9 @@ class Synth(nn.Module):
 
         Args:
             params: Dictionary containing:
-                - onset_probs: [B, num_frames] - onset probability per frame [0, 1]
                 - f0: [B, num_frames] - fundamental frequency in Hz
                 - pluck_position: [B, num_frames] - pluck position [0, 1]
-                - burst_gain: [B, num_frames] - excitation gain [0, 1]
+                - burst_gain: [B, num_frames] - zero = no onset, positive = onset with that gain
                 - dynamic_level: [B, num_frames] - dynamic level (0=soft, 1=bright)
                 - a1: [B, num_frames] - loop filter coefficient [0, 1]
                 - decay: [B, num_frames] - decay/damping coefficient [0, 1]
@@ -81,8 +75,7 @@ class Synth(nn.Module):
         """
         self.resample_parameters(params)
 
-        x = self._generate_excitation(params['onset_probs'], params['f0'])
-        x = x * self.p_time['burst_gain']
+        x = self._generate_excitation(params['burst_gain'], params['f0'])
         x = self._apply_dynamics_filter(x)
         x = self._apply_pluck_filter(x)
         x = self._apply_karplus_strong(x)
@@ -105,10 +98,7 @@ class Synth(nn.Module):
         outputs = []
 
         for b in range(batch_size):
-            trigger_frames = (params['onset_probs'][b] >= self.onset_threshold).cpu().numpy().astype(float)
-
             y = oracle_physical_model(
-                trigger_frames=trigger_frames,
                 f0=params['f0'][b].cpu().numpy(),
                 pluck_position=params['pluck_position'][b].cpu().numpy(),
                 burst_gain=params['burst_gain'][b].cpu().numpy(),
@@ -135,18 +125,15 @@ class Synth(nn.Module):
             self.p_stft = lin_resample_many(signal_length=num_stft_frames, **self._params)
         return self.p_stft
 
-    def _generate_excitation(self, onset_probs: T, f0: T) -> T:
-        """Generate noise burst excitation with onset gating."""
-        x, _ = excitation_onset(
-            onset_probs=onset_probs,
+    def _generate_excitation(self, burst_gain: T, f0: T) -> T:
+        """Generate frame-based excitation."""
+        return excitation(
+            burst_gain=burst_gain,
             signal_length=self.num_samples,
             f0=f0,
             fs=self.fs,
             noise_seed=self.random_seed,
-            training=self._training,
-            threshold=self.onset_threshold
         )
-        return x
 
     def _apply_dynamics_filter(self, x: T) -> T:
         """Apply dynamics filter (always in time domain)."""
@@ -283,13 +270,14 @@ if __name__ == "__main__":
             )
             model = Synth(config)
 
-            onset_probs = torch.zeros(1, num_frames)
-            onset_probs[0, [0, 25, 50, 75]] = 1.0
-
             for param_name, (min_val, max_val) in sweeps.items():
                 params = {k: torch.full((1, num_frames), v) for k, v in defaults.items()}
                 params[param_name] = torch.linspace(min_val, max_val, num_frames).unsqueeze(0)
-                params['onset_probs'] = onset_probs
+
+                params['burst_gain'] = torch.zeros(1, num_frames)
+                params['burst_gain'][0, [0, 25, 50, 75]] = defaults['burst_gain']
+                if param_name == 'burst_gain':
+                    params['burst_gain'][0, [0, 25, 50, 75]] = torch.linspace(min_val + 0.01, max_val, 4)
 
                 y = model(params)
                 if not check_output(y, f"{param_name} sweep"):
@@ -297,7 +285,8 @@ if __name__ == "__main__":
                 test_count += 1
 
             params = {k: torch.linspace(*v, num_frames).unsqueeze(0) for k, v in sweeps.items()}
-            params['onset_probs'] = onset_probs
+            params['burst_gain'] = torch.zeros(1, num_frames)
+            params['burst_gain'][0, [0, 25, 50, 75]] = 0.5
             y = model(params)
             if not check_output(y, "all parameters sweeping"):
                 all_passed = False
@@ -317,17 +306,17 @@ if __name__ == "__main__":
             num_samples=num_samples,
             fs=fs,
             device='cpu',
-            training=False,
         )
         model = Synth(config)
-
-        onset_probs = torch.zeros(1, num_frames)
-        onset_probs[0, [0, 25, 50, 75]] = 1.0
 
         for param_name, (min_val, max_val) in sweeps.items():
             params = {k: torch.full((1, num_frames), v) for k, v in defaults.items()}
             params[param_name] = torch.linspace(min_val, max_val, num_frames).unsqueeze(0)
-            params['onset_probs'] = onset_probs
+
+            params['burst_gain'] = torch.zeros(1, num_frames)
+            params['burst_gain'][0, [0, 25, 50, 75]] = defaults['burst_gain']
+            if param_name == 'burst_gain':
+                params['burst_gain'][0, [0, 25, 50, 75]] = torch.linspace(min_val + 0.01, max_val, 4)
 
             y = model.oracle_synth(params)
             if not check_output(y, f"oracle {param_name} sweep"):
@@ -335,7 +324,8 @@ if __name__ == "__main__":
             test_count += 1
 
         params = {k: torch.linspace(*v, num_frames).unsqueeze(0) for k, v in sweeps.items()}
-        params['onset_probs'] = onset_probs
+        params['burst_gain'] = torch.zeros(1, num_frames)
+        params['burst_gain'][0, [0, 25, 50, 75]] = 0.5
         y = model.oracle_synth(params)
         if not check_output(y, "oracle all parameters sweeping"):
             all_passed = False
