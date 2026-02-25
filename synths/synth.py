@@ -76,8 +76,8 @@ class Synth(nn.Module):
         self.resample_parameters(params)
 
         x = self._generate_excitation(params['burst_gain'], params['f0'])
-        x = self._apply_dynamics_filter(x)
         x = self._apply_pluck_filter(x)
+        x = self._apply_dynamics_filter(x)
         x = self._apply_karplus_strong(x)
 
         return x

@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from philtorch.lpv import fir, allpole
 from torchlpc import sample_wise_lpc
 from enum import Enum
+import numpy as np
 
 from synths.constants import (
     F0_MIN,
@@ -54,12 +55,10 @@ def no_dc_burst(
     :param device: torch device
     :return burst: [burst_length] ε [-1, 1]
     """
-    generator = torch.Generator(device=device)
-    generator.manual_seed(seed)
-    burst = torch.rand(burst_length, generator=generator, device=device)
-    burst = burst / burst.max()
-    burst = (burst - 0.5) * 2
-    return burst
+    np.random.seed(seed)
+    burst = np.random.rand(burst_length)
+    burst_torch = torch.from_numpy(burst).to(device)
+    return ((burst_torch / burst_torch.max()) - 0.5) * 2
 
 def excitation(
         burst_gain: T,
@@ -81,7 +80,7 @@ def excitation(
     assert burst_gain.dim() == 2 == f0.dim()
     assert burst_gain.shape == f0.shape
     batch_size, num_frames = burst_gain.shape
-    hop_length = signal_length // num_frames
+    hop_length = signal_length / num_frames
     device = burst_gain.device
 
     output = torch.zeros(batch_size, signal_length, device=device)
@@ -94,7 +93,7 @@ def excitation(
             assert 0 < f0_hz <= fs / 2
             burst_len = int(fs / f0_hz)
             noise_burst = no_dc_burst(burst_len, seed=noise_seed, device=device)
-            frame_start = i * hop_length
+            frame_start = int(i * hop_length)
             frame_end = min(frame_start + burst_len, signal_length)
             actual_len = frame_end - frame_start
             output[b, frame_start:frame_end] += burst_gain[b, i] * noise_burst[:actual_len]
@@ -234,7 +233,7 @@ def pluck_position_filter(
     assert torch.all((position >= 0.0) & (position <= 1.0))
 
     L = fs / f0
-    comb_L = 1.0 + position * (L - 1)
+    comb_L = (L * position).clamp(min=1.0)
 
     if implementation == Implementation.TIME_DOMAIN:
         return _time_all_zero_comb(x, comb_L, lagrange_order)
