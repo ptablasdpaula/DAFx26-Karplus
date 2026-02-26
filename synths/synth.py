@@ -35,6 +35,7 @@ class SynthConfig:
     random_seed: int = DEFAULT_RND_SEED
     use_freq_pluck: bool = False
     use_freq_ksa: bool = False
+    use_lti: bool = False
 
 
 class Synth(nn.Module):
@@ -53,6 +54,7 @@ class Synth(nn.Module):
         self.random_seed = config.random_seed
         self.use_freq_pluck = config.use_freq_pluck
         self.use_freq_ksa = config.use_freq_ksa
+        self.use_lti = config.use_lti
 
         window_tensor = torch.ones(self.n_fft)
         self.register_buffer('window', window_tensor.to(self.device))
@@ -115,6 +117,15 @@ class Synth(nn.Module):
         return torch.stack(outputs, dim=0)
 
     def resample_parameters(self, params: dict[str, T]) -> None:
+        if self.use_lti:
+            assert self.use_freq_pluck or self.use_freq_ksa, (
+                "use_lti=True requires at least one of use_freq_pluck or use_freq_ksa"
+            )
+            num_frames = next(iter(params.values())).shape[1]
+            assert num_frames == 1, (
+                f"use_lti=True requires num_frames=1, got {num_frames}"
+            )
+
         self._params = params
         self.p_time = lin_resample_many(signal_length=self.num_samples, **params)
         self.p_stft = None
@@ -147,12 +158,19 @@ class Synth(nn.Module):
     def _apply_pluck_filter(self, x: T) -> T:
         """Apply pluck position filter."""
         if self.use_freq_pluck:
-            x, num_frames = self._to_freq_domain(x)
-            p = self._get_stft_params(num_frames)
+            if self.use_lti:
+                x = self._to_lti_freq_domain(x)
+                p = self._params
+                n_fft = self.num_samples
+            else:
+                x, num_frames = self._to_stft_domain(x)
+                p = self._get_stft_params(num_frames)
+                n_fft = self.n_fft
             implementation = Implementation.FREQUENCY_SAMPLING
         else:
             p = self.p_time
             implementation = Implementation.TIME_DOMAIN
+            n_fft = self.n_fft
 
         return pluck_position_filter(
             x=x,
@@ -161,23 +179,31 @@ class Synth(nn.Module):
             implementation=implementation,
             fs=self.fs,
             lagrange_order=self.lagrange_order,
-            n_fft=self.n_fft,
+            n_fft=n_fft,
         )
 
     def _apply_karplus_strong(self, x: T) -> T:
         """Apply Karplus-Strong algorithm."""
         if self.use_freq_ksa:
-            if not self.use_freq_pluck:
-                x, num_frames = self._to_freq_domain(x)
+            if self.use_lti:
+                if not self.use_freq_pluck:
+                    x = self._to_lti_freq_domain(x)
+                p = self._params
+                n_fft = self.num_samples
             else:
-                num_frames = x.shape[1]  # Already in freq domain
-            p = self._get_stft_params(num_frames)
+                if not self.use_freq_pluck:
+                    x, num_frames = self._to_stft_domain(x)
+                else:
+                    num_frames = x.shape[1]
+                p = self._get_stft_params(num_frames)
+                n_fft = self.n_fft
             implementation = Implementation.FREQUENCY_SAMPLING
         else:
             if self.use_freq_pluck:
-                x = self._to_time_domain(x)
+                x = self._from_lti_freq_domain(x) if self.use_lti else self._from_stft_domain(x)
             p = self.p_time
             implementation = Implementation.TIME_DOMAIN
+            n_fft = self.n_fft
 
         x = karplus_strong(
             x=x,
@@ -188,23 +214,39 @@ class Synth(nn.Module):
             fs=self.fs,
             lagrange_order=self.lagrange_order,
             iir_truncation=self.iir_truncation,
-            n_fft=self.n_fft,
+            n_fft=n_fft,
         )
 
-        return self._to_time_domain(x) if self.use_freq_ksa else x
+        if self.use_freq_ksa:
+            return self._from_lti_freq_domain(x) if self.use_lti else self._from_stft_domain(x)
+        return x
 
-    def _to_freq_domain(self, x: T) -> tuple[T, int]:
-        """Convert time-domain signal to frequency domain and return frame count."""
+    def _to_lti_freq_domain(self, x: T) -> T:
+        """Single full-signal rfft. Returns [B, 1, num_samples//2+1]."""
+        return torch.fft.rfft(x, n=self.num_samples).unsqueeze(1)
+
+    def _from_lti_freq_domain(self, X: T) -> T:
+        """Inverse of _to_lti_freq_domain. Returns [B, num_samples]."""
+        return torch.fft.irfft(X.squeeze(1), n=self.num_samples)
+
+    def _to_stft_domain(self, x: T) -> tuple[T, int]:
+        """Convert time-domain signal to STFT domain. Returns [B, num_frames, n_bins]."""
         X = torch.stft(x, n_fft=self.n_fft, hop_length=self.hop_length,
                        window=self.window, return_complex=True)
         X = X.permute(0, 2, 1)  # [B, num_stft_frames, n_bins]
         return X, X.shape[1]
 
-    def _to_time_domain(self, X: T) -> T:
-        """Convert frequency-domain signal to time domain."""
-        X_perm = X.permute(0, 2, 1)
-        return torch.istft(X_perm, n_fft=self.n_fft, hop_length=self.hop_length,
+    def _from_stft_domain(self, X: T) -> T:
+        """Inverse of _to_stft_domain. Returns [B, num_samples]."""
+        return torch.istft(X.permute(0, 2, 1), n_fft=self.n_fft, hop_length=self.hop_length,
                            window=self.window, length=self.num_samples)
+
+    # Keep old names as aliases for backwards compatibility
+    def _to_freq_domain(self, x: T) -> tuple[T, int]:
+        return self._to_stft_domain(x)
+
+    def _to_time_domain(self, X: T) -> T:
+        return self._from_stft_domain(X)
 
 
 # =============================================================================
@@ -291,6 +333,43 @@ if __name__ == "__main__":
             if not check_output(y, "all parameters sweeping"):
                 all_passed = False
             test_count += 1
+
+    # =========================================================================
+    # Test LTI mode (num_frames=1, frequency-domain with full-signal FFT)
+    # =========================================================================
+    lti_combinations = [
+        (False, True, "TD pluck + LTI FD KS"),
+        (True, False, "LTI FD pluck + TD KS"),
+        (True, True, "LTI FD pluck + LTI FD KS"),
+    ]
+
+    for use_freq_pluck, use_freq_ksa, impl_name in lti_combinations:
+        for fs in sample_rates:
+            num_samples = int(fs * duration)
+
+            print(f"\n{'=' * 60}")
+            print(f"Testing [{impl_name}] at fs={fs}Hz ({num_samples} samples)")
+            print(f"{'=' * 60}")
+
+            config = SynthConfig(
+                num_samples=num_samples,
+                fs=fs,
+                device='cpu',
+                use_freq_pluck=use_freq_pluck,
+                use_freq_ksa=use_freq_ksa,
+                use_lti=True,
+            )
+            model = Synth(config)
+
+            # LTI mode: single frame params
+            for param_name in defaults:
+                params = {k: torch.full((1, 1), v) for k, v in defaults.items()}
+                params['burst_gain'] = torch.tensor([[defaults['burst_gain']]])
+
+                y = model(params)
+                if not check_output(y, f"LTI {param_name} constant"):
+                    all_passed = False
+                test_count += 1
 
     # =========================================================================
     # Test oracle_synth
