@@ -1,3 +1,13 @@
 .idea/*
 .pixi/*
 !.pixi/config.toml
+
+# Python-specific
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build and environment
+outputs/
+experiments/
