@@ -178,7 +178,6 @@ class Synth(nn.Module):
             position=p['pluck_position'],
             implementation=implementation,
             fs=self.fs,
-            lagrange_order=self.lagrange_order,
             n_fft=n_fft,
         )
 

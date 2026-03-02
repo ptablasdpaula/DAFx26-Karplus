@@ -112,16 +112,14 @@ def all_zero_comb(
         x: npt.NDArray,
         L: npt.NDArray,
         fs: int = FS_MIN,
-        lagrange_order: int = LAGRANGE_ORDER
 ) -> npt.NDArray:
     """
     All-zero comb filter with time-varying fractional delay: y(n) = x(n) - x(n - L)
-    Uses Lagrange interpolation for fractional delays.
+    Uses linear interpolation for fractional delays.
 
     :param x: Input signal [num_samples]
     :param L: Delay in samples [num_samples], can be fractional
     :param fs: Sample rate (used to determine max buffer size)
-    :param lagrange_order: Order of Lagrange interpolator
     :return: Filtered signal [num_samples]
     """
     assert len(x) == len(L)
@@ -133,14 +131,17 @@ def all_zero_comb(
     write_idx = 0
 
     for n in range(num_samples):
-        L_int, h = lagrange_fractional_delay(L[n], lagrange_order)
-        delayed_sample = 0.0
-        for k in range(lagrange_order + 1):
-            read_idx = (write_idx - L_int - k) % len(delay_buffer)
-            delayed_sample += h[k] * delay_buffer[read_idx]
+        L_int = int(np.floor(L[n]))
+        frac = L[n] - L_int
+
+        idx0 = (write_idx - L_int) % len(delay_buffer)
+        idx1 = (write_idx - L_int - 1) % len(delay_buffer)
+        delayed_sample = (1.0 - frac) * delay_buffer[idx0] + frac * delay_buffer[idx1]
+
         y[n] = x[n] - delayed_sample
         delay_buffer[write_idx] = x[n]
         write_idx = (write_idx + 1) % len(delay_buffer)
+
     return y
 
 @njit
@@ -169,7 +170,7 @@ def pluck_position_filter(
     :return: Filtered excitation signal [num_samples]
     """
     assert len(x) == len(f0) == len(position)
-    assert np.all((position >= 0.0) & (position <= 1.0))
+    assert np.all((position >= 0.01) & (position <= 0.5))
 
     L = fs / f0
     comb_L = L * position

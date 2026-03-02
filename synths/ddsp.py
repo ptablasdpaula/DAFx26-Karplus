@@ -164,21 +164,29 @@ def lagrange_fractional_delay(
 #                           PLUCK POSITION FILTER
 # =============================================================================
 
-def _time_all_zero_comb(x: T, L: T, lagrange_order: int) -> T:
+def _time_all_zero_comb(x: T, L: T) -> T:
+    """
+    All-zero comb filter H(z) = 1 - z^(-L) with linear interpolation.
+    
+    :param x: [B, N] input signal
+    :param L: [B, N] fractional delay in samples (≥ 0)
+    :return: [B, N] filtered signal
+    """
     B, N = x.shape
 
-    L_int, h = lagrange_fractional_delay(L=L, N=lagrange_order)
-    max_delay = int(L.max().item()) + lagrange_order + 1
+    L_int = torch.floor(L).to(torch.long)
+    frac = L - L_int.to(L.dtype)
 
-    b = torch.zeros(B, N, max_delay + 1, device=x.device, dtype=x.dtype)
+    max_delay = int(L.max().item()) + 2  # +1 for the extra tap, +1 for indexing
+
+    b = torch.zeros(B, N, max_delay, device=x.device, dtype=x.dtype)
     b[:, :, 0] = 1.0
 
     batch_idx = torch.arange(B, device=x.device)[:, None].expand(B, N)
     time_idx = torch.arange(N, device=x.device)[None, :].expand(B, N)
 
-    for k in range(lagrange_order + 1):
-        delay_idx = L_int + k
-        b[batch_idx, time_idx, delay_idx] -= h[:, :, k]
+    b[batch_idx, time_idx, L_int] -= (1.0 - frac)
+    b[batch_idx, time_idx, L_int + 1] -= frac
 
     return fir(b, x)
 
@@ -202,7 +210,6 @@ def pluck_position_filter(
         position: T,
         implementation: Implementation = Implementation.TIME_DOMAIN,
         fs: int = FS_MIN,
-        lagrange_order: int = LAGRANGE_ORDER,
         n_fft: int = N_FFT,
 ) -> T:
     """
@@ -233,10 +240,10 @@ def pluck_position_filter(
     assert torch.all((position >= 0.0) & (position <= 1.0))
 
     L = fs / f0
-    comb_L = (L * position).clamp(min=1.0)
+    comb_L = (L * position)
 
     if implementation == Implementation.TIME_DOMAIN:
-        return _time_all_zero_comb(x, comb_L, lagrange_order)
+        return _time_all_zero_comb(x, comb_L)
     elif implementation == Implementation.FREQUENCY_SAMPLING:
         return _freq_all_zero_comb(x, comb_L, n_fft)
     else:
