@@ -1,0 +1,40 @@
+# ── Audio ──
+audio:
+  fs: 16000
+  duration: 4         # seconds
+  num_frames: 1       # single-frame synthesis
+
+# ── Spectral loss kernels ──
+kernel_lengths: [256, 512, 1024, 2048]
+
+# ── Target synthesis parameters ──
+# During the pluck sweep, f0 is held at target.f0
+# During the f0 sweep, pluck is held at target.pluck_position
+target:
+  f0: 80.0
+  pluck_position: 0.5
+  a1: 0.2
+  decay: 0.98
+  dynamic_level: 1.0
+  burst_gain: 1.0
+
+# ── Grid sweep ──
+grid:
+  n_points: 2
+  f0_min: 110           # Hz
+  f0_max: 880           # Hz
+  pluck_min: 0.01       # minimum pluck position
+  pluck_max: 0.5       # maximum pluck position
+  snap_to_integer_samples: false
+
+# ── Fine Gradient Accuracy (separate fine-resolution sweep) ──
+# A second N×N grid is built within ±half around the target,
+# using the same grid.n_points as the coarse sweep.
+fga:
+  f0_half_cents: 100    # ±cents around target.f0
+  pluck_half: 0.1      # ±pluck_position around target.pluck_position
+
+# ── Compute ──
+compute:
+  device: auto          # auto | cpu | cuda
+  batch_size: 0         # 0 = all grid points at once

@@ -9,5 +9,7 @@ __pycache__/
 *.pyd
 
 # Build and environment
-outputs/
-experiments/
+experiments/outputs
+experiments/logs
+experiments/outputs/*
+experiments/logs/*
