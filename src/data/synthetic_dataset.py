@@ -94,7 +94,7 @@ class SyntheticDataset(IterableDataset):
             'prob_skip_trigger': dict(prob=0.20),
             'vibrato_rate':      dict(low=0.1,   high=7.0),
             'vibrato_depth':     dict(low=0.1,   high=0.5),
-            'pluck_position':    dict(mean=0.5,  conc=5,  low=0.01,   high=0.99),
+            'pluck_position':    dict(mean=0.25,  conc=5,  low=0.01,   high=0.5),
             'burst_gain':        dict(mean=0.5,  conc=5,  low_db=-40.0, high_db=0.0, log_scale=True),
             'dynamic_level':     dict(mean=0.5,  conc=5,  low_db=-40.0, high_db=0.0, log_scale=True),
             'a1':                dict(mean=0.3,  conc=5,  low=0.0,    high=0.75),
