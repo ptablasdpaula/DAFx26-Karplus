@@ -1,5 +1,5 @@
 import librosa, torchcrepe, numpy as np, torch
-from synths.constants import DEFAULT_FS, DEFAULT_CREPE_HOP_LENGTH, DEFAULT_ONSET_HOP_LENGTH, DEFAULT_ONSET_PAD_DURATION
+from src.synths.constants import DEFAULT_FS, DEFAULT_CREPE_HOP_LENGTH, DEFAULT_ONSET_HOP_LENGTH, DEFAULT_ONSET_PAD_DURATION
 
 def detect_onsets(audio_np, sr=DEFAULT_FS, hop_length=DEFAULT_ONSET_HOP_LENGTH, pad_duration=DEFAULT_ONSET_PAD_DURATION):
     pad_samples = int(pad_duration * sr)

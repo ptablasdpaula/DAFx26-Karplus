@@ -18,7 +18,6 @@ import os
 import sys
 import argparse
 import time
-import paths
 
 import numpy as np
 import torch
@@ -29,7 +28,7 @@ from itertools import product
 import pandas as pd
 from omegaconf import OmegaConf
 
-from synths.synth import Synth, SynthConfig
+from src.synths.synth import Synth, SynthConfig
 
 
 # ═══════════════════════════════════════════════════════════

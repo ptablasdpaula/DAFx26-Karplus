@@ -31,7 +31,7 @@ import matplotlib
 matplotlib.use('Agg')
 from tqdm import tqdm
 
-from synths.synth import Synth, SynthConfig
+from src.synths.synth import Synth, SynthConfig
 
 
 # ═══════════════════════════════════════════════════════════

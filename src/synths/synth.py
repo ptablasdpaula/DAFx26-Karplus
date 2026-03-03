@@ -4,15 +4,15 @@ from torch import Tensor as T
 from dataclasses import dataclass
 from omegaconf import DictConfig
 
-from synths.constants import (
+from src.synths.constants import (
     DEFAULT_FS,
     DEFAULT_N_FFT,
     DEFAULT_LAGRANGE_ORDER,
     DEFAULT_IIR_TRUNCATION,
     DEFAULT_RND_SEED,
 )
-from synths.dsp import oracle_physical_model
-from synths.ddsp import (
+from src.synths.dsp import oracle_physical_model
+from src.synths.ddsp import (
     lin_resample_many,
     excitation,
     dynamics_filter,

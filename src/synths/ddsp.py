@@ -6,7 +6,7 @@ from torchlpc import sample_wise_lpc
 from enum import Enum
 import numpy as np
 
-from synths.constants import (
+from src.synths.constants import (
     F0_MIN,
     DEFAULT_LAGRANGE_ORDER as LAGRANGE_ORDER,
     DEFAULT_FS as FS_MIN,

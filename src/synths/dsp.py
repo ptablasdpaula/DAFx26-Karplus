@@ -1,8 +1,8 @@
 import numpy as np
 import numpy.typing as npt
-from numba import njit, jit
+from numba import njit
 
-from synths.constants import (
+from src.synths.constants import (
     F0_MIN,
     DEFAULT_LAGRANGE_ORDER as LAGRANGE_ORDER,
     DEFAULT_FS as FS_MIN,

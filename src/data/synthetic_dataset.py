@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from dataclasses import dataclass
 from torch.utils.data import IterableDataset
-from synths.synth import Synth, SynthConfig
+from src.synths.synth import Synth, SynthConfig
 
 NOTE_FREQS = {'E1': 41.20, 'B5': 987.77}
 F0_MIN_HZ = NOTE_FREQS['E1']
