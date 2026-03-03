@@ -150,7 +150,6 @@ def pluck_position_filter(
         f0: npt.NDArray,
         position: npt.NDArray,
         fs: int = FS_MIN,
-        lagrange_order: int = LAGRANGE_ORDER
 ) -> npt.NDArray:
     """
     Simulate pluck position using an all-zero comb filter as per section
@@ -174,7 +173,7 @@ def pluck_position_filter(
 
     L = fs / f0
     comb_L = L * position
-    return all_zero_comb(x, comb_L, fs, lagrange_order)
+    return all_zero_comb(x, comb_L, fs)
 
 @njit
 def compute_dynamics_R(
@@ -416,8 +415,8 @@ def oracle_physical_model(
         f0=p['f0'],
         position=p['pluck_position'],
         fs=fs,
-        lagrange_order=lagrange_order
     )
+
     x = dynamics_filter(
         x=x,
         f0=p['f0'],
