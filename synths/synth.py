@@ -118,16 +118,19 @@ class Synth(nn.Module):
 
     def resample_parameters(self, params: dict[str, T]) -> None:
         if self.use_lti:
-            assert self.use_freq_pluck or self.use_freq_ksa, (
-                "use_lti=True requires at least one of use_freq_pluck or use_freq_ksa"
-            )
             num_frames = next(iter(params.values())).shape[1]
             assert num_frames == 1, (
                 f"use_lti=True requires num_frames=1, got {num_frames}"
             )
 
         self._params = params
-        self.p_time = lin_resample_many(signal_length=self.num_samples, **params)
+
+        if self.use_lti:
+            self.p_time = {k: v.expand(-1, self.num_samples)
+                          for k, v in params.items()}
+        else:
+            self.p_time = lin_resample_many(signal_length=self.num_samples, **params)
+
         self.p_stft = None
 
     def _get_stft_params(self, num_stft_frames: int) -> dict[str, T]:
@@ -334,12 +337,13 @@ if __name__ == "__main__":
             test_count += 1
 
     # =========================================================================
-    # Test LTI mode (num_frames=1, frequency-domain with full-signal FFT)
+    # Test LTI mode — all implementation combos, including pure TD
     # =========================================================================
     lti_combinations = [
-        (False, True, "TD pluck + LTI FD KS"),
-        (True, False, "LTI FD pluck + TD KS"),
-        (True, True, "LTI FD pluck + LTI FD KS"),
+        (False, False, "LTI TD pluck + TD KS"),
+        (False, True,  "LTI TD pluck + FD KS"),
+        (True,  False, "LTI FD pluck + TD KS"),
+        (True,  True,  "LTI FD pluck + FD KS"),
     ]
 
     for use_freq_pluck, use_freq_ksa, impl_name in lti_combinations:
