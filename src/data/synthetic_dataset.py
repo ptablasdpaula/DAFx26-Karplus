@@ -353,7 +353,7 @@ class SyntheticDataset(IterableDataset):
         synth = Synth(config)
         params_torch = {k: torch.from_numpy(v).unsqueeze(0).float() for k, v in params_np.items()}
         with torch.no_grad():
-            audio = synth.oracle_synth(params_torch)  # [1, num_samples]
+            audio, _ = synth.oracle_synth(params_torch)  # (audio [1, N], params)
         return audio.squeeze(0).numpy()
 
     def __iter__(self):

@@ -22,6 +22,9 @@ from src.synths.ddsp import (
     karplus_strong,
 )
 
+# Canonical return type: (audio, params_dict).
+SynthOutput = tuple[T, dict[str, T]]
+
 
 @dataclass
 class SynthConfig:
@@ -60,21 +63,15 @@ class Synth(nn.Module):
         window_tensor = torch.ones(self.n_fft)
         self.register_buffer('window', window_tensor.to(self.device))
 
-    def forward(self, params: dict[str, T]) -> T:
+    def forward(self, params: dict[str, T]) -> SynthOutput:
         """
-        Synthesize plucked string audio.
+        Differentiable Karplus-Strong synthesis.
 
         Args:
-            params: Dictionary with keys matching PARAM_NAMES:
-                - f0: [B, num_frames] - fundamental frequency in Hz
-                - pluck_position: [B, num_frames] - pluck position [0.01, 0.5]
-                - burst_gain: [B, num_frames] - zero = no onset, positive = onset with that gain
-                - dynamic_level: [B, num_frames] - dynamic level (0=soft, 1=bright)
-                - a1: [B, num_frames] - loop filter coefficient [0, 1]
-                - decay: [B, num_frames] - decay/damping coefficient [0, 1]
+            params: Dictionary with keys matching PARAM_NAMES.
 
         Returns:
-            Synthesized audio [B, num_samples]
+            (audio [B, num_samples], params passed through)
         """
         validate_param_dict(params, context="Synth.forward")
         self.resample_parameters(params)
@@ -84,19 +81,15 @@ class Synth(nn.Module):
         x = self._apply_pluck_filter(x)
         x = self._apply_karplus_strong(x)
 
-        return x
+        return x, params
 
     @torch.no_grad()
-    def oracle_synth(self, params: dict[str, T]) -> T:
+    def oracle_synth(self, params: dict[str, T]) -> SynthOutput:
         """
-        Synthesize using the NumPy oracle physical model with the same
-        params dict interface as forward().
-
-        Args:
-            params: Same dictionary as forward()
+        Synthesize using the NumPy oracle physical model.
 
         Returns:
-            Synthesized audio [B, num_samples]
+            (audio [B, num_samples], params passed through)
         """
         validate_param_dict(params, context="Synth.oracle_synth")
         batch_size = next(iter(params.values())).shape[0]
@@ -112,7 +105,7 @@ class Synth(nn.Module):
             )
             outputs.append(torch.from_numpy(y).to(params['f0'].device, params['f0'].dtype))
 
-        return torch.stack(outputs, dim=0)
+        return torch.stack(outputs, dim=0), params
 
     def resample_parameters(self, params: dict[str, T]) -> None:
         if self.use_lti:
@@ -132,13 +125,11 @@ class Synth(nn.Module):
         self.p_stft = None
 
     def _get_stft_params(self, num_stft_frames: int) -> dict[str, T]:
-        """Get STFT-rate parameters, computing them lazily."""
         if self.p_stft is None:
             self.p_stft = lin_resample_many(signal_length=num_stft_frames, **self._params)
         return self.p_stft
 
     def _generate_excitation(self, burst_gain: T, f0: T) -> T:
-        """Generate frame-based excitation."""
         return excitation(
             burst_gain=burst_gain,
             signal_length=self.num_samples,
@@ -148,7 +139,6 @@ class Synth(nn.Module):
         )
 
     def _apply_dynamics_filter(self, x: T) -> T:
-        """Apply dynamics filter (always in time domain)."""
         return dynamics_filter(
             x=x,
             f0=self.p_time['f0'],
@@ -157,7 +147,6 @@ class Synth(nn.Module):
         )
 
     def _apply_pluck_filter(self, x: T) -> T:
-        """Apply pluck position filter."""
         if self.use_freq_pluck:
             if self.use_lti:
                 x = self._to_lti_freq_domain(x)
@@ -183,7 +172,6 @@ class Synth(nn.Module):
         )
 
     def _apply_karplus_strong(self, x: T) -> T:
-        """Apply Karplus-Strong algorithm."""
         if self.use_freq_ksa:
             if self.use_lti:
                 if not self.use_freq_pluck:
@@ -222,32 +210,20 @@ class Synth(nn.Module):
         return x
 
     def _to_lti_freq_domain(self, x: T) -> T:
-        """Single full-signal rfft. Returns [B, 1, num_samples//2+1]."""
         return torch.fft.rfft(x, n=self.num_samples).unsqueeze(1)
 
     def _from_lti_freq_domain(self, X: T) -> T:
-        """Inverse of _to_lti_freq_domain. Returns [B, num_samples]."""
         return torch.fft.irfft(X.squeeze(1), n=self.num_samples)
 
     def _to_stft_domain(self, x: T) -> tuple[T, int]:
-        """Convert time-domain signal to STFT domain. Returns [B, num_frames, n_bins]."""
         X = torch.stft(x, n_fft=self.n_fft, hop_length=self.hop_length,
                        window=self.window, return_complex=True)
-        X = X.permute(0, 2, 1)  # [B, num_stft_frames, n_bins]
+        X = X.permute(0, 2, 1)
         return X, X.shape[1]
 
     def _from_stft_domain(self, X: T) -> T:
-        """Inverse of _to_stft_domain. Returns [B, num_samples]."""
         return torch.istft(X.permute(0, 2, 1), n_fft=self.n_fft, hop_length=self.hop_length,
                            window=self.window, length=self.num_samples)
-
-    # Keep old names as aliases for backwards compatibility
-    def _to_freq_domain(self, x: T) -> tuple[T, int]:
-        return self._to_stft_domain(x)
-
-    def _to_time_domain(self, X: T) -> T:
-        return self._from_stft_domain(X)
-
 
 # =============================================================================
 #                           TESTS
@@ -321,7 +297,7 @@ if __name__ == "__main__":
                 if param_name == 'burst_gain':
                     params['burst_gain'][0, [0, 25, 50, 75]] = torch.linspace(min_val + 0.01, max_val, 4)
 
-                y = model(params)
+                y, _ = model(params)
                 if not check_output(y, f"{param_name} sweep"):
                     all_passed = False
                 test_count += 1
@@ -329,7 +305,7 @@ if __name__ == "__main__":
             params = {k: torch.linspace(*v, num_frames).unsqueeze(0) for k, v in sweeps.items()}
             params['burst_gain'] = torch.zeros(1, num_frames)
             params['burst_gain'][0, [0, 25, 50, 75]] = 0.5
-            y = model(params)
+            y, _ = model(params)
             if not check_output(y, "all parameters sweeping"):
                 all_passed = False
             test_count += 1
@@ -367,7 +343,7 @@ if __name__ == "__main__":
                 params = {k: torch.full((1, 1), v) for k, v in defaults.items()}
                 params['burst_gain'] = torch.tensor([[defaults['burst_gain']]])
 
-                y = model(params)
+                y, _ = model(params)
                 if not check_output(y, f"LTI {param_name} constant"):
                     all_passed = False
                 test_count += 1
@@ -398,7 +374,7 @@ if __name__ == "__main__":
             if param_name == 'burst_gain':
                 params['burst_gain'][0, [0, 25, 50, 75]] = torch.linspace(min_val + 0.01, max_val, 4)
 
-            y = model.oracle_synth(params)
+            y, _ = model.oracle_synth(params)
             if not check_output(y, f"oracle {param_name} sweep"):
                 all_passed = False
             test_count += 1
@@ -406,7 +382,7 @@ if __name__ == "__main__":
         params = {k: torch.linspace(*v, num_frames).unsqueeze(0) for k, v in sweeps.items()}
         params['burst_gain'] = torch.zeros(1, num_frames)
         params['burst_gain'][0, [0, 25, 50, 75]] = 0.5
-        y = model.oracle_synth(params)
+        y, _ = model.oracle_synth(params)
         if not check_output(y, "oracle all parameters sweeping"):
             all_passed = False
         test_count += 1
