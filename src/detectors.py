@@ -3,7 +3,7 @@ from src.synths.constants import (
     DEFAULT_FS,
     DEFAULT_CREPE_HOP_LENGTH,
     DEFAULT_ONSET_HOP_LENGTH,
-    DEFAULT_ONSET_PAD_DURATION
+    DEFAULT_ONSET_PAD_DURATION, DEFAULT_LOUDNESS_STFT
 )
 
 from src.synths.param_registry import F0_MIN_HZ, F0_MAX_HZ
@@ -52,12 +52,12 @@ def detect_loudness(signal, sampling_rate, n_fft=2048):
     S = librosa.stft(
         signal,
         n_fft=n_fft,
-        hop_length=n_fft // 4,
+        hop_length=DEFAULT_LOUDNESS_STFT,
         win_length=n_fft,
         center=True,
     )
     S = np.log(abs(S) + 1e-7)
-    f = librosa.fft_frequencies(sampling_rate, n_fft)
+    f = librosa.fft_frequencies(sr=sampling_rate, n_fft=n_fft)
     a_weight = librosa.A_weighting(f)
 
     S = S + a_weight.reshape(-1, 1)
