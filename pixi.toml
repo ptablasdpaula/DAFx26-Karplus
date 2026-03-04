@@ -43,7 +43,8 @@ platforms = ["linux-64"]
 system-requirements = { cuda = "12" }
 
 [environments]
-default = { features = ["cuda"], solve-group = "default" }
+default = { solve-group = "cpu" }
+cuda = { features = ["cuda"], solve-group = "cuda" }
 
 [feature.cuda.dependencies]
 cuda-toolkit = "*"
