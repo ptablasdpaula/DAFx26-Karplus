@@ -1,5 +1,12 @@
 import librosa, torchcrepe, numpy as np, torch
-from src.synths.constants import DEFAULT_FS, DEFAULT_CREPE_HOP_LENGTH, DEFAULT_ONSET_HOP_LENGTH, DEFAULT_ONSET_PAD_DURATION
+from src.synths.constants import (
+    DEFAULT_FS,
+    DEFAULT_CREPE_HOP_LENGTH,
+    DEFAULT_ONSET_HOP_LENGTH,
+    DEFAULT_ONSET_PAD_DURATION
+)
+
+from src.synths.param_registry import F0_MIN_HZ, F0_MAX_HZ
 
 def detect_onsets(audio_np, sr=DEFAULT_FS, hop_length=DEFAULT_ONSET_HOP_LENGTH, pad_duration=DEFAULT_ONSET_PAD_DURATION):
     pad_samples = int(pad_duration * sr)
@@ -23,9 +30,15 @@ def detect_onsets(audio_np, sr=DEFAULT_FS, hop_length=DEFAULT_ONSET_HOP_LENGTH, 
 
 def detect_f0(audio_tensor, sr=DEFAULT_FS, hop_length=DEFAULT_CREPE_HOP_LENGTH):
     f0, confidence = torchcrepe.predict(
-        audio_tensor.float(), sr, hop_length=hop_length,
-        fmin=40, fmax=2000, model='full', batch_size=256,
-        device='cpu', return_periodicity=True,
+        audio_tensor.float(),
+        sr,
+        hop_length=hop_length,
+        fmin=F0_MIN_HZ,
+        fmax=F0_MAX_HZ,
+        model='full',
+        batch_size=256,
+        device='cpu',
+        return_periodicity=True,
     )
 
     f0_np = f0.squeeze().cpu().numpy()
@@ -34,3 +47,19 @@ def detect_f0(audio_tensor, sr=DEFAULT_FS, hop_length=DEFAULT_CREPE_HOP_LENGTH):
     times_np = times.cpu().numpy()
 
     return f0_np, conf_np, times_np
+
+def detect_loudness(signal, sampling_rate, n_fft=2048):
+    S = librosa.stft(
+        signal,
+        n_fft=n_fft,
+        hop_length=n_fft // 4,
+        win_length=n_fft,
+        center=True,
+    )
+    S = np.log(abs(S) + 1e-7)
+    f = librosa.fft_frequencies(sampling_rate, n_fft)
+    a_weight = librosa.A_weighting(f)
+
+    S = S + a_weight.reshape(-1, 1)
+    S = np.mean(S, 0)[..., :-1]
+    return S
