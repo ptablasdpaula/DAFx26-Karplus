@@ -23,7 +23,7 @@ from src.synths.param_registry import (
     DECAY_MAX,
 )
 from src.synths.synth import Synth, SynthConfig, SynthOutput
-from src.losses import PLoss, MultiScaleSpectralLoss
+from src.losses import PLoss, MultiScaleSpectralLoss, SOT2048Loss
 
 
 def sigmoid_range(x: torch.Tensor, lo: float, hi: float) -> torch.Tensor:
@@ -146,24 +146,20 @@ class Encoder(nn.Module):
         x = self.tcn(x)             # [B, tcn_channels, T]
         return self.head(x)         # [B, num_outputs, T]
 
-
+#TODO: ok, we have this model - but what do we do when we want different training strategies etc...
 class DiffKSModel(pl.LightningModule):
     """
-    Full differentiable Karplus-Strong pipeline (LightningModule).
-
-    Encoder → KS-specific activations → Synth → (audio, params)
-
     Behaviour:
         training:   synthesises via Synth.forward()       (differentiable)
         inference:  synthesises via Synth.oracle_synth()   (numpy, more accurate)
-
-    Both modes always return ``(audio, params)``.
+    returns ``(audio, params)``.
 
     Args:
         synth_config:     SynthConfig for the KS synthesiser.
         encoder_kwargs:   Forwarded to Encoder.__init__().
         lr:               Learning rate for Adam.
-        w_audio:          Weight for audio loss (MSS).
+        w_mss:          Weight for MSS.
+        w_sot:          Weight for SOT.
         w_param:          Weight for parameter loss (PLoss).
         param_weights:    Per-parameter weights forwarded to PLoss.
     """
@@ -173,7 +169,8 @@ class DiffKSModel(pl.LightningModule):
         synth_config: SynthConfig,
         encoder_kwargs: dict | None = None,
         lr: float = 1e-3,
-        w_audio: float = 1.0,
+        w_mss: float = 1.0,
+        w_sot: float = 1.0,
         w_param: float = 1.0,
         param_weights: dict[str, float] | None = None,
     ):
@@ -181,7 +178,8 @@ class DiffKSModel(pl.LightningModule):
         self.save_hyperparameters(ignore=["synth_config"])
 
         self.lr = lr
-        self.w_audio = w_audio
+        self.w_mss = w_mss
+        self.w_sot = w_sot
         self.w_param = w_param
 
         # ── Encoder (learnable) ──
@@ -199,6 +197,7 @@ class DiffKSModel(pl.LightningModule):
             weights=param_weights or {},
         )
         self.mss = MultiScaleSpectralLoss()
+        self.sot = SOT2048Loss()
 
         # Channel index → param name (follows PARAM_NAMES order)
         self._idx = {name: i for i, name in enumerate(PARAM_NAMES)}
@@ -242,8 +241,6 @@ class DiffKSModel(pl.LightningModule):
             audio, params = self.synth.oracle_synth(params)
         return audio, params
 
-    # ── Lightning hooks ──────────────────────────────────────────────────
-
     def _shared_step(
         self,
         batch: Dict[str, Any],
@@ -257,14 +254,16 @@ class DiffKSModel(pl.LightningModule):
 
         # Losses
         p_total, p_breakdown = self.ploss(pred_params, target_params)
-        audio_loss = self.mss(pred_audio, target_audio)
+        mss_loss = self.mss(pred_audio, target_audio)
+        sot_loss = self.sot(pred_audio, target_audio)
 
-        total = self.w_param * p_total + self.w_audio * audio_loss
+        total = self.w_param * p_total + self.w_mss * mss_loss + self.w_sot * sot_loss
 
         # Logging
         self.log(f"{stage}/loss", total, prog_bar=True)
-        self.log(f"{stage}/audio_loss", audio_loss)
-        self.log(f"{stage}/param_loss", p_total)
+        self.log(f"{stage}/mss_loss", mss_loss, prog_bar=True)
+        self.log(f"{stage}/sot_loss", sot_loss, prog_bar=True)
+        self.log(f"{stage}/param_loss", p_total, prog_bar=True)
         for name, val in p_breakdown.items():
             self.log(f"{stage}/p/{name}", val)
 
@@ -318,7 +317,8 @@ if __name__ == "__main__":
         synth_config=synth_config,
         encoder_kwargs=dict(dropout=0.0),
         lr=LR,
-        w_audio=1.0,
+        w_mss=1.0,
+        w_sot=1.0,
         w_param=1.0,
         param_weights={"f0": 2.0, "burst_gain": 5.0},
     ).to(DEVICE)
