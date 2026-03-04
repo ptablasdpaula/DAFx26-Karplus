@@ -3,18 +3,13 @@ import numpy as np
 from dataclasses import dataclass
 from torch.utils.data import IterableDataset
 from src.synths.synth import Synth, SynthConfig
-
-NOTE_FREQS = {'E1': 41.20, 'B5': 987.77}
-F0_MIN_HZ = NOTE_FREQS['E1']
-F0_MAX_HZ = NOTE_FREQS['B5']
-MIDI_E1 = 28
-MIDI_B5 = 83
-
-def midi_to_hz(midi):
-    return 440 * 2 ** ((midi - 69) / 12.0)
-
-def hz_to_midi(hz):
-    return 69 + 12 * np.log2(hz / 440)
+from src.synths.param_registry import (
+    MIDI_D1,
+    MIDI_D6,
+    midi_to_hz,
+    hz_to_midi,
+    validate_param_dict,
+)
 
 
 @dataclass
@@ -151,7 +146,7 @@ class SyntheticDataset(IterableDataset):
         return 1.0
 
     def _a1_max_for_midi(self, midi: float) -> float:
-        t = (midi - MIDI_E1) / (MIDI_B5 - MIDI_E1)
+        t = (midi - MIDI_D1) / (MIDI_D6 - MIDI_D1)
         return self._mirror(0.8 - t * 0.7, low=0.1, high=0.8)
 
     def _a1_max(self, midi: float) -> float:
@@ -178,7 +173,7 @@ class SyntheticDataset(IterableDataset):
         while rng.random() < p_octave:
             current_midi += rng.choice([12, -12])
 
-        return float(self._mirror(current_midi, low=MIDI_E1, high=MIDI_B5))
+        return float(self._mirror(current_midi, low=MIDI_D1, high=MIDI_D6))
 
     def _f0_period_to_frames(self, f0_hz: float) -> int:
         return max(int(np.ceil(self._fps / f0_hz)), 1)
@@ -191,7 +186,7 @@ class SyntheticDataset(IterableDataset):
         tg             = self.priors['trigger_gap']
         p_skip_trigger = self.priors['prob_skip_trigger']['prob']
 
-        current_midi = rng.uniform(MIDI_E1, MIDI_B5 + 1)
+        current_midi = rng.uniform(MIDI_D1, MIDI_D6 + 1)
         first_onset  = self._get_first_onset_frame(rng)
         indices      = [first_onset]
         f0_hz        = [midi_to_hz(current_midi)]
@@ -236,7 +231,7 @@ class SyntheticDataset(IterableDataset):
         t             = np.linspace(0, seg_len / self._fps, seg_len)
         vibrato       = vibrato_depth * np.sin(2 * np.pi * vibrato_rate * t)
         seg_midi      = hz_to_midi(f0_frames[start:end]) + vibrato
-        f0_frames[start:end] = midi_to_hz(np.clip(seg_midi, MIDI_E1, MIDI_B5))
+        f0_frames[start:end] = midi_to_hz(np.clip(seg_midi, MIDI_D1, MIDI_D6))
 
     def _build_f0_trajectory(self, rng, segs: Segments) -> np.ndarray:
         p_slide = self.priors['prob_slide']['prob']
@@ -303,7 +298,7 @@ class SyntheticDataset(IterableDataset):
         num_frames  = self.num_frames
         onset_frame = self._get_first_onset_frame(rng)
 
-        base_midi = rng.uniform(MIDI_E1, MIDI_B5)
+        base_midi = rng.uniform(MIDI_D1, MIDI_D6)
         f0_val    = midi_to_hz(base_midi)
         a1_max    = self._a1_max(hz_to_midi(f0_val))
 
@@ -337,7 +332,7 @@ class SyntheticDataset(IterableDataset):
 
         a1_highs = [self._a1_max(hz_to_midi(hz)) for hz in segs.f0_hz]
 
-        return {
+        params = {
             'f0':             f0,
             'burst_gain':     burst_gain,
             'pluck_position': self._generate_varying_param(rng, segs.indices, **p['pluck_position'], **ex['pluck_position']),
@@ -345,6 +340,9 @@ class SyntheticDataset(IterableDataset):
             'a1':             self._generate_varying_param(rng, segs.indices, **p['a1'],             **ex['a1'],             high_schedule=a1_highs),
             'decay':          self._generate_varying_param(rng, segs.indices, **p['decay'],          **ex['decay']),
         }
+
+        validate_param_dict(params, context="SyntheticDataset._generate_params")
+        return params
 
     def _synthesise(self, params_np: dict) -> np.ndarray:
         config = SynthConfig(

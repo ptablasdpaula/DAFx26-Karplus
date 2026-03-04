@@ -11,6 +11,7 @@ from src.synths.constants import (
     DEFAULT_IIR_TRUNCATION,
     DEFAULT_RND_SEED,
 )
+from src.synths.param_registry import PARAM_NAMES, validate_param_dict
 from src.synths.dsp import oracle_physical_model
 from src.synths.ddsp import (
     lin_resample_many,
@@ -64,9 +65,9 @@ class Synth(nn.Module):
         Synthesize plucked string audio.
 
         Args:
-            params: Dictionary containing:
+            params: Dictionary with keys matching PARAM_NAMES:
                 - f0: [B, num_frames] - fundamental frequency in Hz
-                - pluck_position: [B, num_frames] - pluck position [0, 1]
+                - pluck_position: [B, num_frames] - pluck position [0.01, 0.5]
                 - burst_gain: [B, num_frames] - zero = no onset, positive = onset with that gain
                 - dynamic_level: [B, num_frames] - dynamic level (0=soft, 1=bright)
                 - a1: [B, num_frames] - loop filter coefficient [0, 1]
@@ -75,6 +76,7 @@ class Synth(nn.Module):
         Returns:
             Synthesized audio [B, num_samples]
         """
+        validate_param_dict(params, context="Synth.forward")
         self.resample_parameters(params)
 
         x = self._generate_excitation(params['burst_gain'], params['f0'])
@@ -96,17 +98,13 @@ class Synth(nn.Module):
         Returns:
             Synthesized audio [B, num_samples]
         """
+        validate_param_dict(params, context="Synth.oracle_synth")
         batch_size = next(iter(params.values())).shape[0]
         outputs = []
 
         for b in range(batch_size):
             y = oracle_physical_model(
-                f0=params['f0'][b].cpu().numpy(),
-                pluck_position=params['pluck_position'][b].cpu().numpy(),
-                burst_gain=params['burst_gain'][b].cpu().numpy(),
-                dynamic_level=params['dynamic_level'][b].cpu().numpy(),
-                a1=params['a1'][b].cpu().numpy(),
-                decay=params['decay'][b].cpu().numpy(),
+                **{name: params[name][b].cpu().numpy() for name in PARAM_NAMES},
                 num_samples=self.num_samples,
                 fs=self.fs,
                 lagrange_order=self.lagrange_order,
@@ -270,7 +268,7 @@ if __name__ == "__main__":
 
     sweeps = {
         'f0': (55.0, 3520.0),
-        'pluck_position': (0.0, 1.0),
+        'pluck_position': (0.1, 0.5),
         'burst_gain': (0.0, 1.0),
         'dynamic_level': (0.0, 1.0),
         'a1': (0.0, 1.0),
