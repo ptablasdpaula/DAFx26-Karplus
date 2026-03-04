@@ -14,3 +14,7 @@ GRAD_JOBS = JOBS_DIR / "grad"
 GRAD_OUTPUTS = OUTPUTS_DIR / "grad"
 GRAD_SCRIPTS = SCRIPTS_DIR / "grad"
 GRAD_LOGS = LOGS_DIR / "grad"
+
+SRC_DIR = ROOT_DIR / "src"
+DATA_DIR = SRC_DIR / "data"
+NSYNTH_DIR = DATA_DIR / "nsynth"

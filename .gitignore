@@ -13,3 +13,8 @@ experiments/outputs
 experiments/logs
 experiments/outputs/*
 experiments/logs/*
+
+src/data/nsynth/test/*
+src/data/nsynth/validation/*
+src/data/nsynth/train/*
+
