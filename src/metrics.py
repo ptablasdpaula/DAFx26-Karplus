@@ -4,15 +4,20 @@ import librosa
 from src.synths.constants import DEFAULT_FS
 from dtw import dtw
 
-# @TODO: Cents From Input (Synthetic Only)
 # @TODO: Precision, Recall, F1 on Onsets (Synthetic Only)
 
-def compute_mfcc(target: np.ndarray, sample_rate: int = DEFAULT_FS) -> np.ndarray:
+def compute_mean_cents_distance(pred_f0: np.ndarray, target_f0: np.ndarray) -> float:
+    high_f0 = np.maximum(pred_f0, target_f0)
+    low_f0 = np.minimum(pred_f0, target_f0)
+    cents_distance = 1200 * np.log2(high_f0 / low_f0)
+    return np.mean(cents_distance)
+
+def compute_mfcc(x: np.ndarray, sample_rate: int = DEFAULT_FS) -> np.ndarray:
     window_length = int(0.05 * sample_rate)
     hop_length = int(0.01 * sample_rate)
 
     mfcc = librosa.feature.mfcc(
-        y=target,
+        y=x,
         sr=sample_rate,
         n_mfcc=20,
         n_fft=window_length,
