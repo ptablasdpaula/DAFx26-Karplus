@@ -30,6 +30,7 @@ DYNAMIC_LEVEL_MAX = 1.0
 DECAY_MIN = 0.9
 DECAY_MAX = 1.0
 DAMPING_MIN = 0.0
+DAMPING_LOG_MIN = 1e-4              # floor for a1 when using LOG_MAE (avoids log 0)
 DAMPING_MAX = 0.75
 BURST_GAIN_MIN = 0.0
 BURST_GAIN_MAX = 1.0
@@ -50,7 +51,8 @@ def hz_to_midi(hz):
 
 class LossType(Enum):
     MAE       = "mae"
-    LOG_MAE   = "log_mae"
+    LOG_MAE   = "log_mae"        # MAE in log(x) space — for params where ratio matters
+    LOG1M_MAE = "log1m_mae"      # MAE in log(1−x) space — for params near 1 (e.g. decay)
     HUNGARIAN = "hungarian"
 
 
@@ -64,18 +66,24 @@ class ParamSpec:
     loss_type: LossType = LossType.MAE
     description: str = ""
 
-    def to_logit(self, x: Tensor) -> Tensor:
+    def to_logit(self, x: Tensor, eps: float = 1e-7) -> Tensor:
         """Map raw value → normalised logit ∈ [0, 1] in log domain.
 
         logit = (ln x − ln low) / (ln high − ln low)
+        When low == 0 the log-floor is clamped to *eps*.
         """
-        ln_low  = math.log(self.low)
+        safe_low = max(self.low, eps)
+        ln_low  = math.log(safe_low)
         ln_high = math.log(self.high)
-        return (torch.log(x.clamp(min=self.low)) - ln_low) / (ln_high - ln_low)
+        return (torch.log(x.clamp(min=safe_low)) - ln_low) / (ln_high - ln_low)
 
-    def from_logit(self, logit: Tensor) -> Tensor:
-        """Map logit ∈ [0, 1] → raw value via exp(ln_low + (ln_high − ln_low) · logit)."""
-        ln_low  = math.log(self.low)
+    def from_logit(self, logit: Tensor, eps: float = 1e-7) -> Tensor:
+        """Map logit ∈ [0, 1] → raw value via exp(ln_low + (ln_high − ln_low) · logit).
+
+        When low == 0 the log-floor is clamped to *eps*.
+        """
+        safe_low = max(self.low, eps)
+        ln_low  = math.log(safe_low)
         ln_high = math.log(self.high)
         return torch.exp(ln_low + (ln_high - ln_low) * logit)
 
@@ -87,10 +95,18 @@ class ParamSpec:
         """Map [0, 1] → raw value linearly."""
         return self.low + x_norm * (self.high - self.low)
 
+    # ── log(1−x) helpers (for params near 1, e.g. decay) ────────────────
+    def to_log1m(self, x: Tensor, eps: float = 1e-7) -> Tensor:
+        """Map x → log(1 − x).  Larger magnitude ↔ closer to 1."""
+        return torch.log((1.0 - x).clamp(min=eps))
+
+    def log1m_mae(self, pred: Tensor, target: Tensor, eps: float = 1e-7) -> Tensor:
+        """MAE in log(1−x) space."""
+        return (self.to_log1m(pred, eps) - self.to_log1m(target, eps)).abs().mean()
+
 
 def make_default_registry(fs: int = 16000) -> dict[str, ParamSpec]:
     """Build the canonical parameter registry.
-
     Call once and share the resulting dict across Dataset, Synth, and Loss.
     """
     return {
@@ -126,14 +142,14 @@ def make_default_registry(fs: int = 16000) -> dict[str, ParamSpec]:
             name="a1",
             low=DAMPING_MIN,
             high=DAMPING_MAX,
-            loss_type=LossType.MAE,
+            loss_type=LossType.LOG_MAE,
             description="Loop-filter pole coefficient",
         ),
         "decay": ParamSpec(
             name="decay",
             low=DECAY_MIN,
             high=DECAY_MAX,
-            loss_type=LossType.MAE,
+            loss_type=LossType.LOG1M_MAE,
             description="Loop gain / decay coefficient",
         ),
     }
