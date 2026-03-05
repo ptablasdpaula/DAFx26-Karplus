@@ -34,6 +34,7 @@ python = ">=3.11,<3.13"
 pandas = ">=3.0.1,<4"
 scipy = ">=1.17.1,<2"
 dtw = ">=1.4.0,<2"
+mir_eval = ">=0.8.2,<0.9"
 
 [pypi-dependencies]
 soundfile = "*"
