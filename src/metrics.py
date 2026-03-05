@@ -35,4 +35,20 @@ def compute_wmfcc(target: np.ndarray, pred: np.ndarray, sample_rate: int = DEFAU
     dist = dtw(target_mfcc.T, pred_mfcc.T, dist_method=l1, distance_only=True)
     return dist.normalizedDistance
 
-# @TODO: Frame-Based Root Mean Squared
+def compute_rms(target: np.ndarray, pred: np.ndarray, sample_rate: int = DEFAULT_FS) -> float:
+    win_length = int(0.05 * sample_rate)
+    hop_length = int(0.025 * sample_rate)
+
+    target_rms = librosa.feature.rms(
+        y=target.mean(axis=0), frame_length=win_length, hop_length=hop_length
+    )
+    pred_rms = librosa.feature.rms(
+        y=pred.mean(axis=0), frame_length=win_length, hop_length=hop_length
+    )
+
+    target_norm = np.linalg.vector_norm(target_rms, axis=-1, ord=2)
+    pred_norm = np.linalg.vector_norm(pred_rms, axis=-1, ord=2)
+
+    cosine_sim = np.dot(target_rms[0], pred_rms[0]) / (target_norm * pred_norm)
+
+    return cosine_sim.mean()
