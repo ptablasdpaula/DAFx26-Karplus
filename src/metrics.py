@@ -22,9 +22,9 @@ def compute_mfcc(target: np.ndarray, sample_rate: int = DEFAULT_FS) -> np.ndarra
 
     return mfcc
 
-def compute_wmfcc(target: np.ndarray, pred: np.ndarray) -> float:
-    target_mfcc = compute_mfcc(target)
-    pred_mfcc = compute_mfcc(pred)
+def compute_wmfcc(target: np.ndarray, pred: np.ndarray, sample_rate: int = DEFAULT_FS) -> float:
+    target_mfcc = compute_mfcc(target, sample_rate=sample_rate)
+    pred_mfcc = compute_mfcc(pred, sample_rate=sample_rate)
 
     target_mfcc = target_mfcc.reshape(-1, target_mfcc.shape[-1])
     pred_mfcc = pred_mfcc.reshape(-1, pred_mfcc.shape[-1])
