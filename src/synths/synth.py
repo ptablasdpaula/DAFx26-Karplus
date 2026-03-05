@@ -37,8 +37,7 @@ class SynthConfig:
     lagrange_order: int = DEFAULT_LAGRANGE_ORDER
     iir_truncation: int = DEFAULT_IIR_TRUNCATION
     random_seed: int = DEFAULT_RND_SEED
-    use_freq_pluck: bool = False
-    use_freq_ksa: bool = False
+    implementation: Implementation = Implementation.TIME_DOMAIN
     use_lti: bool = False
 
 
@@ -56,8 +55,7 @@ class Synth(nn.Module):
         self.lagrange_order = config.lagrange_order
         self.iir_truncation = config.iir_truncation
         self.random_seed = config.random_seed
-        self.use_freq_pluck = config.use_freq_pluck
-        self.use_freq_ksa = config.use_freq_ksa
+        self.implementation = config.implementation
         self.use_lti = config.use_lti
 
         window_tensor = torch.ones(self.n_fft)
@@ -65,8 +63,6 @@ class Synth(nn.Module):
 
     def forward(self, params: dict[str, T]) -> SynthOutput:
         """
-        Differentiable Karplus-Strong synthesis.
-
         Args:
             params: Dictionary with keys matching PARAM_NAMES.
 
@@ -76,12 +72,96 @@ class Synth(nn.Module):
         validate_param_dict(params, context="Synth.forward")
         self.resample_parameters(params)
 
-        x = self._generate_excitation(params['burst_gain'], params['f0'])
-        x = self._apply_dynamics_filter(x)
-        x = self._apply_pluck_filter(x)
-        x = self._apply_karplus_strong(x)
+        x = excitation(
+            burst_gain=params['burst_gain'],
+            signal_length=self.num_samples,
+            f0=params['f0'],
+            fs=self.fs,
+            noise_seed=self.random_seed,
+        )
+
+        if self.implementation == Implementation.FREQUENCY_SAMPLING:
+            x = self._forward_frequency_domain(x)
+        else:
+            x = self._forward_time_domain(x)
 
         return x, params
+
+    def _forward_time_domain(self, x: T) -> T:
+        p = self.p_time
+
+        x = dynamics_filter(
+            x=x,
+            f0=p['f0'],
+            dynamic_level=p['dynamic_level'],
+            fs=self.fs,
+        )
+
+        x = pluck_position_filter(
+            x=x,
+            f0=p['f0'],
+            position=p['pluck_position'],
+            fs=self.fs,
+        )
+
+        x = karplus_strong(
+            x=x,
+            f0=p['f0'],
+            a1=p['a1'],
+            g=p['decay'],
+            fs=self.fs,
+            lagrange_order=self.lagrange_order,
+            iir_truncation=self.iir_truncation,
+        )
+
+        return x
+
+
+    def _forward_frequency_domain(self, x: T) -> T:
+        # --- to frequency domain (once) ---
+        if self.use_lti:
+            X = self._to_lti_freq_domain(x)
+            p = self._params
+            n_fft = self.num_samples
+        else:
+            X, num_frames = self._to_stft_domain(x)
+            p = self._get_stft_params(num_frames)
+            n_fft = self.n_fft
+
+        impl = Implementation.FREQUENCY_SAMPLING
+
+        X = dynamics_filter(
+            x=X,
+            f0=p['f0'],
+            dynamic_level=p['dynamic_level'],
+            implementation=impl,
+            n_fft=n_fft,
+            fs=self.fs,
+        )
+
+        X = pluck_position_filter(
+            x=X,
+            f0=p['f0'],
+            position=p['pluck_position'],
+            implementation=impl,
+            fs=self.fs,
+            n_fft=n_fft,
+        )
+
+        X = karplus_strong(
+            x=X,
+            f0=p['f0'],
+            a1=p['a1'],
+            g=p['decay'],
+            implementation=impl,
+            fs=self.fs,
+            n_fft=n_fft,
+        )
+
+        if self.use_lti:
+            return self._from_lti_freq_domain(X)
+        else:
+            return self._from_stft_domain(X)
 
     @torch.no_grad()
     def oracle_synth(self, params: dict[str, T]) -> SynthOutput:
@@ -128,86 +208,6 @@ class Synth(nn.Module):
         if self.p_stft is None:
             self.p_stft = lin_resample_many(signal_length=num_stft_frames, **self._params)
         return self.p_stft
-
-    def _generate_excitation(self, burst_gain: T, f0: T) -> T:
-        return excitation(
-            burst_gain=burst_gain,
-            signal_length=self.num_samples,
-            f0=f0,
-            fs=self.fs,
-            noise_seed=self.random_seed,
-        )
-
-    def _apply_dynamics_filter(self, x: T) -> T:
-        return dynamics_filter(
-            x=x,
-            f0=self.p_time['f0'],
-            dynamic_level=self.p_time['dynamic_level'],
-            fs=self.fs,
-        )
-
-    def _apply_pluck_filter(self, x: T) -> T:
-        if self.use_freq_pluck:
-            if self.use_lti:
-                x = self._to_lti_freq_domain(x)
-                p = self._params
-                n_fft = self.num_samples
-            else:
-                x, num_frames = self._to_stft_domain(x)
-                p = self._get_stft_params(num_frames)
-                n_fft = self.n_fft
-            implementation = Implementation.FREQUENCY_SAMPLING
-        else:
-            p = self.p_time
-            implementation = Implementation.TIME_DOMAIN
-            n_fft = self.n_fft
-
-        return pluck_position_filter(
-            x=x,
-            f0=p['f0'],
-            position=p['pluck_position'],
-            implementation=implementation,
-            fs=self.fs,
-            n_fft=n_fft,
-        )
-
-    def _apply_karplus_strong(self, x: T) -> T:
-        if self.use_freq_ksa:
-            if self.use_lti:
-                if not self.use_freq_pluck:
-                    x = self._to_lti_freq_domain(x)
-                p = self._params
-                n_fft = self.num_samples
-            else:
-                if not self.use_freq_pluck:
-                    x, num_frames = self._to_stft_domain(x)
-                else:
-                    num_frames = x.shape[1]
-                p = self._get_stft_params(num_frames)
-                n_fft = self.n_fft
-            implementation = Implementation.FREQUENCY_SAMPLING
-        else:
-            if self.use_freq_pluck:
-                x = self._from_lti_freq_domain(x) if self.use_lti else self._from_stft_domain(x)
-            p = self.p_time
-            implementation = Implementation.TIME_DOMAIN
-            n_fft = self.n_fft
-
-        x = karplus_strong(
-            x=x,
-            f0=p['f0'],
-            a1=p['a1'],
-            g=p['decay'],
-            implementation=implementation,
-            fs=self.fs,
-            lagrange_order=self.lagrange_order,
-            iir_truncation=self.iir_truncation,
-            n_fft=n_fft,
-        )
-
-        if self.use_freq_ksa:
-            return self._from_lti_freq_domain(x) if self.use_lti else self._from_stft_domain(x)
-        return x
 
     def _to_lti_freq_domain(self, x: T) -> T:
         return torch.fft.rfft(x, n=self.num_samples).unsqueeze(1)
@@ -262,16 +262,14 @@ if __name__ == "__main__":
     test_count = 0
 
     # =========================================================================
-    # Test differentiable forward (all implementation combinations)
+    # Test differentiable implementations
     # =========================================================================
-    impl_combinations = [
-        (False, False, "TD pluck + TD KS"),
-        (False, True, "TD pluck + FD KS"),
-        (True, False, "FD pluck + TD KS"),
-        (True, True, "FD pluck + FD KS"),
+    impl_options = [
+        (Implementation.TIME_DOMAIN, "Time-Domain"),
+        (Implementation.FREQUENCY_SAMPLING, "Frequency-Sampling"),
     ]
 
-    for use_freq_pluck, use_freq_ksa, impl_name in impl_combinations:
+    for impl, impl_name in impl_options:
         for fs in sample_rates:
             num_samples = int(fs * duration)
 
@@ -283,8 +281,7 @@ if __name__ == "__main__":
                 num_samples=num_samples,
                 fs=fs,
                 device='cpu',
-                use_freq_pluck=use_freq_pluck,
-                use_freq_ksa=use_freq_ksa,
+                implementation=impl,
             )
             model = Synth(config)
 
@@ -311,16 +308,14 @@ if __name__ == "__main__":
             test_count += 1
 
     # =========================================================================
-    # Test LTI mode — all implementation combos, including pure TD
+    # Test LTI mode
     # =========================================================================
-    lti_combinations = [
-        (False, False, "LTI TD pluck + TD KS"),
-        (False, True,  "LTI TD pluck + FD KS"),
-        (True,  False, "LTI FD pluck + TD KS"),
-        (True,  True,  "LTI FD pluck + FD KS"),
+    lti_options = [
+        (Implementation.TIME_DOMAIN, "LTI Time-Domain"),
+        (Implementation.FREQUENCY_SAMPLING, "LTI Frequency-Sampling"),
     ]
 
-    for use_freq_pluck, use_freq_ksa, impl_name in lti_combinations:
+    for impl, impl_name in lti_options:
         for fs in sample_rates:
             num_samples = int(fs * duration)
 
@@ -332,13 +327,11 @@ if __name__ == "__main__":
                 num_samples=num_samples,
                 fs=fs,
                 device='cpu',
-                use_freq_pluck=use_freq_pluck,
-                use_freq_ksa=use_freq_ksa,
+                implementation=impl,
                 use_lti=True,
             )
             model = Synth(config)
 
-            # LTI mode: single frame params
             for param_name in defaults:
                 params = {k: torch.full((1, 1), v) for k, v in defaults.items()}
                 params['burst_gain'] = torch.tensor([[defaults['burst_gain']]])

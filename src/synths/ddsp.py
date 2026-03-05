@@ -299,10 +299,45 @@ def compute_dynamics_R(
 
     return R
 
+
+def _freq_dynamics_filter(X: T, R: T, n_fft: int) -> T:
+    device = X.device
+
+    # Feedforward: B = (1-R) * X
+    b0 = (1.0 - R).unsqueeze(-1)  # [B, num_frames, 1]
+    B = b0 * X  # [B, num_frames, n_bins]
+
+    # Feedback: H_fb = R * z^(-1)
+    # z^(-1) in frequency domain is exp(-j*omega) where omega = 2*pi*k/(n_fft)
+    bins = torch.arange(0, n_fft // 2 + 1, device=device)
+    omega = 2.0 * torch.pi * bins / n_fft  # [n_bins]
+    z_inv = torch.exp(-1j * omega)  # [n_bins] - one sample delay
+
+    # Identity matrix [B, num_frames, n_bins]
+    I = torch.ones_like(X)
+
+    # A = I - R * z^(-1)
+    a1 = R.unsqueeze(-1)  # [B, num_frames, 1]
+    A = I - a1 * z_inv.unsqueeze(0).unsqueeze(0)  # [B, num_frames, n_bins]
+
+    # Solve: Y = A^(-1) * B
+    Y = B / A
+
+    return Y
+
+
+def _time_dynamics_filter(x: T, R: T) -> T:
+    x_eff = (1.0 - R) * x
+    a = -R.unsqueeze(-1)
+    return allpole(a, x_eff)
+
+
 def dynamics_filter(
         x: T,
         f0: T,
         dynamic_level: T,
+        implementation: Implementation = Implementation.TIME_DOMAIN,
+        n_fft: int = N_FFT,
         fs: int = FS_MIN,
 ) -> T:
     """
@@ -310,14 +345,28 @@ def dynamics_filter(
     :param x: Input signal (excitation) [B, N]
     :param f0: Fundamental frequency in Hz [B, N]
     :param dynamic_level: 0.0 = soft/dark, 1.0 = loud/bright
+    :param implementation: Implementation.TIME_DOMAIN or Implementation.FREQUENCY_SAMPLING
+    :param n_fft: length of the FFT used in frequency sampling
     :param fs: Sample rate in Hz
     """
-    assert x.shape == f0.shape == dynamic_level.shape, f"{x.shape}, {f0.shape}, {dynamic_level.shape}"
+    if implementation == Implementation.FREQUENCY_SAMPLING:
+        assert x.ndim == 3 and f0.ndim == 2 and dynamic_level.ndim == 2
+        assert x.shape[:2] == f0.shape == dynamic_level.shape
+    else:
+        assert x.shape == f0.shape == dynamic_level.shape
+
     assert torch.all((dynamic_level >= 0.0) & (dynamic_level <= 1.0))
+
+    if implementation is Implementation.FREQUENCY_SAMPLING:
+        dynamic_level = dynamic_level.clamp(min=0.01)
+
     R = compute_dynamics_R(f0, dynamic_level, fs)
-    x_eff = (1.0 - R) * x
-    a = -R.unsqueeze(-1)
-    return allpole(a, x_eff)
+
+    if implementation == Implementation.FREQUENCY_SAMPLING:
+        return _freq_dynamics_filter(x, R, n_fft)
+    else:
+        return _time_dynamics_filter(x, R)
+
 
 # =============================================================================
 #                           KARPLUS-STRONG
