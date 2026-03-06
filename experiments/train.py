@@ -24,7 +24,7 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import WandbLogger
 
 from src.synths.synth import Synth, SynthConfig
@@ -221,13 +221,20 @@ def main(cfg: DictConfig) -> None:
     OmegaConf.save(cfg, str(ckpt_dir / f"{run_name}_config.yaml"))
     print(f"Run name: {run_name}")
 
+    early_stop = EarlyStopping(
+        monitor=monitor,
+        patience=10,
+        mode="min",
+        verbose=True,
+    )
+
     trainer = pl.Trainer(
         max_epochs=cfg.experiment.max_epochs,
         gradient_clip_val=cfg.experiment.gradient_clip_val,
         logger=logger,
         accelerator=accelerator,
         val_check_interval=cfg.experiment.val_check_interval,
-        callbacks=[ckpt_best, ckpt_last],
+        callbacks=[ckpt_best, ckpt_last, early_stop],
         enable_progress_bar=True,
     )
     trainer.fit(experiment, datamodule=datamodule)
