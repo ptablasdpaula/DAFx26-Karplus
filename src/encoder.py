@@ -5,13 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import weight_norm
 
-def sigmoid_range(x: torch.Tensor, lo: float, hi: float) -> torch.Tensor:
-    """Sigmoid squashed into [lo, hi]."""
-    return lo + (hi - lo) * torch.sigmoid(x)
-
 class CausalConv1d(nn.Conv1d):
     """Causal 1-D convolution (left-pad only)."""
-
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, dilation=1, groups=1, bias=True):
         super().__init__(
