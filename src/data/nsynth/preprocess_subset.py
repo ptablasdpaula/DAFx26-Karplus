@@ -113,47 +113,11 @@ def preprocess_nsynth_guitar_acoustic(
 
 
 # ---------------------------------------------------------------------------
-# PyTorch Dataset
-# ---------------------------------------------------------------------------
-class GuitarAcousticDataset(torch.utils.data.Dataset):
-    """
-    Yields per item:
-        audio          (T,)
-        f0_hz          (F,)
-        f0_confidence  (F,)
-        f0_times       (F,)
-        onset_times    (N_onsets,)
-        loudness       (L,)
-    """
-    def __init__(self, split: str = "test"):
-        self.base = Path(NSYNTH_DIR).resolve() / split / "preprocessed"
-        self.meta = json.loads((self.base / "metadata.json").read_text())
-        self.keys = list(self.meta.keys())
-
-    def __len__(self) -> int:
-        return len(self.keys)
-
-    def __getitem__(self, idx: int):
-        k = self.keys[idx]
-        item_path = Path(NSYNTH_DIR).resolve() / self.meta[k]["path"]
-        pt = torch.load(item_path, weights_only=True)
-
-        return {
-            "audio":         pt["audio"].float(),
-            "f0_hz":         pt["f0_hz"].float(),
-            "onset_times":   pt["onset_times"].float(),
-            "loudness":      pt["loudness"].float(),
-        }
-
-    def get_filename(self, idx: int) -> str:
-        return self.keys[idx]
-
-
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    from src.data.nsynth.nsynth_guitar_dataset import NsynthGuitarDataset
     preprocess_nsynth_guitar_acoustic(splits=("test",))
 
-    ds = GuitarAcousticDataset(split="test")
+    ds = NsynthGuitarDataset(split="test")
     print(f"\nLoaded {len(ds)} examples.")
     item = ds[0]
     for name, t in item.items():
