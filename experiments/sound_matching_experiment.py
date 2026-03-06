@@ -5,6 +5,7 @@ from typing import Any, Dict
 import numpy as np
 import torch
 import pytorch_lightning as pl
+import wandb
 
 from src.model import SoundMatchingModel
 from src.losses import PLoss, MultiScaleSpectralLoss, SOT2048Loss
@@ -171,6 +172,21 @@ class SoundMatchingExperiment(pl.LightningModule):
         is_synthetic = "params" in batch
         tag = "val_synth" if is_synthetic else "val_ood"
         self._step_on_batch(batch, "val", tag)
+
+    def on_validation_epoch_end(self) -> None:
+        if not self.hparams.log_val_audio or not self.logger:
+            return
+
+        for tag, examples in self._val_audio_examples.items():
+            audios = []
+            for i, arr in enumerate(examples):
+                audios.append(wandb.Audio(
+                    arr, sample_rate=self.hparams.fs, caption=f"{tag}_{i}"
+                ))
+            if audios:
+                self.logger.experiment.log(
+                    {f"{tag}/audio": audios, "global_step": self.global_step}
+                )
 
     @torch.no_grad()
     def _collect_val_audio_examples(self, pred_audio: torch.Tensor, target_audio: torch.Tensor, tag: str) -> None:
