@@ -1,0 +1,14 @@
+objective: combined
+param_only_epochs: 20
+fadein_epochs: 10
+w_param: 1.0
+w_mss: 1.0
+w_sot: 1.0
+
+param_weights:
+  f0: 2.0
+  burst_gain: 5.0
+  pluck_position: 1.0
+  dynamic_level: 1.0
+  a1: 1.0
+  decay: 1.0

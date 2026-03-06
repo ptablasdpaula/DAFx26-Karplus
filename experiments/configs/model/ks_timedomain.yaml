@@ -1,0 +1,13 @@
+decoder: ks
+implementation: time_domain
+
+encoder:
+  tcn_channels: 64
+  num_blocks: 5
+  kernel_size: 3
+  dilation_base: 2
+  dropout: 0.1
+
+synth:
+  lagrange_order: 5
+  n_fft: 2048

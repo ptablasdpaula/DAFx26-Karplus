@@ -1,0 +1,9 @@
+eval_synthetic_metrics: true
+eval_ood_metrics: false
+max_epochs: 100
+gradient_clip_val: 1.0
+batch_size: 16
+num_workers: 4
+val_check_interval: 1.0   # validate every epoch
+log_val_audio: true
+num_val_audio_examples: 4

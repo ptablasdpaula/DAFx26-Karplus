@@ -1,0 +1,13 @@
+has_synthetic: true
+has_ood: true
+
+synthetic:
+  num_samples_per_epoch: 2048
+  lti: false
+  blend_lti: true
+  random_seed: 42
+
+nsynth:
+  root: ${oc.env:PROJECT_ROOT,src/data/nsynth}
+  split_train: training
+  split_val: test

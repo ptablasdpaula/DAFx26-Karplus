@@ -1,0 +1,17 @@
+decoder: harmonics_noise
+implementation: null   # not applicable to H+N
+
+n_harmonics: 100
+n_noise_bands: 65
+
+encoder:
+  tcn_channels: 128
+  num_blocks: 5
+  kernel_size: 3
+  dilation_base: 2
+  dropout: 0.1
+
+# synth block not used by H+N, but kept for schema compatibility
+synth:
+  lagrange_order: 5
+  n_fft: 2048

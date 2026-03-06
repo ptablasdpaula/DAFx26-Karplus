@@ -1,0 +1,8 @@
+has_synthetic: true
+has_ood: false
+
+synthetic:
+  num_samples_per_epoch: 160 #4096
+  lti: false
+  blend_lti: true
+  random_seed: 42

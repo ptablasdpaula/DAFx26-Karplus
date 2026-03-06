@@ -1,0 +1,14 @@
+defaults:
+  - model: ks_timedomain
+  - detector: none
+  - training: combined
+  - data: synthetic_only
+  - experiment: synth_eval
+  - _self_
+
+lr: 1e-3
+seed: 42
+fs: 16000
+num_audio_samples: 64000
+num_frames: 250
+duration_s: 4.0
