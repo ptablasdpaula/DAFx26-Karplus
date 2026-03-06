@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 
 import torch
@@ -8,6 +9,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from src.synths.synth import Synth, SynthOutput
+from src.synths.ddsp import lin_resample
 from src.synths.param_registry import (
     PARAM_NAMES as KS_PARAM_NAMES,
     F0_MIN_HZ, F0_MAX_HZ,
@@ -62,6 +64,15 @@ class Decoder(ABC, nn.Module):
 
 def _sigmoid_range(x: Tensor, lo: float, hi: float) -> Tensor:
     return lo + (hi - lo) * torch.sigmoid(x)
+
+
+def _modified_sigmoid(x: Tensor) -> Tensor:
+    """Modified sigmoid from Engel et al. (2020), eq. 5.
+
+    Scaled output, steeper slope via exponentiation, and a floor at 1e-7
+    for training stability:  ``2.0 · sigmoid(x)^log10 + 1e-7``
+    """
+    return 2.0 * torch.sigmoid(x) ** math.log(10) + 1e-7
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Karplus-Strong Decoder
@@ -135,30 +146,40 @@ class KSDecoder(Decoder):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Harmonics + Noise Decoder (stub)
+# Harmonics + Noise Decoder
 # ═════════════════════════════════════════════════════════════════════════════
-'''
 class HarmonicsNoiseDecoder(Decoder):
     """Harmonics + Noise decoder (DDSP-style).
-
     Parameter layout (for default 100 harmonics, 65 noise bands)::
 
-        Channel     Name                    Activation
-        --------    --------------------    -------------------
-        0           amplitude               modified_sigmoid
-        1..100      harmonic_distribution   softmax (100 ch)
-        101..165    noise_magnitudes        sigmoid → [0, 1]
-        166         f0                      sigmoid_range
+        Encoder ch   Name                    Activation
+        ----------   --------------------    -----------------------
+        0..99        harmonic_distribution   modified_sigmoid (per-harmonic)
+        100..164     noise_magnitudes        modified_sigmoid
 
-    Total encoder outputs: 167.
+    Total encoder outputs: 165.  Amplitude = detected loudness directly.
+    f0 always from external CREPE detector.
 
-    External detectors (``detected`` dict)::
+    External detectors (``detected`` dict) — **always required** for H+N::
 
-        "f0"       : [B, T] Hz       → replaces encoder f0
-        "loudness" : [B, T] dB       → conditions amplitude
+        "f0"       : [B, T] Hz       → fundamental frequency
+        "loudness" : [B, T] [0, 1]   → normalised loudness envelope
 
-    Stub — implement ``synthesise()`` and ``oracle_synth()`` when the
-    H+N DSP backend is ready.
+    Synthesis pipeline::
+
+        1. Upsample frame-rate params → sample-rate signals
+        2. Anti-alias harmonics (zero above Nyquist)
+        3. Normalise harmonic distribution, scale by amplitude: A_k = A · c_k
+        4. Additive sinusoidal synthesis via cumulative phase
+        5. Filtered noise via frequency-domain IR → FFT convolution
+        6. Sum harmonic + noise components
+
+    Args:
+        fs:                    Sample rate.
+        num_samples:           Audio length in samples.
+        n_harmonics:           Number of harmonic overtones.
+        n_noise_bands:         Number of noise filter bands.
+        use_external_detectors: Must be ``True`` for H+N (enforced).
     """
 
     def __init__(
@@ -167,17 +188,21 @@ class HarmonicsNoiseDecoder(Decoder):
         num_samples: int = 64000,
         n_harmonics: int = 100,
         n_noise_bands: int = 65,
-        use_external_detectors: bool = False,
+        use_external_detectors: bool = True,
     ):
         super().__init__()
+        assert use_external_detectors, (
+            "HarmonicsNoiseDecoder requires external detectors "
+            "(f0 from CREPE, loudness from A-weighted analysis)."
+        )
         self.fs = fs
         self.num_samples = num_samples
         self.n_harmonics = n_harmonics
         self.n_noise_bands = n_noise_bands
-        self.use_external_detectors = use_external_detectors
+        self.use_external_detectors = True
 
-        # amp + harmonics + noise + f0
-        self.num_params = 1 + n_harmonics + n_noise_bands + 1
+        # harmonics + noise only (f0 and amplitude from detectors)
+        self.num_params = n_harmonics + n_noise_bands
         self.param_names = ("amplitude", "harmonic_distribution",
                             "noise_magnitudes", "f0")
 
@@ -186,46 +211,183 @@ class HarmonicsNoiseDecoder(Decoder):
         raw: Tensor,
         detected: dict[str, Tensor] | None = None,
     ) -> dict[str, Tensor]:
+        """Map encoder logits → synthesis parameters.
+
+        Args:
+            raw:      [B, 165, T] from encoder (100 harmonic + 65 noise).
+            detected: Must contain ``"f0"`` [B, T] and ``"loudness"`` [B, T].
+        """
         detected = detected or {}
-        ext = self.use_external_detectors
         nh = self.n_harmonics
         nn_ = self.n_noise_bands
 
-        # ── amplitude — optionally conditioned on detected loudness ──
-        det_loudness = detected.get("loudness")
-        if ext and det_loudness is not None:
-            # Scale raw amplitude logit by detected loudness (dB → linear)
-            loudness_linear = 10.0 ** (det_loudness / 20.0)
-            amplitude = torch.sigmoid(raw[:, 0, :]) * loudness_linear
-        else:
-            amplitude = torch.sigmoid(raw[:, 0, :])                          # [B, T]
-
-        # ── harmonic distribution ──
-        harm_dist = F.softmax(raw[:, 1:1 + nh, :], dim=1)                    # [B, nh, T]
-
-        # ── noise magnitudes ──
-        noise_mag = torch.sigmoid(raw[:, 1 + nh:1 + nh + nn_, :])            # [B, nn, T]
-
-        # ── f0 ──
-        det_f0 = detected.get("f0")
-        if ext and det_f0 is not None:
-            f0 = det_f0
-        else:
-            f0 = _sigmoid_range(raw[:, -1, :], F0_MIN_HZ, F0_MAX_HZ)         # [B, T]
+        amplitude = detected["loudness"]                                    # [B, T]
+        f0 = detected["f0"]                                                 # [B, T]
+        harm_dist = _modified_sigmoid(raw[:, :nh, :])                       # [B, nh, T]
+        noise_mag = _modified_sigmoid(raw[:, nh:nh + nn_, :])               # [B, nn, T]
 
         return {
-            "amplitude":             amplitude,
-            "harmonic_distribution": harm_dist,
-            "noise_magnitudes":      noise_mag,
-            "f0":                    f0,
+            "amplitude":             amplitude,       # [B, T]
+            "harmonic_distribution": harm_dist,        # [B, nh, T]
+            "noise_magnitudes":      noise_mag,        # [B, nn, T]
+            "f0":                    f0,               # [B, T]
         }
 
-    def synthesise(self, params: dict[str, Tensor]) -> SynthOutput:
-        raise NotImplementedError(
-            "H+N synthesis not yet implemented. "
-            "Plug in your DDSP harmonic + noise synthesiser here."
-        )
 
+    def synthesise(self, params: dict[str, Tensor]) -> SynthOutput: # Returns: (audio [B, N], params)
+        f0 = params["f0"]                              # [B, T]
+        amplitude = params["amplitude"]                 # [B, T]
+        harm_dist = params["harmonic_distribution"]     # [B, nh, T]
+        noise_mag = params["noise_magnitudes"]          # [B, nn, T]
+
+        B, T = f0.shape
+        N = self.num_samples
+
+        f0_up = lin_resample(f0, N)               # [B, N]
+        amp_up = lin_resample(amplitude, N)        # [B, N]
+        harm_dist_up = F.interpolate(
+            harm_dist, size=N, mode='linear', align_corners=False
+        ).permute(0, 2, 1)  # [B, nh, N] → [B, N, nh]
+
+        harm_dist_up = self._remove_above_nyquist(harm_dist_up, f0_up)
+
+        # ── Normalise distribution and scale by amplitude ──
+        harm_dist_up = harm_dist_up / (harm_dist_up.sum(dim=-1, keepdim=True) + 1e-8)
+        amplitudes = harm_dist_up * amp_up.unsqueeze(-1)  # [B, N, nh]
+
+        # ── Harmonic synthesis (additive, cumulative phase) ──
+        harmonic = self._harmonic_synth(f0_up, amplitudes)  # [B, N]
+
+        # ── Noise synthesis (filtered white noise) ──
+        block_size = N // T
+        noise_mag_t = noise_mag.permute(0, 2, 1)       # [B, T, nn]
+        noise = self._noise_synth(noise_mag_t, block_size)  # [B, N]
+
+        audio = harmonic + noise                        # [B, N]
+        return audio, params
+
+    @torch.no_grad()
     def oracle_synth(self, params: dict[str, Tensor]) -> SynthOutput:
-        raise NotImplementedError("H+N oracle synth not yet implemented.")
-'''
+        """Same as synthesise, without gradient tracking."""
+        return self.synthesise(params)
+
+    def _remove_above_nyquist(
+        self, amplitudes: Tensor, f0: Tensor
+    ) -> Tensor:
+        """Zero out harmonic amplitudes whose frequency exceeds Nyquist.
+
+        Args:
+            amplitudes: [B, N, n_harmonics]
+            f0:         [B, N]
+        """
+        n_harm = amplitudes.shape[-1]
+        # f0 * k for k = 1, 2, …, n_harm
+        harmonics_hz = f0.unsqueeze(-1) * torch.arange(
+            1, n_harm + 1, device=f0.device, dtype=f0.dtype
+        )                                                  # [B, N, n_harm]
+        mask = (harmonics_hz < self.fs / 2).float() + 1e-4
+        return amplitudes * mask
+
+    def _harmonic_synth(self, f0: Tensor, amplitudes: Tensor) -> Tensor:
+        """Additive synthesis via cumulative-phase oscillator bank.
+
+        Args:
+            f0:         [B, N] instantaneous frequency in Hz.
+            amplitudes: [B, N, n_harmonics] per-harmonic amplitudes.
+
+        Returns:
+            [B, N] audio signal.
+        """
+        n_harm = amplitudes.shape[-1]
+
+        # Instantaneous phase increment per sample
+        omega = torch.cumsum(
+            2 * math.pi * f0 / self.fs, dim=1
+        )                                                   # [B, N]
+
+        # Phase for each harmonic: ω(t) × k
+        omegas = omega.unsqueeze(-1) * torch.arange(
+            1, n_harm + 1, device=f0.device, dtype=f0.dtype
+        )                                                   # [B, N, n_harm]
+
+        return (torch.sin(omegas) * amplitudes).sum(dim=-1)  # [B, N]
+
+    def _noise_synth(
+        self, noise_mag: Tensor, block_size: int
+    ) -> Tensor:
+        """Filtered-noise synthesis.
+
+        For each frame, the frequency-domain magnitudes are converted to a
+        time-domain impulse response, then convolved with white noise.
+
+        Args:
+            noise_mag:  [B, T, n_noise_bands] filter magnitudes per frame.
+            block_size: Samples per frame (= num_samples // num_frames).
+
+        Returns:
+            [B, N] noise signal.
+        """
+        # Frequency-domain magnitudes → causal impulse response
+        ir = self._amp_to_impulse_response(noise_mag, block_size)  # [B, T, block_size]
+
+        # White noise, one block per frame
+        noise = torch.rand_like(ir) * 2 - 1
+
+        # Per-frame FFT convolution
+        filtered = self._fft_convolve(noise, ir)                   # [B, T, block_size]
+
+        return filtered.reshape(filtered.shape[0], -1)             # [B, N]
+
+    @staticmethod
+    def _amp_to_impulse_response(amp: Tensor, target_size: int) -> Tensor:
+        """Convert frequency-domain magnitudes to a windowed impulse response.
+
+        Follows the IRCAM DDSP approach: treat magnitudes as a half-spectrum,
+        IRFFT to time domain, apply Hann window, zero-pad to block size.
+
+        Args:
+            amp:         [B, T, n_bands]
+            target_size: desired IR length (= block_size).
+
+        Returns:
+            [B, T, target_size]
+        """
+        # Build one-sided spectrum (real magnitudes, zero imaginary)
+        amp_complex = torch.stack([amp, torch.zeros_like(amp)], dim=-1)
+        amp_complex = torch.view_as_complex(amp_complex)
+        ir = torch.fft.irfft(amp_complex)                  # [B, T, filter_size]
+
+        filter_size = ir.shape[-1]
+
+        # Centre the filter and window
+        ir = torch.roll(ir, filter_size // 2, dims=-1)
+        win = torch.hann_window(filter_size, dtype=ir.dtype, device=ir.device)
+        ir = ir * win
+
+        # Zero-pad to block_size and shift back
+        ir = F.pad(ir, (0, target_size - filter_size))
+        ir = torch.roll(ir, -(filter_size // 2), dims=-1)
+
+        return ir
+
+    @staticmethod
+    def _fft_convolve(signal: Tensor, kernel: Tensor) -> Tensor:
+        """FFT-based linear convolution (last dimension).
+
+        Both tensors are zero-padded to avoid circular artefacts.
+
+        Args:
+            signal: [B, T, L]
+            kernel: [B, T, L]
+
+        Returns:
+            [B, T, L] (truncated to original length).
+        """
+        signal = F.pad(signal, (0, signal.shape[-1]))
+        kernel = F.pad(kernel, (kernel.shape[-1], 0))
+
+        output = torch.fft.irfft(
+            torch.fft.rfft(signal) * torch.fft.rfft(kernel)
+        )
+        output = output[..., output.shape[-1] // 2:]
+        return output
