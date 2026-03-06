@@ -18,6 +18,7 @@ python experiments/train.py --multirun \\
 """
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import hydra
@@ -156,12 +157,15 @@ def main(cfg: DictConfig) -> None:
     print(f"Decoder: {model.decoder.__class__.__name__} "
           f"({model.decoder.num_params} outputs)")
 
-    logger = WandbLogger(project="DAFx26-Karplus", log_model=False)
+    tag = _checkpoint_tag(cfg)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_name = f"{tag}_{timestamp}"
+
+    logger = WandbLogger(project="DAFx26-Karplus", name=run_name, log_model=False)
     logger.experiment.config.update(OmegaConf.to_container(cfg, resolve=True))
 
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
 
-    tag = _checkpoint_tag(cfg)
     monitor = "val_synth/loss" if cfg.data.has_synthetic else "val_ood/loss"
 
     # Resolve relative to project root (Hydra changes cwd)
@@ -170,14 +174,14 @@ def main(cfg: DictConfig) -> None:
 
     ckpt_best = ModelCheckpoint(
         dirpath=str(ckpt_dir),
-        filename=f"{tag}_best",
+        filename=f"{run_name}_best",
         save_top_k=1,
         monitor=monitor,
         mode="min",
     )
     ckpt_last = ModelCheckpoint(
         dirpath=str(ckpt_dir),
-        filename=f"{tag}_last",
+        filename=f"{run_name}_last",
         save_top_k=1,
         save_last=False,      # we control the name ourselves
         every_n_epochs=1,
@@ -185,7 +189,8 @@ def main(cfg: DictConfig) -> None:
     )
 
     # Also save the full Hydra config alongside checkpoints for eval scripts
-    OmegaConf.save(cfg, str(ckpt_dir / f"{tag}_config.yaml"))
+    OmegaConf.save(cfg, str(ckpt_dir / f"{run_name}_config.yaml"))
+    print(f"Run name: {run_name}")
 
     trainer = pl.Trainer(
         max_epochs=cfg.experiment.max_epochs,
@@ -197,6 +202,14 @@ def main(cfg: DictConfig) -> None:
         enable_progress_bar=True,
     )
     trainer.fit(experiment, datamodule=datamodule)
+
+    for suffix in ["best.ckpt", "last.ckpt", "config.yaml"]:
+        src = ckpt_dir / f"{run_name}_{suffix}"
+        dst = ckpt_dir / f"{tag}_{suffix}"
+        if src.exists():
+            dst.unlink(missing_ok=True)
+            dst.symlink_to(src.name)
+            print(f"  {dst.name} → {src.name}")
 
 
 if __name__ == "__main__":
