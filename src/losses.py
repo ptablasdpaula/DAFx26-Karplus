@@ -124,20 +124,19 @@ class SOT2048Loss(nn.Module):
       - quantile_lowpass: True (repo's frequency-cutoff-like behaviour)
       - balanced: False        (recommended when using quantile_lowpass, per repo docstring)
     """
-
-    def __init__(
-        self,
-        sample_rate: int = 16000,
-        device: str | torch.device = 'cpu',
-        reduce: bool = True,
-    ):
+    def __init__(self, sample_rate: int = 16000, reduce: bool = True):
         super().__init__()
+        self.sample_rate = sample_rate
+        self.reduce = reduce
+        self.loss_fn = None
+        self._device = None
 
+    def _build(self, device: torch.device):
         self.loss_fn = Wasserstein1DLoss(
             transform="stft",
             fft_size=2048,
             hop_length=256,
-            sample_rate=sample_rate,
+            sample_rate=self.sample_rate,
             window="flattop",
             square_magnitude=True,
             p=2,
@@ -145,14 +144,19 @@ class SOT2048Loss(nn.Module):
             normalize=True,
             balanced=False,
             quantile_lowpass=True,
-            reduce=reduce,
+            reduce=self.reduce,
             device=device,
         )
+        self._device = device
 
     def forward(self, x: Tensor, x_target: Tensor) -> Tensor:
         assert x.dim() == 2 == x_target.dim(), (
             f"only mono audio is supported. Got {x.shape} and {x_target.shape}"
         )
+
+        if self.loss_fn is None or self._device != x.device:
+            self._build(x.device)
+
         return self.loss_fn(x, x_target)
 
 
