@@ -142,7 +142,7 @@ def make_default_registry(fs: int = 16000) -> dict[str, ParamSpec]:
             name="a1",
             low=DAMPING_MIN,
             high=DAMPING_MAX,
-            loss_type=LossType.LOG_MAE,
+            loss_type=LossType.MAE,
             description="Loop-filter pole coefficient",
         ),
         "decay": ParamSpec(
