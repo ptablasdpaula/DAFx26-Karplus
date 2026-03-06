@@ -40,8 +40,21 @@ class NsynthGuitarDataset(Dataset):
         self._meta: dict = json.loads(meta_path.read_text())
         self._keys: list[str] = list(self._meta.keys())
 
+        # Load global loudness stats for normalization
+        stats_path = self.nsynth_root / "loudness_stats.json"
+        assert stats_path.exists(), (
+            f"Missing {stats_path} — run compute_loudness_stats() first."
+        )
+        stats = json.loads(stats_path.read_text())
+        self._loud_min = stats["loudness_min"]
+        self._loud_max = stats["loudness_max"]
+
     def __len__(self) -> int:
         return len(self._keys)
+
+    def _normalize_loudness(self, loudness: torch.Tensor) -> torch.Tensor:
+        """Min-max normalize to [0, 1] using global stats."""
+        return (loudness - self._loud_min) / (self._loud_max - self._loud_min)
 
     # ── Conversion helpers ───────────────────────────────────────────────
 
@@ -68,6 +81,10 @@ class NsynthGuitarDataset(Dataset):
             mode="linear",
             align_corners=True,
         ).squeeze(0).squeeze(0)
+    
+    def _normalize_loudness(self, loudness: torch.Tensor) -> torch.Tensor:
+        """Min-max normalize to [0, 1] using global stats."""
+        return (loudness - self._loud_min) / (self._loud_max - self._loud_min)
 
     # ── __getitem__ ──────────────────────────────────────────────────────
 
@@ -77,15 +94,14 @@ class NsynthGuitarDataset(Dataset):
         pt = torch.load(item_path, weights_only=True)
 
         audio = pt["audio"].float()
-        assert audio.numel() == self.num_audio_samples, (
-            f"{key}: expected {self.num_audio_samples} samples, "
-            f"got {audio.numel()}"
-        )
+        assert audio.numel() == self.num_audio_samples
+
+        loudness_raw = self._resample_to_frames(pt["loudness"], fallback=-60.0)
 
         detected = {
-            "onsets":    self._onset_times_to_mask(pt["onset_times"]),
-            "f0":        self._resample_to_frames(pt["f0_hz"], fallback=220.0),
-            "loudness":  self._resample_to_frames(pt["loudness"], fallback=-60.0),
+            "onsets":   self._onset_times_to_mask(pt["onset_times"]),
+            "f0":       self._resample_to_frames(pt["f0_hz"], fallback=220.0),
+            "loudness": self._normalize_loudness(loudness_raw),
         }
 
         return {

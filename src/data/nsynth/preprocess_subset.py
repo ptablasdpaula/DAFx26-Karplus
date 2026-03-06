@@ -86,63 +86,132 @@ def preprocess_nsynth_guitar_acoustic(
         items_dir.mkdir(parents=True, exist_ok=True)
         metadata: Dict[str, Any] = {}
 
-        # ---- Iterate over items -------------------------------------------------
-        for k in tqdm(keys, ncols=100):
-            wav_path = split_in / "audio" / f"{k}.wav"
-            x, sr = torchaudio.load(str(wav_path))  # (1, T)
-            assert sr == SAMPLE_RATE, f"{k}: expected {SAMPLE_RATE}, got {sr}"
-            x = x.squeeze(0)  # (T,)
-            assert x.numel() == SEGMENT_LENGTH, (
-                f"{k}: expected {SEGMENT_LENGTH} samples, got {x.numel()}"
-            )
+        split_t0 = time.time()
 
-            x_np = x.detach().cpu().numpy()
+        # ---- Iterate in batches -------------------------------------------------
+        with ProcessPoolExecutor(max_workers=NUM_WORKERS) as pool:
+            num_batches = (len(keys) + AUDIO_BATCH_SIZE - 1) // AUDIO_BATCH_SIZE
+            for batch_start in tqdm(range(0, len(keys), AUDIO_BATCH_SIZE),
+                                    total=num_batches, desc=split, ncols=100):
+                batch_keys = keys[batch_start : batch_start + AUDIO_BATCH_SIZE]
 
-            # ---- Onsets (times in seconds) --------------------------------------
-            onset_times = detect_onsets(x_np, sr=SAMPLE_RATE)
+                # ---- Load audio -------------------------------------------------
+                t0 = time.time()
+                audios_np = []
+                audios_t = []
+                for k in batch_keys:
+                    wav_path = split_in / "audio" / f"{k}.wav"
+                    x, sr = torchaudio.load(str(wav_path))
+                    assert sr == SAMPLE_RATE
+                    x = x.squeeze(0)
+                    assert x.numel() == SEGMENT_LENGTH
+                    audios_np.append(x.numpy())
+                    audios_t.append(x)
+                t1 = time.time()
 
-            # ---- F0 (CREPE) ----------------------------------------------------
-            x_2d = x.unsqueeze(0)  # (1, T) – batch dim for torchcrepe
-            f0_hz, _, _ = detect_f0(x_2d, sr=SAMPLE_RATE)
-            f0_hz = f0_hz[:-1] # Drop last
+                # ---- Batched F0 (CREPE on GPU) ----------------------------------
+                batch_tensor = torch.stack(audios_t).to(device)
+                f0_batch, conf_batch = torchcrepe.predict(
+                    batch_tensor.float(),
+                    SAMPLE_RATE,
+                    hop_length=DEFAULT_CREPE_HOP_LENGTH,
+                    fmin=F0_MIN_HZ,
+                    fmax=F0_MAX_HZ,
+                    model=CREPE_MODEL,
+                    batch_size=CREPE_FRAME_BATCH,
+                    device=device,
+                    return_periodicity=True,
+                )
+                t2 = time.time()
 
-            # ---- Loudness (A-weighted) ------------------------------------------
-            loudness = detect_loudness(x_np, sampling_rate=SAMPLE_RATE)
+                # ---- CPU: parallel onset + loudness -----------------------------
+                futures = {
+                    pool.submit(_process_cpu, (k, audios_np[i], SAMPLE_RATE)): (i, k)
+                    for i, k in enumerate(batch_keys)
+                }
+                cpu_results = {}
+                for fut in as_completed(futures):
+                    k_res, onset_times, loudness = fut.result()
+                    cpu_results[k_res] = (onset_times, loudness)
+                t3 = time.time()
 
-            # ---- Save tensors ---------------------------------------------------
-            item_pt = items_dir / f"{k}.pt"
-            torch.save({
-                "audio":          x.cpu(),                                      # (T,)
-                "onset_times":    torch.from_numpy(onset_times.astype(np.float32)),  # (N_onsets,)
-                "f0_hz":          torch.from_numpy(f0_hz.astype(np.float32)),        # (F,)
-                "loudness":       torch.from_numpy(loudness.astype(np.float32)),     # (L,)
-            }, item_pt)
+                # ---- Save -------------------------------------------------------
+                for i, k in enumerate(batch_keys):
+                    onset_times, loudness = cpu_results[k]
+                    f0_hz = f0_batch[i, :-1].cpu().numpy()
 
-            # ---- Compact metadata entry -----------------------------------------
-            m = meta_json[k]
-            metadata[k] = {
-                "path":                  f"{split}/preprocessed/items/{k}.pt",
-                "num_samples":           int(x.numel()),
-                "instrument_family_str": m.get("instrument_family_str", ""),
-                "instrument_source_str": m.get("instrument_source_str", ""),
-                "midi_pitch":            int(m.get("pitch", -1)),
-                "midi_velocity":         int(m.get("velocity", -1)),
-                "onset_times":           onset_times.tolist(),
-            }
+                    torch.save({
+                        "audio":       audios_t[i].cpu(),
+                        "onset_times": torch.from_numpy(onset_times.astype(np.float32)),
+                        "f0_hz":       torch.from_numpy(f0_hz.astype(np.float32)),
+                        "loudness":    torch.from_numpy(loudness.astype(np.float32)),
+                    }, items_dir / f"{k}.pt")
+
+                    m = meta_json[k]
+                    metadata[k] = {
+                        "path":                  f"{split}/preprocessed/items/{k}.pt",
+                        "num_samples":           int(audios_t[i].numel()),
+                        "instrument_family_str": m.get("instrument_family_str", ""),
+                        "instrument_source_str": m.get("instrument_source_str", ""),
+                        "midi_pitch":            int(m.get("pitch", -1)),
+                        "midi_velocity":         int(m.get("velocity", -1)),
+                        "onset_times":           onset_times.tolist(),
+                    }
+                t4 = time.time()
+
+                print(f"  batch {batch_start//AUDIO_BATCH_SIZE + 1}/{num_batches}: "
+                      f"load={t1-t0:.1f}s  crepe={t2-t1:.1f}s  "
+                      f"cpu={t3-t2:.1f}s  save={t4-t3:.1f}s")
+
+        split_elapsed = time.time() - split_t0
+        print(f"Split '{split}' done in {split_elapsed:.1f}s "
+              f"({split_elapsed/60:.1f} min)")
 
         # ---- Save split metadata ------------------------------------------------
         meta_path = split_out / "metadata.json"
         meta_path.write_text(json.dumps(metadata, indent=2))
         print(f"Wrote {meta_path} with {len(metadata)} items.")
 
+def compute_loudness_stats(splits=("test", "validation", "training")):
+    """Compute global loudness min/max across all splits and save."""
+    nsynth_root = Path(NSYNTH_DIR).resolve()
+    global_min = float("inf")
+    global_max = float("-inf")
+
+    for split in splits:
+        meta_path = nsynth_root / split / "preprocessed" / "metadata.json"
+        if not meta_path.exists():
+            continue
+        meta = json.loads(meta_path.read_text())
+        items_dir = nsynth_root / split / "preprocessed" / "items"
+
+        for k in tqdm(meta.keys(), desc=f"stats/{split}", ncols=100):
+            pt = torch.load(items_dir / f"{k}.pt", weights_only=True)
+            loud = pt["loudness"]
+            global_min = min(global_min, loud.min().item())
+            global_max = max(global_max, loud.max().item())
+
+    stats = {"loudness_min": global_min, "loudness_max": global_max}
+    stats_path = nsynth_root / "loudness_stats.json"
+    stats_path.write_text(json.dumps(stats, indent=2))
+    print(f"Loudness stats: min={global_min:.4f}, max={global_max:.4f}")
+    print(f"Wrote {stats_path}")
+
 
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     from src.data.nsynth.nsynth_guitar_dataset import NsynthGuitarDataset
-    preprocess_nsynth_guitar_acoustic(splits=("test",))
 
-    ds = NsynthGuitarDataset(split="test")
-    print(f"\nLoaded {len(ds)} examples.")
+    preprocess_nsynth_guitar_acoustic(splits=("test", "validation", "training"))
+    compute_loudness_stats()
+
+    print(f"\nCUDA available: {torch.cuda.is_available()}")
+
+    ds = NsynthGuitarDataset(nsynth_root=NSYNTH_DIR, split="test")
+    print(f"Loaded {len(ds)} examples.")
     item = ds[0]
     for name, t in item.items():
-        print(f"  {name:16s} {tuple(t.shape)}")
+        if isinstance(t, torch.Tensor):
+            print(f"  {name:16s} {tuple(t.shape)}")
+        else:
+            print(f"  {name:16s} {type(t).__name__}: {t}")
