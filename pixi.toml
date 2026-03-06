@@ -8,6 +8,7 @@ version = "0.1.0"
 [tasks]
 
 [dependencies]
+python = ">=3.11,<3.13"
 numpy = ">=2.3.5,<3"
 numba = ">=0.63.1,<0.64"
 hydra-core = ">=1.3.2,<2"
@@ -27,37 +28,36 @@ pip = ">=26.0,<27"
 libsndfile = ">=1.2.2,<2"
 wandb = ">=0.24.1,<0.25"
 einops = ">=0.8.2,<0.9"
-python = ">=3.11,<3.13"
 pandas = ">=3.0.1,<4"
 scipy = ">=1.17.1,<2"
 mir_eval = ">=0.8.2,<0.9"
 dtw-python = ">=1.7.4,<2"
 
+[pypi-options]
+no-build-isolation = ["philtorch"]
+
 [pypi-dependencies]
 soundfile = "*"
-torchcrepe = ">=0.0.24, <0.0.25"
-philtorch = "*"
-sot-loss = ">=0.1.3, <0.2"
+torchcrepe = ">=0.0.24,<0.0.25"
+philtorch = { git = "https://github.com/yoyolicoris/philtorch.git", rev = "7109461" }
+sot-loss = ">=0.1.3,<0.2"
 
-# --- CPU feature (default: macOS + linux without GPU) ---
 [feature.cpu.dependencies]
 pytorch = ">=2.9.1,<3"
 torchaudio = ">=2.9.1,<3"
 lightning = ">=2.6.0,<3"
 
-# --- CUDA feature (linux-64 only) ---
 [feature.cuda]
 platforms = ["linux-64"]
 system-requirements = { cuda = "12" }
 
 [feature.cuda.dependencies]
+pytorch-gpu = "*"
+torchaudio = ">=2.9.1,<3"
+lightning = ">=2.6.0,<3"
+cuda-version = "12.*"
 cuda-toolkit = "*"
 cuda-nvcc = "*"
-
-[feature.cuda.pypi-dependencies]
-torch = {version = ">=2.5", index = "https://download.pytorch.org/whl/cu124"}
-torchaudio = {version = ">=2.5", index = "https://download.pytorch.org/whl/cu124"}
-lightning = ">=2.6.0"
 
 [feature.cuda.activation.env]
 CUDA_HOME = "$CONDA_PREFIX"
