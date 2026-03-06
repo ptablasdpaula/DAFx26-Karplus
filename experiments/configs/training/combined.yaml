@@ -1,6 +1,6 @@
 objective: combined
-param_only_epochs: 20
-fadein_epochs: 10
+param_only_epochs: 50
+fadein_epochs: 50
 w_param: 1.0
 w_mss: 1.0
 w_sot: 1.0

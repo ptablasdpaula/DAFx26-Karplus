@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import pytorch_lightning as pl
@@ -42,26 +41,7 @@ class SoundMatchingDataModule(pl.LightningDataModule):
         hp = self.hparams
         syn_cfg = hp.synthetic_cfg or {}
 
-        if hp.has_synthetic:
-            self.train_synthetic = SyntheticDataset(
-                num_samples_per_epoch=syn_cfg.get("num_samples_per_epoch", 4096),
-                num_audio_samples=hp.num_audio_samples,
-                num_frames=hp.num_frames,
-                fs=hp.fs,
-                lti=syn_cfg.get("lti", False),
-                blend_lti=syn_cfg.get("blend_lti", True),
-                random_seed=syn_cfg.get("random_seed", 42),
-            )
-            self.val_synthetic = SyntheticDataset(
-                num_samples_per_epoch=hp.val_synthetic_size,
-                num_audio_samples=hp.num_audio_samples,
-                num_frames=hp.num_frames,
-                fs=hp.fs,
-                lti=syn_cfg.get("lti", False),
-                blend_lti=syn_cfg.get("blend_lti", True),
-                random_seed=hp.val_synthetic_seed,
-            )
-
+        # ── NSynth (create first so we know its size) ────────────────────
         if hp.has_ood:
             from src.data.nsynth.nsynth_guitar_dataset import NsynthGuitarDataset
 
@@ -81,6 +61,36 @@ class SoundMatchingDataModule(pl.LightningDataModule):
                 num_frames=hp.num_frames,
                 num_audio_samples=hp.num_audio_samples,
                 duration_s=hp.duration_s,
+            )
+
+        # ── Synthetic ────────────────────────────────────────────────────
+        if hp.has_synthetic:
+            # When training alongside nsynth, match synthetic epoch size
+            # to the nsynth training set so both streams see equal data
+            if hp.has_ood:
+                num_synth_per_epoch = len(self.train_nsynth)
+                print(f"Matching synthetic samples per epoch to NSynth "
+                      f"training set size: {num_synth_per_epoch}")
+            else:
+                num_synth_per_epoch = syn_cfg.get("num_samples_per_epoch", 4096)
+
+            self.train_synthetic = SyntheticDataset(
+                num_samples_per_epoch=num_synth_per_epoch,
+                num_audio_samples=hp.num_audio_samples,
+                num_frames=hp.num_frames,
+                fs=hp.fs,
+                lti=syn_cfg.get("lti", False),
+                blend_lti=syn_cfg.get("blend_lti", True),
+                random_seed=syn_cfg.get("random_seed", 42),
+            )
+            self.val_synthetic = SyntheticDataset(
+                num_samples_per_epoch=hp.val_synthetic_size,
+                num_audio_samples=hp.num_audio_samples,
+                num_frames=hp.num_frames,
+                fs=hp.fs,
+                lti=syn_cfg.get("lti", False),
+                blend_lti=syn_cfg.get("blend_lti", True),
+                random_seed=hp.val_synthetic_seed,
             )
 
     def train_dataloader(self):

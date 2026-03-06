@@ -2,7 +2,9 @@ has_synthetic: true
 has_ood: true
 
 synthetic:
-  num_samples_per_epoch: 2048
+  # num_samples_per_epoch is ignored when has_ood=true;
+  # automatically matched to len(nsynth_training_set)
+  num_samples_per_epoch: 2048   # fallback if has_ood were false
   lti: false
   blend_lti: true
   random_seed: 42
@@ -10,4 +12,4 @@ synthetic:
 nsynth:
   root: ${oc.env:PROJECT_ROOT,src/data/nsynth}
   split_train: training
-  split_val: test
+  split_val: validation

@@ -223,7 +223,7 @@ def main(cfg: DictConfig) -> None:
 
     early_stop = EarlyStopping(
         monitor=monitor,
-        patience=10,
+        patience=cfg.experiment.patience,
         mode="min",
         verbose=True,
     )
