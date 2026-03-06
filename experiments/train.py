@@ -145,6 +145,29 @@ def _checkpoint_tag(cfg: DictConfig) -> str:
 @hydra.main(version_base="1.3", config_path="configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
+
+    # ── Enforce H+N constraints ──
+    if cfg.model.decoder == "harmonics_noise":
+        errors = []
+        if not cfg.detector.use_external_detectors:
+            errors.append("detector=external (H+N requires f0 + loudness detectors)")
+        if cfg.training.objective != "spectral_only":
+            errors.append("training=spectral_only (H+N has no ground-truth params)")
+        if cfg.data.has_synthetic:
+            errors.append("data=nsynth_only (H+N cannot use synthetic KS data)")
+        if not cfg.data.has_ood:
+            errors.append("data=nsynth_only (H+N requires NSynth OOD data)")
+        if cfg.experiment.eval_synthetic_metrics:
+            errors.append("experiment=ood_eval (H+N has no param-level metrics)")
+        if errors:
+            raise ValueError(
+                "harmonics_noise decoder requires:\n  "
+                + "\n  ".join(errors)
+                + "\n\nExample:\n  python experiments/train.py "
+                "model=harmonics_noise detector=external "
+                "training=spectral_only data=nsynth_only experiment=ood_eval"
+            )
+
     pl.seed_everything(cfg.seed, workers=True)
 
     model = _build_model(cfg)
