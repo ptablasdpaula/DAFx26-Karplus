@@ -6,6 +6,10 @@ defaults:
   - experiment: synth_eval
   - _self_
 
+hydra:
+  run:
+    dir: experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
 lr: 1e-3
 seed: 42
 fs: 16000

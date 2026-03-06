@@ -22,7 +22,6 @@ from datetime import datetime
 from pathlib import Path
 
 import hydra
-import hydra.utils
 from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -34,6 +33,8 @@ from src.decoder import KSDecoder
 from src.model import SoundMatchingModel
 from src.data.data_module import SoundMatchingDataModule
 from experiments.sound_matching_experiment import SoundMatchingExperiment
+
+from paths import EXPERIMENTS_DIR
 
 import torch
 
@@ -184,15 +185,20 @@ def main(cfg: DictConfig) -> None:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name = f"{tag}_{timestamp}"
 
-    logger = WandbLogger(project="DAFx26-Karplus", name=run_name, log_model=False)
+    logger = WandbLogger(
+        project="DAFx26-Karplus",
+        name=run_name,
+        save_dir=str(EXPERIMENTS_DIR),
+        log_model=False,
+    )
     logger.experiment.config.update(OmegaConf.to_container(cfg, resolve=True))
 
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
 
     monitor = "val_synth/loss" if cfg.data.has_synthetic else "val_ood/loss"
 
-    # Resolve relative to project root (Hydra changes cwd)
-    ckpt_dir = Path(hydra.utils.get_original_cwd()) / "checkpoints"
+    # Resolve relative to experiments/ dir (where train.py lives)
+    ckpt_dir = EXPERIMENTS_DIR / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     ckpt_best = ModelCheckpoint(
@@ -226,12 +232,14 @@ def main(cfg: DictConfig) -> None:
     )
     trainer.fit(experiment, datamodule=datamodule)
 
+    # ── Symlink bare tag → latest timestamped files ──
+    # So eval scripts can just look for Synth_Free_Time_Comb_best.ckpt
     for suffix in ["best.ckpt", "last.ckpt", "config.yaml"]:
         src = ckpt_dir / f"{run_name}_{suffix}"
         dst = ckpt_dir / f"{tag}_{suffix}"
         if src.exists():
-            dst.unlink(missing_ok=True)
-            dst.symlink_to(src.name)
+            dst.unlink(missing_ok=True)  # remove old symlink/file
+            dst.symlink_to(src.name)     # relative symlink within same dir
             print(f"  {dst.name} → {src.name}")
 
 
