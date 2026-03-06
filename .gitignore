@@ -9,10 +9,9 @@ __pycache__/
 *.pyd
 
 # Build and environment
-experiments/outputs
-experiments/logs
 experiments/outputs/*
 experiments/logs/*
+experiments/wandb/*
 
 src/data/nsynth/test/*
 src/data/nsynth/validation/*
