@@ -334,6 +334,8 @@ class PLoss(nn.Module):
                 loss_i = (pred - target).abs().mean()
             elif spec.loss_type == LossType.LOG_MAE:
                 loss_i = self._log_mae(pred, target, spec)
+            elif spec.loss_type == LossType.LOG1M_MAE:
+                loss_i = spec.log1m_mae(pred, target)
             elif spec.loss_type == LossType.HUNGARIAN:
                 loss_i, _info = self.hungarian(pred, target)
             else:
