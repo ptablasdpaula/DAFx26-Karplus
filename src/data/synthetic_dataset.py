@@ -358,14 +358,22 @@ class SyntheticDataset(IterableDataset):
         return audio.squeeze(0).numpy()
 
     def __iter__(self):
-        rng = self._get_rng()
-        yielded = 0
-        while yielded < self.num_samples_per_epoch:
-            sample_rng = np.random.default_rng(rng.integers(0, 2**31))
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is None:
+            num_to_yield = self.num_samples_per_epoch
+            worker_id = 0
+        else:
+            per_worker = self.num_samples_per_epoch // worker_info.num_workers
+            leftover = self.num_samples_per_epoch % worker_info.num_workers
+            num_to_yield = per_worker + (1 if worker_info.id < leftover else 0)
+            worker_id = worker_info.id
+
+        rng = np.random.default_rng(self.random_seed + worker_id)
+        for _ in range(num_to_yield):
+            sample_rng = np.random.default_rng(rng.integers(0, 2 ** 31))
             params = self._generate_params(sample_rng)
-            audio  = self._synthesise(params)
-            yielded += 1
+            audio = self._synthesise(params)
             yield {
-                'audio':  torch.from_numpy(audio).float(),
+                'audio': torch.from_numpy(audio).float(),
                 'params': {k: torch.from_numpy(v).float() for k, v in params.items()},
             }
