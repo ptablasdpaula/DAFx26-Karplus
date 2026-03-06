@@ -122,10 +122,11 @@ class SyntheticDataset(IterableDataset):
         return rng.beta(a, b, size=size)
 
     def _mirror(self, val: float, low: float = None, high: float = None) -> float:
-        if low is not None and val < low:
-            val = low + (low - val)
-        if high is not None and val > high:
-            val = high - (val - high)
+        while val < low or val > high:
+            if val < low:
+                val = low + (low - val)
+            elif val > high:
+                val = high - (val - high)
         return val
 
     def _sample_param(self, rng, prior: dict, high_override: float = None) -> float:
