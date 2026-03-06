@@ -21,6 +21,7 @@ from __future__ import annotations
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
 from src.synths.synth import Synth, SynthConfig
@@ -119,6 +120,24 @@ def _build_experiment(cfg: DictConfig, model: SoundMatchingModel) -> SoundMatchi
     )
 
 
+def _checkpoint_tag(cfg: DictConfig) -> str:
+    data_tag = "Nsynth" if cfg.data.has_ood else "Synth"
+    det_tag = "Det" if cfg.detector.use_external_detectors else "Free"
+
+    impl = cfg.model.get("implementation", None)
+    if impl == "time_domain":
+        impl_tag = "Time"
+    elif impl == "frequency_sampling":
+        impl_tag = "Freq"
+    else:
+        impl_tag = "HpN"
+
+    obj = cfg.training.objective
+    obj_tag = {"param_only": "Super", "spectral_only": "Spec", "combined": "Comb"}[obj]
+
+    return f"{data_tag}_{det_tag}_{impl_tag}_{obj_tag}"
+
+
 @hydra.main(version_base="1.3", config_path="configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
@@ -139,13 +158,35 @@ def main(cfg: DictConfig) -> None:
 
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
 
+    tag = _checkpoint_tag(cfg)
+    monitor = "val_synth/loss" if cfg.data.has_synthetic else "val_ood/loss"
+
+    ckpt_best = ModelCheckpoint(
+        dirpath="checkpoints",
+        filename=f"{tag}_best",
+        save_top_k=1,
+        monitor=monitor,
+        mode="min",
+    )
+    ckpt_last = ModelCheckpoint(
+        dirpath="checkpoints",
+        filename=f"{tag}_last",
+        save_top_k=1,
+        save_last=False,      # we control the name ourselves
+        every_n_epochs=1,
+        monitor=None,         # always save (most recent)
+    )
+
+    # Also save the full Hydra config alongside checkpoints for eval scripts
+    OmegaConf.save(cfg, f"checkpoints/{tag}_config.yaml")
+
     trainer = pl.Trainer(
         max_epochs=cfg.experiment.max_epochs,
         gradient_clip_val=cfg.experiment.gradient_clip_val,
         logger=logger,
         accelerator=accelerator,
         val_check_interval=cfg.experiment.val_check_interval,
-        enable_checkpointing=True,
+        callbacks=[ckpt_best, ckpt_last],
         enable_progress_bar=True,
     )
     trainer.fit(experiment, datamodule=datamodule)
