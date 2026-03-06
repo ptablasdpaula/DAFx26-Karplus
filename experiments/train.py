@@ -18,7 +18,10 @@ python experiments/train.py --multirun \\
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import hydra
+import hydra.utils
 from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -161,15 +164,19 @@ def main(cfg: DictConfig) -> None:
     tag = _checkpoint_tag(cfg)
     monitor = "val_synth/loss" if cfg.data.has_synthetic else "val_ood/loss"
 
+    # Resolve relative to project root (Hydra changes cwd)
+    ckpt_dir = Path(hydra.utils.get_original_cwd()) / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
     ckpt_best = ModelCheckpoint(
-        dirpath="checkpoints",
+        dirpath=str(ckpt_dir),
         filename=f"{tag}_best",
         save_top_k=1,
         monitor=monitor,
         mode="min",
     )
     ckpt_last = ModelCheckpoint(
-        dirpath="checkpoints",
+        dirpath=str(ckpt_dir),
         filename=f"{tag}_last",
         save_top_k=1,
         save_last=False,      # we control the name ourselves
@@ -178,7 +185,7 @@ def main(cfg: DictConfig) -> None:
     )
 
     # Also save the full Hydra config alongside checkpoints for eval scripts
-    OmegaConf.save(cfg, f"checkpoints/{tag}_config.yaml")
+    OmegaConf.save(cfg, str(ckpt_dir / f"{tag}_config.yaml"))
 
     trainer = pl.Trainer(
         max_epochs=cfg.experiment.max_epochs,
