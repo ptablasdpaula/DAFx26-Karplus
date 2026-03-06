@@ -1,21 +1,39 @@
 """Preprocess NSynth guitar-acoustic subset with onset, f0, and loudness detection."""
 from __future__ import annotations
 import json
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List
 
 import numpy as np
 import torch
 import torchaudio
+import torchcrepe
 from tqdm import tqdm
 
 from paths import NSYNTH_DIR
-from src.detectors import detect_onsets, detect_f0, detect_loudness
-from src.synths.param_registry import MIDI_D1, MIDI_D6
-from src.synths.constants import DEFAULT_FS
+from src.detectors import detect_onsets, detect_loudness
+from src.synths.param_registry import MIDI_D1, MIDI_D6, F0_MIN_HZ, F0_MAX_HZ
+from src.synths.constants import DEFAULT_FS, DEFAULT_CREPE_HOP_LENGTH
 
 SAMPLE_RATE = DEFAULT_FS
 SEGMENT_LENGTH = SAMPLE_RATE * 4  # 64 000 samples (NSynth = 4 s)
+
+# --- Tunable knobs -----------------------------------------------------------
+CREPE_MODEL = "tiny"  # "tiny" is ~10x faster than "full"; accurate enough for
+                       # clean monophonic guitar.  Switch to "full" if needed.
+AUDIO_BATCH_SIZE = 64  # audio files stacked per CREPE call
+CREPE_FRAME_BATCH = 2048  # frames through CNN per forward pass
+NUM_WORKERS = 4  # CPU workers for onset + loudness (match --cpus-per-task)
+
+
+def _process_cpu(args):
+    """Onset + loudness for one item (runs in a worker process)."""
+    k, x_np, sr = args
+    onset_times = detect_onsets(x_np, sr=sr)
+    loudness = detect_loudness(x_np, sampling_rate=sr)
+    return k, onset_times, loudness
 
 
 @torch.no_grad()
@@ -23,6 +41,12 @@ def preprocess_nsynth_guitar_acoustic(
     splits: List[str] = ("test",),
 ) -> None:
     nsynth_root = Path(NSYNTH_DIR).resolve()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
+
+    # Pre-load CREPE weights once (avoids reload every predict call)
+    torchcrepe.load.model(device, CREPE_MODEL)
+    print(f"CREPE '{CREPE_MODEL}' model loaded on {device}")
 
     for split in splits:
         print(f"\n▶ Processing split: {split}")
@@ -46,7 +70,7 @@ def preprocess_nsynth_guitar_acoustic(
             if midi is None or not (MIDI_D1 <= midi <= MIDI_D6):
                 continue
 
-            # Keep tempo-synced (idx 8), remove reverb (idx 9)
+            # Remove reverb (idx 9)
             q = m.get("qualities", [0] * 10)
             if len(q) > 9 and q[9] == 1:
                 continue
