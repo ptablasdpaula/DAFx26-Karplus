@@ -93,6 +93,10 @@ class SoundMatchingDataModule(pl.LightningDataModule):
                 random_seed=hp.val_synthetic_seed,
             )
 
+    def set_train_epoch(self, epoch: int) -> None:
+        if self.hparams.has_synthetic:
+            self.train_synthetic.set_epoch(epoch)
+
     def train_dataloader(self):
         hp = self.hparams
         loaders = {}

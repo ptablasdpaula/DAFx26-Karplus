@@ -76,6 +76,7 @@ class SyntheticDataset(IterableDataset):
         self.lti = lti
         self.blend_lti = blend_lti
         self.random_seed = random_seed
+        self.epoch = 0
 
         # log_scale=True → sampled in dB space.
         # low/high → linear range for _sample_param.
@@ -103,6 +104,9 @@ class SyntheticDataset(IterableDataset):
             'decay':          dict(change_prob=0.70),
         }
 
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = epoch
+
     @property
     def _fps(self) -> float:
         """Frames per second."""
@@ -110,11 +114,6 @@ class SyntheticDataset(IterableDataset):
 
     def _seconds_to_frames(self, s: float) -> int:
         return int(round(s * self._fps))
-
-    def _get_rng(self):
-        worker_info = torch.utils.data.get_worker_info()
-        seed = self.random_seed + (worker_info.id if worker_info else 0)
-        return np.random.default_rng(seed)
 
     def _sample_beta(self, rng, mean, concentration, size=1):
         a = mean * concentration
@@ -368,7 +367,9 @@ class SyntheticDataset(IterableDataset):
             num_to_yield = per_worker + (1 if worker_info.id < leftover else 0)
             worker_id = worker_info.id
 
-        rng = np.random.default_rng(self.random_seed + worker_id)
+        base_seed = self.random_seed + self.epoch * 1000 + worker_id
+        rng = np.random.default_rng(base_seed)
+
         for _ in range(num_to_yield):
             sample_rng = np.random.default_rng(rng.integers(0, 2 ** 31))
             params = self._generate_params(sample_rng)

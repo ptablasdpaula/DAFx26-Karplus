@@ -24,7 +24,7 @@ from pathlib import Path
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, Callback
 from pytorch_lightning.loggers import WandbLogger
 
 from src.synths.synth import Synth, SynthConfig
@@ -143,6 +143,12 @@ def _checkpoint_tag(cfg: DictConfig) -> str:
     return f"{data_tag}_{det_tag}_{impl_tag}_{obj_tag}"
 
 
+class SyntheticEpochCallback(Callback):
+    def on_train_epoch_start(self, trainer, pl_module) -> None:
+        dm = trainer.datamodule
+        if dm is not None and getattr(dm.hparams, "has_synthetic", False):
+            dm.set_train_epoch(trainer.current_epoch)
+
 @hydra.main(version_base="1.3", config_path="configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
@@ -234,7 +240,7 @@ def main(cfg: DictConfig) -> None:
         logger=logger,
         accelerator=accelerator,
         val_check_interval=cfg.experiment.val_check_interval,
-        callbacks=[ckpt_best, ckpt_last, early_stop],
+        callbacks=[ckpt_best, ckpt_last, early_stop, SyntheticEpochCallback()],
         enable_progress_bar=True,
     )
     trainer.fit(experiment, datamodule=datamodule)
