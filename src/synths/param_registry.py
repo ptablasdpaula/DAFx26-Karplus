@@ -100,10 +100,6 @@ class ParamSpec:
         """Map x → log(1 − x).  Larger magnitude ↔ closer to 1."""
         return torch.log((1.0 - x).clamp(min=eps))
 
-    def log1m_mae(self, pred: Tensor, target: Tensor, eps: float = 1e-7) -> Tensor:
-        """MAE in log(1−x) space."""
-        return (self.to_log1m(pred, eps) - self.to_log1m(target, eps)).abs().mean()
-
 
 def make_default_registry(fs: int = 16000) -> dict[str, ParamSpec]:
     """Build the canonical parameter registry.

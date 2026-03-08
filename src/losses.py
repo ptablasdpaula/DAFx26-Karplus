@@ -26,6 +26,20 @@ def mu_law(x: Tensor, mu: float = 255.0) -> Tensor:
     return torch.log1p(mu * x) / math.log1p(mu)
 
 
+def inverse_mu_law(x: Tensor, mu: float = 255.0) -> Tensor:
+    """Inverse μ-law compression:  G(x) = μ_law(1 − x).
+
+    High resolution near 1.0 (where x ≈ 1 → 1−x ≈ 0 → μ-law
+    provides maximum sensitivity).  Bounded to [0, 1], no gradient
+    explosions — unlike log(1−x) which goes to −∞.
+
+    Ideal for parameters like ``decay`` where perceptually important
+    differences cluster near the upper bound (e.g. 0.99 vs 0.999
+    is the difference between 1 s and 10 s of sustain).
+    """
+    return mu_law((1.0 - x).clamp(min=0.0, max=1.0), mu)
+
+
 class MultiScaleSpectralLoss(nn.Module):
     """Multi-scale log-magnitude STFT distance.
     Args:
@@ -343,6 +357,10 @@ class PLoss(nn.Module):
         target_logit = (torch.log(target + lo) - ln_lo) / scale
         return (pred_logit - target_logit).abs().mean()
 
+    @staticmethod
+    def _inverse_mu_law_mae(pred: Tensor, target: Tensor, mu: float = 255.0) -> Tensor:
+        return (inverse_mu_law(pred, mu) - inverse_mu_law(target, mu)).abs().mean()
+
     def forward(
         self,
         pred_params: dict[str, Tensor],    # {name: [B, num_frames]}
@@ -371,7 +389,7 @@ class PLoss(nn.Module):
             elif spec.loss_type == LossType.LOG_MAE:
                 loss_i = self._log_mae(pred, target, spec)
             elif spec.loss_type == LossType.LOG1M_MAE:
-                loss_i = spec.log1m_mae(pred, target)
+                loss_i = self._inverse_mu_law_mae(pred, target)
             elif spec.loss_type == LossType.HUNGARIAN:
                 loss_i, _info = self.hungarian(pred, target)
             else:
@@ -443,7 +461,8 @@ if __name__ == "__main__":
 
     print("\n─── μ-law sanity check ───")
     x = torch.tensor([0.0, 0.01, 0.1, 0.5, 1.0])
-    print(f"  linear:  {x.tolist()}")
-    print(f"  μ-law:   {mu_law(x).tolist()}")
+    print(f"  linear:          {x.tolist()}")
+    print(f"  μ-law:           {mu_law(x).tolist()}")
+    print(f"  inverse μ-law:   {inverse_mu_law(x).tolist()}")
 
     print("\n✓ All smoke tests passed.")
