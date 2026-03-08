@@ -1,13 +1,30 @@
 decoder: ks
 implementation: time_domain
-
 encoder:
-  tcn_channels: 64
-  num_blocks: 5
-  kernel_size: 3
-  dilation_base: 2
-  dropout: 0.1
-
+  resonator_kwargs:
+    cqt_kwargs:
+      fs: ${fs}
+      f_min: 55.0
+      n_octaves: 6
+      bins_per_octave: 24
+      hop_length: 256
+      q_factor: 1.0
+    tcn_channels: 64
+    num_blocks: 6
+    kernel_size: 3
+    dilation_base: 2
+    dropout: 0.1
+    n_f0_bins: 128
+    f0_min_hz: 32.0
+    f0_max_hz: 2000.0
+    gru_hidden: 256
+    gru_layers: 1
+  excitation_kwargs:
+    tcn_channels: 32
+    num_blocks: 4
+    kernel_size: 3
+    dilation_base: 2
+    dropout: 0.1
 synth:
   lagrange_order: 5
   n_fft: 2048

@@ -186,6 +186,11 @@ def main(cfg: DictConfig) -> None:
     print(f"SoundMatchingModel: {n_total:,} params (encoder: {n_enc:,})")
     print(f"Decoder: {model.decoder.__class__.__name__} "
           f"({model.decoder.num_params} outputs)")
+    if hasattr(model.encoder, 'resonator'):
+        n_res = sum(p.numel() for p in model.encoder.resonator.parameters())
+        n_exc = sum(p.numel() for p in model.encoder.excitation.parameters())
+        print(f"  Resonator encoder: {n_res:,} params")
+        print(f"  Excitation encoder: {n_exc:,} params")
 
     tag = _checkpoint_tag(cfg)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -203,7 +208,6 @@ def main(cfg: DictConfig) -> None:
 
     monitor = "val_synth/loss" if cfg.data.has_synthetic else "val_ood/loss"
 
-    # Resolve relative to experiments/ dir (where train.py lives)
     ckpt_dir = EXPERIMENTS_DIR / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
@@ -223,7 +227,6 @@ def main(cfg: DictConfig) -> None:
         monitor=None,         # always save (most recent)
     )
 
-    # Also save the full Hydra config alongside checkpoints for eval scripts
     OmegaConf.save(cfg, str(ckpt_dir / f"{run_name}_config.yaml"))
     print(f"Run name: {run_name}")
 
@@ -245,14 +248,12 @@ def main(cfg: DictConfig) -> None:
     )
     trainer.fit(experiment, datamodule=datamodule)
 
-    # ── Symlink bare tag → latest timestamped files ──
-    # So eval scripts can just look for Synth_Free_Time_Comb_best.ckpt
     for suffix in ["best.ckpt", "last.ckpt", "config.yaml"]:
         src = ckpt_dir / f"{run_name}_{suffix}"
         dst = ckpt_dir / f"{tag}_{suffix}"
         if src.exists():
-            dst.unlink(missing_ok=True)  # remove old symlink/file
-            dst.symlink_to(src.name)     # relative symlink within same dir
+            dst.unlink(missing_ok=True)
+            dst.symlink_to(src.name)
             print(f"  {dst.name} → {src.name}")
 
 
