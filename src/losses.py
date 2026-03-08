@@ -339,8 +339,8 @@ class PLoss(nn.Module):
         ln_hi = math.log(spec.high)
         scale = ln_hi - ln_lo
 
-        pred_logit = (torch.log(pred) - ln_lo) / scale
-        target_logit = (torch.log(target) - ln_lo) / scale
+        pred_logit = (torch.log(pred + lo) - ln_lo) / scale
+        target_logit = (torch.log(target + lo) - ln_lo) / scale
         return (pred_logit - target_logit).abs().mean()
 
     def forward(
