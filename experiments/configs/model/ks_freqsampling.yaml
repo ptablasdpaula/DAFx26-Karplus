@@ -17,8 +17,9 @@ encoder:
     n_f0_bins: 128
     f0_min_hz: 32.0
     f0_max_hz: 2000.0
-    gru_hidden: 256
-    gru_layers: 1
+    attn_heads: 4
+    attn_layers: 2
+    attn_ff_mult: 2
   excitation_kwargs:
     tcn_channels: 32
     num_blocks: 4

@@ -168,25 +168,205 @@ class CQTFrontend(nn.Module):
 
         return torch.log1p(mag)
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Linear Attention
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _elu_feature_map(x: torch.Tensor) -> torch.Tensor:
+    """Feature map φ(x) = ELU(x) + 1.
+
+    Ensures non-negative outputs (required for the linear attention
+    kernel trick to approximate softmax attention).  ELU+1 is the
+    standard choice from Katharopoulos et al. (2020) "Transformers
+    are RNNs: Fast Autoregressive Transformers with Linear Attention".
+    """
+    return F.elu(x) + 1.0
+
+
+class LinearAttention(nn.Module):
+    """Multi-head linear attention layer.
+
+    Replaces the softmax in standard attention with a feature map φ,
+    enabling O(T·d²) computation instead of O(T²·d)::
+
+        Standard:  Softmax(Q K^T / √d) V        ← T×T matrix
+        Linear:    φ(Q) · (φ(K)^T · V)           ← d×d matrix
+
+    For the resonator encoder (~250 frames, d=64), both are cheap.
+    The advantage here is *not* speed but *smoothness*: linear attention
+    produces globally-averaged representations that act as a natural
+    low-pass filter on parameter trajectories — ideal for f0, decay,
+    and damping which are physically smooth quantities.
+
+    Args:
+        d_model:   Input/output feature dimension.
+        n_heads:   Number of attention heads (must divide d_model).
+        dropout:   Dropout on attention output.
+    """
+
+    def __init__(
+        self,
+        d_model: int = 64,
+        n_heads: int = 4,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        assert d_model % n_heads == 0, (
+            f"d_model ({d_model}) must be divisible by n_heads ({n_heads})"
+        )
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.d_head = d_model // n_heads
+
+        # Q, K, V projections
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+
+        # Output projection
+        self.W_out = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: [B, T, d_model] → [B, T, d_model].
+
+        The linear attention kernel trick:
+
+        1. Project to Q, K, V and reshape into heads
+        2. Apply feature map φ to Q and K  (ensures non-negativity)
+        3. Compute  KV = φ(K)^T · V       → [B, H, d, d]  (the "summary")
+        4. Compute  Z  = φ(K)^T · 1       → [B, H, d, 1]  (normaliser)
+        5. Output   O  = φ(Q) · KV / (φ(Q) · Z + ε)
+
+        No T×T matrix is ever formed.
+        """
+        B, T, _ = x.shape
+        H, d = self.n_heads, self.d_head
+
+        # ── Project and split into heads ────────────────────────────────
+        Q = self.W_q(x).view(B, T, H, d).permute(0, 2, 1, 3)  # [B, H, T, d]
+        K = self.W_k(x).view(B, T, H, d).permute(0, 2, 1, 3)
+        V = self.W_v(x).view(B, T, H, d).permute(0, 2, 1, 3)
+
+        # ── Apply feature map φ ─────────────────────────────────────────
+        Q = _elu_feature_map(Q)  # [B, H, T, d]
+        K = _elu_feature_map(K)  # [B, H, T, d]
+
+        # ── Linear attention via associative trick ──────────────────────
+        # KV = φ(K)^T · V  →  [B, H, d, d]
+        KV = torch.einsum("bhsd,bhsv->bhdv", K, V)
+
+        # Z = φ(K)^T · 1   →  [B, H, d, 1]  (per-head normaliser)
+        Z = K.sum(dim=2)  # [B, H, d]
+
+        # Numerator:  φ(Q) · KV  →  [B, H, T, d]
+        numerator = torch.einsum("bhtd,bhdv->bhtv", Q, KV)
+
+        # Denominator:  φ(Q) · Z  →  [B, H, T, 1]
+        denominator = torch.einsum("bhtd,bhd->bht", Q, Z).unsqueeze(-1)
+
+        # Normalised output
+        out = numerator / (denominator + 1e-6)  # [B, H, T, d]
+
+        # ── Merge heads and project ─────────────────────────────────────
+        out = out.permute(0, 2, 1, 3).contiguous().view(B, T, self.d_model)
+        out = self.W_out(out)
+        out = self.dropout(out)
+
+        return out
+
+
+class LinearAttentionBlock(nn.Module):
+    """Pre-norm linear attention block with residual connection.
+
+    ::
+
+        x → LayerNorm → LinearAttention → + → LayerNorm → FFN → + → out
+              ↑___________________________↑      ↑_____________↑
+
+    The feed-forward network (FFN) is a standard expand-contract MLP
+    that gives the model per-position nonlinear capacity after the
+    global mixing done by attention.
+
+    Args:
+        d_model:    Feature dimension.
+        n_heads:    Number of attention heads.
+        ff_mult:    FFN expansion factor (hidden = d_model × ff_mult).
+        dropout:    Dropout rate.
+    """
+
+    def __init__(
+        self,
+        d_model: int = 64,
+        n_heads: int = 4,
+        ff_mult: int = 2,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(d_model)
+        self.attn = LinearAttention(d_model, n_heads, dropout)
+
+        self.norm2 = nn.LayerNorm(d_model)
+        ff_hidden = d_model * ff_mult
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, ff_hidden),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(ff_hidden, d_model),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: [B, T, d_model] → [B, T, d_model]."""
+        x = x + self.attn(self.norm1(x))
+        x = x + self.ffn(self.norm2(x))
+        return x
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Resonator Encoder  (CQT → TCN → Linear Attention → soft-argmax f0)
+# ═════════════════════════════════════════════════════════════════════════════
+
 class ResonatorEncoder(nn.Module):
-    """CQT → TCN → GRU → soft-argmax f0 + raw logits for (decay, a1).
+    """CQT → TCN → Linear Attention → soft-argmax f0 + raw logits (decay, a1).
 
-    Following Engel et al. (2020) "Self-supervised Pitch Detection by
-    Inverse Audio Synthesis":
+    The TCN extracts local spectral features from the CQT.  Linear
+    attention then integrates these features across the full sequence,
+    producing globally-informed representations at every frame.
 
-    **Soft-argmax f0 head:**  Logits over log-spaced frequency bins →
-    softmax → frequency-bin-weighted sum.  Fully differentiable, no
-    hand-off between classification and regression.
+    This is physically motivated: once a string is plucked, f0, decay,
+    and damping are global properties of the entire vibration — not
+    local features of a single frame.  Linear attention acts as a smooth
+    global summary, which is more stable than a GRU's sequential state
+    (especially during quiet tail sections where the GRU hidden state
+    can drift).
 
-    **GRU temporal smoothing:**  Single-layer GRU between TCN and all
-    output heads.  Integrates evidence across frames, eliminating
-    frame-to-frame f0/decay/damping jitter.
+    **Soft-argmax f0 head** (Engel et al. 2020):  logits over log-spaced
+    frequency bins → softmax → bin-weighted sum.  This is a separate
+    softmax from the attention mechanism — it lives in the output head,
+    not in the attention layer.
 
     Output channel layout::
 
         0 : f0 in Hz   (pre-activated via soft-argmax)
         1 : decay       (raw logit)
         2 : a1          (raw logit)
+
+    Args:
+        num_outputs:      Always 3 (f0, decay, a1).
+        cqt_kwargs:       Forwarded to :class:`CQTFrontend`.
+        tcn_channels:     Hidden width of the TCN.
+        num_blocks:       Number of TCN blocks.
+        kernel_size:      TCN kernel size.
+        dilation_base:    Exponential dilation base.
+        dropout:          Dropout rate.
+        n_f0_bins:        Frequency bins for soft-argmax.
+        f0_min_hz:        Lower bound of soft-argmax range.
+        f0_max_hz:        Upper bound of soft-argmax range.
+        attn_heads:       Number of linear attention heads.
+        attn_layers:      Number of stacked linear attention blocks.
+        attn_ff_mult:     FFN expansion factor in attention blocks.
     """
 
     def __init__(
@@ -198,32 +378,44 @@ class ResonatorEncoder(nn.Module):
         kernel_size: int = 3,
         dilation_base: int = 2,
         dropout: float = 0.1,
+        # ── Soft-argmax f0 ──
         n_f0_bins: int = 128,
         f0_min_hz: float = 32.0,
         f0_max_hz: float = 2000.0,
-        gru_hidden: int = 256,
-        gru_layers: int = 1,
+        # ── Linear Attention ──
+        attn_heads: int = 4,
+        attn_layers: int = 2,
+        attn_ff_mult: int = 2,
     ):
         super().__init__()
         self.num_outputs = num_outputs
         self.n_f0_bins = n_f0_bins
 
+        # ── Frontend ────────────────────────────────────────────────────
         self.frontend = CQTFrontend(**(cqt_kwargs or {}))
 
+        # ── TCN (local feature extraction, non-causal) ─────────────────
         in_ch = self.frontend.out_channels
         self.tcn = _build_tcn(in_ch, tcn_channels, num_blocks,
-                              kernel_size, dilation_base, dropout)
+                              kernel_size, dilation_base, dropout,
+                              causal=False)
 
-        self.gru = nn.GRU(
-            input_size=tcn_channels,
-            hidden_size=gru_hidden,
-            num_layers=gru_layers,
-            batch_first=True,
-            dropout=dropout if gru_layers > 1 else 0.0,
-        )
-        self.gru_norm = nn.LayerNorm(gru_hidden)
+        # ── Linear Attention (global temporal integration) ──────────────
+        # d_model = tcn_channels — no projection needed, TCN output feeds
+        # directly into attention.
+        self.attn_blocks = nn.Sequential(*[
+            LinearAttentionBlock(
+                d_model=tcn_channels,
+                n_heads=attn_heads,
+                ff_mult=attn_ff_mult,
+                dropout=dropout,
+            )
+            for _ in range(attn_layers)
+        ])
+        self.attn_norm = nn.LayerNorm(tcn_channels)
 
-        self.f0_head = nn.Linear(gru_hidden, n_f0_bins)
+        # ── f0 soft-argmax head ─────────────────────────────────────────
+        self.f0_head = nn.Linear(tcn_channels, n_f0_bins)
 
         bin_centres = f0_min_hz * (
             (f0_max_hz / f0_min_hz)
@@ -232,27 +424,40 @@ class ResonatorEncoder(nn.Module):
         )
         self.register_buffer("f0_bin_centres", bin_centres)
 
-        self.decay_a1_head = nn.Linear(gru_hidden, 2)
+        # ── Decay + a1 head ─────────────────────────────────────────────
+        self.decay_a1_head = nn.Linear(tcn_channels, 2)
 
+        # Stash for external access (loss / viz)
         self.last_f0_probs: torch.Tensor | None = None
 
     def forward(self, wav: torch.Tensor) -> torch.Tensor:
-        """wav [B, N] → [B, 3, T]."""
-        x = self.frontend(wav)
-        x = self.tcn(x)
+        """wav [B, N] → [B, 3, T].
 
-        x = x.permute(0, 2, 1)
-        x, _ = self.gru(x)
-        x = self.gru_norm(x)
+        Channel layout::
 
-        f0_logits = self.f0_head(x)
+            0 : f0 in Hz   (pre-activated, soft-argmax)
+            1 : decay       (raw logit)
+            2 : a1          (raw logit)
+        """
+        x = self.frontend(wav)                  # [B, n_bins, T]
+        x = self.tcn(x)                         # [B, tcn_ch, T]
+
+        # ── Linear Attention ────────────────────────────────────────────
+        x = x.permute(0, 2, 1)                  # [B, T, tcn_ch]
+        x = self.attn_blocks(x)                  # [B, T, tcn_ch]
+        x = self.attn_norm(x)                    # [B, T, tcn_ch]
+
+        # ── f0 via soft-argmax (this softmax is NOT the attention one) ──
+        f0_logits = self.f0_head(x)             # [B, T, n_f0_bins]
         f0_probs  = F.softmax(f0_logits, dim=-1)
-        f0_hz = (f0_probs * self.f0_bin_centres).sum(dim=-1)
+        f0_hz = (f0_probs * self.f0_bin_centres).sum(dim=-1)  # [B, T]
 
         self.last_f0_probs = f0_probs
 
-        decay_a1 = self.decay_a1_head(x)
+        # ── Decay & a1 ─────────────────────────────────────────────────
+        decay_a1 = self.decay_a1_head(x)        # [B, T, 2]
 
+        # ── Pack as [B, 3, T] ──────────────────────────────────────────
         out = torch.stack([
             f0_hz,
             decay_a1[..., 0],
@@ -260,6 +465,11 @@ class ResonatorEncoder(nn.Module):
         ], dim=1)
 
         return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Excitation Encoder
+# ═════════════════════════════════════════════════════════════════════════════
 
 class ExcitationEncoder(nn.Module):
     """LearnableFrontend → TCN → raw logits for excitation parameters
@@ -291,16 +501,18 @@ class ExcitationEncoder(nn.Module):
         x = self.tcn(x)
         return self.head(x)
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+# KS Encoder
+# ═════════════════════════════════════════════════════════════════════════════
+
 class KSEncoder(nn.Module):
     """Two-headed encoder for Karplus-Strong parameter estimation.
 
-    Resonator pipeline  (CQT + GRU):  f0, decay, a1
-    Excitation pipeline (learned frontend):  burst_gain, dynamic_level, pluck_position
+    Resonator pipeline  (CQT + Linear Attention):  f0, decay, a1
+    Excitation pipeline (learned frontend + TCN):   burst_gain, dynamic_level, pluck_position
 
     Output: ``{"resonator": [B,3,T], "excitation": [B,3,T], "f0_probs": [B,T,bins]}``
-
-    **Important:** resonator channel 0 (f0) is pre-activated in Hz via
-    soft-argmax.  The decoder must skip ``_sigmoid_range`` for it.
 
     Args:
         resonator_kwargs:  Forwarded to :class:`ResonatorEncoder`.
