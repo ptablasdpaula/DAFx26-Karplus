@@ -10,10 +10,7 @@ import wandb
 from src.model import SoundMatchingModel
 from src.losses import PLoss, MultiScaleSpectralLoss, SOT2048Loss
 from src.metrics import (
-    from_gain_frames_to_onsets_seconds,
-    compute_onset_precision_recall,
     compute_mean_cents_distance,
-    compute_wmfcc,
     compute_rms,
 )
 
@@ -219,25 +216,13 @@ class SoundMatchingExperiment(pl.LightningModule):
     @torch.no_grad()
     def _log_synthetic_metrics(self, pred_params, target_params, tag):
         B = pred_params["f0"].shape[0]
-        dur = self.hparams.duration_s
 
-        precs, recs, f1s, cents = [], [], [], []
+        cents = []
         for b in range(B):
-            p_on = from_gain_frames_to_onsets_seconds(
-                pred_params["burst_gain"][b].cpu().numpy(), dur)
-            t_on = from_gain_frames_to_onsets_seconds(
-                target_params["burst_gain"][b].cpu().numpy(), dur)
-            if len(t_on) > 0:
-                p, r, f = compute_onset_precision_recall(p_on, t_on)
-                precs.append(p); recs.append(r); f1s.append(f)
             cents.append(compute_mean_cents_distance(
                 pred_params["f0"][b].cpu().numpy(),
                 target_params["f0"][b].cpu().numpy()))
 
-        if precs:
-            self.log(f"{tag}/onset_precision", np.mean(precs), add_dataloader_idx=False)
-            self.log(f"{tag}/onset_recall", np.mean(recs), add_dataloader_idx=False)
-            self.log(f"{tag}/onset_f1", np.mean(f1s), add_dataloader_idx=False)
         if cents:
             self.log(f"{tag}/mean_cents", np.mean(cents), add_dataloader_idx=False)
 
@@ -245,7 +230,7 @@ class SoundMatchingExperiment(pl.LightningModule):
     def _log_audio_metrics(self, pred_audio, target_audio, tag):
         B = pred_audio.shape[0]
         fs = self.hparams.fs
-        msss, sots, wmfccs, rmss = [], [], [], []
+        msss, sots, rmss = [], [], []
 
         for b in range(B):
             p_batch = pred_audio[b:b + 1].detach()
@@ -257,12 +242,10 @@ class SoundMatchingExperiment(pl.LightningModule):
             p = pred_audio[b].detach().cpu().numpy()
             t = target_audio[b].detach().cpu().numpy()
 
-            wmfccs.append(compute_wmfcc(t, p, sample_rate=fs))
             rmss.append(compute_rms(t[np.newaxis, :], p[np.newaxis, :], sample_rate=fs))
 
         self.log(f"{tag}/mss_metric", np.mean(msss), add_dataloader_idx=False)
         self.log(f"{tag}/sot_metric", np.mean(sots), add_dataloader_idx=False)
-        self.log(f"{tag}/wmfcc", np.mean(wmfccs), add_dataloader_idx=False)
         self.log(f"{tag}/rms_cos", np.mean(rmss), add_dataloader_idx=False)
 
     # ── Optimiser ────────────────────────────────────────────────────────
