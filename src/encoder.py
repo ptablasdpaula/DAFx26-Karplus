@@ -22,16 +22,29 @@ class CausalConv1d(nn.Conv1d):
         return super().forward(F.pad(x, (self._causal_padding, 0)))
 
 
+class NonCausalConv1d(nn.Conv1d):
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 stride=1, dilation=1, groups=1, bias=True):
+        padding = (dilation * (kernel_size - 1)) // 2
+        super().__init__(
+            in_channels, out_channels, kernel_size=kernel_size,
+            stride=stride, padding=padding, dilation=dilation,
+            groups=groups, bias=bias,
+        )
+
+
 class TCNBlock(nn.Module):
     def __init__(self, in_ch: int, hidden_ch: int, out_ch: int,
                  kernel_size: int, dilation: int = 1,
-                 dropout: float = 0.1, last_block: bool = False):
+                 dropout: float = 0.1, last_block: bool = False,
+                 causal: bool = False):
         super().__init__()
+        Conv = CausalConv1d if causal else NonCausalConv1d
         block = [
-            weight_norm(CausalConv1d(in_ch, hidden_ch, kernel_size, dilation=dilation)),
+            weight_norm(Conv(in_ch, hidden_ch, kernel_size, dilation=dilation)),
             nn.ReLU(),
             nn.Dropout(dropout),
-            weight_norm(CausalConv1d(hidden_ch, out_ch, kernel_size, dilation=dilation)),
+            weight_norm(Conv(hidden_ch, out_ch, kernel_size, dilation=dilation)),
         ]
         if not last_block:
             block.extend([nn.ReLU(), nn.Dropout(dropout)])
@@ -44,21 +57,17 @@ class TCNBlock(nn.Module):
 
 def _build_tcn(in_ch: int, tcn_channels: int, num_blocks: int,
                kernel_size: int, dilation_base: int,
-               dropout: float) -> nn.Sequential:
+               dropout: float, causal: bool = False) -> nn.Sequential:
     blocks = []
     ch = in_ch
     for i in range(num_blocks):
         dilation = dilation_base ** i
         blocks.append(TCNBlock(ch, tcn_channels, tcn_channels,
                                kernel_size, dilation, dropout,
-                               last_block=(i == num_blocks - 1)))
+                               last_block=(i == num_blocks - 1),
+                               causal=causal))
         ch = tcn_channels
     return nn.Sequential(*blocks)
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# Frontends
-# ═════════════════════════════════════════════════════════════════════════════
 
 class LearnableFrontend(nn.Module):
     """Strided conv stack: raw audio [B, 1, N] → features [B, C, T_frames].
