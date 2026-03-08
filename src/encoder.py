@@ -7,11 +7,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import weight_norm
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-# Building Blocks
-# ═════════════════════════════════════════════════════════════════════════════
-
 class CausalConv1d(nn.Conv1d):
     """Causal 1-D convolution (left-pad only)."""
     def __init__(self, in_channels, out_channels, kernel_size,
@@ -167,18 +162,11 @@ class CQTFrontend(nn.Module):
         x = wav.unsqueeze(1)
         x = F.pad(x, (self._pad, self._pad))
 
-        re = F.conv1d(x, self.filters_real)
-        im = F.conv1d(x, self.filters_imag)
+        re = F.conv1d(x, self.filters_real, stride=self.hop_length)
+        im = F.conv1d(x, self.filters_imag, stride=self.hop_length)
         mag = torch.sqrt(re ** 2 + im ** 2 + 1e-8)
 
-        mag = F.avg_pool1d(mag, kernel_size=self.hop_length,
-                           stride=self.hop_length)
         return torch.log1p(mag)
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# Resonator Encoder  (CQT → TCN → GRU → soft-argmax f0 + decay/a1)
-# ═════════════════════════════════════════════════════════════════════════════
 
 class ResonatorEncoder(nn.Module):
     """CQT → TCN → GRU → soft-argmax f0 + raw logits for (decay, a1).
@@ -273,11 +261,6 @@ class ResonatorEncoder(nn.Module):
 
         return out
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-# Excitation Encoder  (LearnableFrontend → TCN → burst/dynamics/pluck)
-# ═════════════════════════════════════════════════════════════════════════════
-
 class ExcitationEncoder(nn.Module):
     """LearnableFrontend → TCN → raw logits for excitation parameters
     (burst_gain, dynamic_level, pluck_position).
@@ -307,11 +290,6 @@ class ExcitationEncoder(nn.Module):
         x = self.frontend(wav)
         x = self.tcn(x)
         return self.head(x)
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# KS Encoder  (resonator + excitation pipelines)
-# ═════════════════════════════════════════════════════════════════════════════
 
 class KSEncoder(nn.Module):
     """Two-headed encoder for Karplus-Strong parameter estimation.
