@@ -11,6 +11,21 @@ from scipy.optimize import linear_sum_assignment
 
 EPS = 1e-8
 
+
+def mu_law(x: Tensor, mu: float = 255.0) -> Tensor:
+    """μ-law compression:  F(x) = ln(1 + μx) / ln(1 + μ).
+
+    Maps [0, 1] → [0, 1] with logarithmic curvature that matches
+    human loudness perception (Weber-Fechner law).  Crucially,
+    F(0) = 0 exactly — no ε floor needed for silent frames.
+
+    With μ=255 (standard), a quiet pluck at 0.1 maps to ~0.58,
+    giving the optimiser much stronger gradients for soft onsets
+    than linear L1 would.
+    """
+    return torch.log1p(mu * x) / math.log1p(mu)
+
+
 class MultiScaleSpectralLoss(nn.Module):
     """Multi-scale log-magnitude STFT distance.
     Args:
@@ -170,9 +185,10 @@ class HungarianOnsetLoss(nn.Module):
     Args:
         active_threshold: minimum predicted gain to count as "active".
         w_time:           weight for normalised frame-distance of matched pairs.
-        w_gain:           weight for |pred_gain − gt_gain| of matched pairs.
+        w_gain:           weight for |μ(pred_gain) − μ(gt_gain)| of matched pairs.
         w_unmatched_pred: weight penalty per unmatched predicted onset.
         w_missed_gt:      weight penalty per missed ground-truth onset.
+        mu:               μ-law compression parameter (255 = standard).
     """
 
     def __init__(
@@ -182,6 +198,7 @@ class HungarianOnsetLoss(nn.Module):
         w_gain: float = 1.0,
         w_unmatched_pred: float = 1.0,
         w_missed_gt: float = 2.0,
+        mu: float = 255.0,
     ):
         super().__init__()
         self.active_threshold = active_threshold
@@ -189,6 +206,7 @@ class HungarianOnsetLoss(nn.Module):
         self.w_gain = w_gain
         self.w_unmatched_pred = w_unmatched_pred
         self.w_missed_gt = w_missed_gt
+        self.mu = mu
 
     def forward(
         self,
@@ -220,13 +238,13 @@ class HungarianOnsetLoss(nn.Module):
 
             if M == 0 and N == 0:
                 continue
-            if M == 0:
-                total_loss = total_loss + self.w_unmatched_pred * pred_g.sum()
+            if M == 0: # All predictions are false positives
+                total_loss = total_loss + self.w_unmatched_pred * mu_law(pred_g, self.mu).sum()
                 n_unmatched += N
                 continue
-            if N == 0:
+            if N == 0: # All ground-truth onsets are missed
                 total_loss = total_loss + self.w_missed_gt * (
-                        gt_g - pred_gains[b, gt_idx]
+                    mu_law(gt_g, self.mu) - mu_law(pred_gains[b, gt_idx], self.mu)
                 ).sum()
                 n_missed += M
                 continue
@@ -240,13 +258,16 @@ class HungarianOnsetLoss(nn.Module):
             col_t = torch.tensor(col, device=device, dtype=torch.long)
 
             time_err = (pred_idx[row_t].float() - gt_idx[col_t].float()).abs() / T
-            gain_err = (pred_g[row_t] - gt_g[col_t]).abs()
+
+            # Gain error in μ-law compressed space
+            gain_err = (mu_law(pred_g[row_t], self.mu) - mu_law(gt_g[col_t], self.mu)).abs()
+
             loss_matched = (self.w_time * time_err + self.w_gain * gain_err).sum()
 
             matched_set = set(row.tolist())
             unmatched_idx = [i for i in range(N) if i not in matched_set]
             loss_unmatched = (
-                self.w_unmatched_pred * pred_g[unmatched_idx].sum()
+                self.w_unmatched_pred * mu_law(pred_g[unmatched_idx], self.mu).sum()
                 if unmatched_idx else 0.0
             )
 
@@ -255,7 +276,8 @@ class HungarianOnsetLoss(nn.Module):
             if missed_gt_local:
                 missed_positions = gt_idx[missed_gt_local]
                 loss_missed = self.w_missed_gt * (
-                        gt_g[missed_gt_local] - pred_gains[b, missed_positions]
+                    mu_law(gt_g[missed_gt_local], self.mu)
+                    - mu_law(pred_gains[b, missed_positions], self.mu)
                 ).sum()
             else:
                 loss_missed = 0.0
@@ -418,5 +440,10 @@ if __name__ == "__main__":
     sot = SOT2048Loss(sample_rate=FS)
     sot_val = sot(target_audio, target_audio + 0.01 * torch.randn_like(target_audio))
     print(f"  SOT (near-identical): {sot_val.item():.4f}")
+
+    print("\n─── μ-law sanity check ───")
+    x = torch.tensor([0.0, 0.01, 0.1, 0.5, 1.0])
+    print(f"  linear:  {x.tolist()}")
+    print(f"  μ-law:   {mu_law(x).tolist()}")
 
     print("\n✓ All smoke tests passed.")
