@@ -156,7 +156,7 @@ class KSDecoder(Decoder):
         pluck_position = _sigmoid_range(
             exc[:, ei["pluck_position"], :],
             PLUCK_POSITION_MIN, PLUCK_POSITION_MAX,
-        )
+        ).clamp(min=PLUCK_POSITION_MIN, max=PLUCK_POSITION_MAX)
 
         return {
             "f0":             f0,
