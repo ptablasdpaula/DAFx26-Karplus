@@ -203,8 +203,7 @@ class HungarianOnsetLoss(nn.Module):
         B, T = pred_gains.shape
         device = pred_gains.device
 
-        # Keep graph-connected zero
-        total_loss = (pred_gains * 0).sum()
+        total_loss = torch.tensor(0.0, device=device)
         n_matched = n_unmatched = n_missed = 0
         sum_time_err = sum_gain_err = 0.0
 
@@ -226,7 +225,9 @@ class HungarianOnsetLoss(nn.Module):
                 n_unmatched += N
                 continue
             if N == 0:
-                total_loss = total_loss + self.w_missed_gt * M
+                total_loss = total_loss + self.w_missed_gt * (
+                        gt_g - pred_gains[b, gt_idx]
+                ).sum()
                 n_missed += M
                 continue
 
@@ -248,9 +249,18 @@ class HungarianOnsetLoss(nn.Module):
                 self.w_unmatched_pred * pred_g[unmatched_idx].sum()
                 if unmatched_idx else 0.0
             )
-            n_missed_b = M - len(row)
-            loss_missed = self.w_missed_gt * n_missed_b
 
+            matched_gt_set = set(col.tolist())
+            missed_gt_local = [j for j in range(M) if j not in matched_gt_set]
+            if missed_gt_local:
+                missed_positions = gt_idx[missed_gt_local]
+                loss_missed = self.w_missed_gt * (
+                        gt_g[missed_gt_local] - pred_gains[b, missed_positions]
+                ).sum()
+            else:
+                loss_missed = 0.0
+
+            n_missed_b = len(missed_gt_local)
             total_loss = total_loss + loss_matched + loss_unmatched + loss_missed
             n_matched += len(row)
             n_unmatched += len(unmatched_idx)

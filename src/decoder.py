@@ -74,6 +74,15 @@ def _modified_sigmoid(x: Tensor) -> Tensor:
     """
     return 2.0 * torch.sigmoid(x) ** math.log(10) + 1e-7
 
+class STEReLU(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        return F.relu(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output  # straight-through: gradient always flows
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Karplus-Strong Decoder
 # ═════════════════════════════════════════════════════════════════════════════
@@ -116,7 +125,7 @@ class KSDecoder(Decoder):
                 * det_onsets
             )
         else:
-            burst_gain = F.relu(raw[:, self._idx["burst_gain"], :])
+            burst_gain = STEReLU.apply(raw[:, self._idx["burst_gain"], :])
 
         # ── remaining params ──
         pluck_pos = _sigmoid_range(raw[:, self._idx["pluck_position"], :],
