@@ -1,71 +1,70 @@
-import torch
+"""Event-based synthetic dataset for Karplus-Strong sound matching.
+
+Each sample consists of a fixed number of pluck *events* on a string
+with constant f0.  Between events, all synthesis parameters hold their
+values (step-function interpolation).  No slides, vibrato, or pitch
+changes — the model is a "high-precision event transcriber".
+
+Output format (per sample)::
+
+    {
+        "audio":    [num_audio_samples]            float32
+        "events": {
+            "exists":         [MAX_EVENTS]         1.0 or 0.0
+            "time":           [MAX_EVENTS]         ∈ [0, 1]
+            "f0":             [MAX_EVENTS]         Hz
+            "burst_gain":     [MAX_EVENTS]         ∈ [0, 1]
+            "decay":          [MAX_EVENTS]         ∈ [DECAY_MIN, DECAY_MAX]
+            "a1":             [MAX_EVENTS]         ∈ [DAMPING_MIN, DAMPING_MAX]
+            "pluck_position": [MAX_EVENTS]         ∈ [PLUCK_POS_MIN, PLUCK_POS_MAX]
+            "dynamic_level":  [MAX_EVENTS]         ∈ [DYN_MIN, DYN_MAX]
+        }
+        "n_events": int
+    }
+"""
+from __future__ import annotations
+
 import numpy as np
-from dataclasses import dataclass
+import torch
 from torch.utils.data import IterableDataset
 from src.synths.synth import Synth, SynthConfig
 from src.synths.param_registry import (
-    MIDI_D1,
-    MIDI_D6,
+    MIDI_D1, MIDI_D6,
     midi_to_hz,
-    hz_to_midi,
-    validate_param_dict,
+    PLUCK_POSITION_MIN, PLUCK_POSITION_MAX,
+    DAMPING_MIN, DAMPING_MAX,
+    DECAY_MIN, DECAY_MAX,
+    MAX_EVENTS,
+    events_to_frames_np,
 )
 
 
-@dataclass
-class Segments:
-    """
-    Compact representation of a note segment sequence.
-
-    Attributes:
-        indices    : (N,) int array   — frame index of each segment boundary
-        f0_hz      : (N,) float array — fundamental frequency in Hz per segment
-        is_pluck   : (N,) bool array  — whether a pluck fires at this boundary
-        num_frames : total number of frames in the sequence
-    """
-    indices    : np.ndarray  # (N,) int
-    f0_hz      : np.ndarray  # (N,) float
-    is_pluck   : np.ndarray  # (N,) bool
-    num_frames : int
-
-    def __len__(self) -> int:
-        return len(self.indices)
-
-    def __iter__(self):
-        return zip(self.indices, self.f0_hz, self.is_pluck)
-
-    def segment_range(self, i: int) -> tuple[int, int]:
-        """Return (start, end) frame indices for segment i."""
-        start = self.indices[i]
-        end   = self.indices[i + 1] if i + 1 < len(self) else self.num_frames
-        return start, end
-
-
 class SyntheticDataset(IterableDataset):
-    """
-    Karplus-Strong synthetic dataset.
+    """Event-based KS synthetic dataset.
+
+    Generates random pluck events on a string with constant f0.
 
     Args:
-        num_samples_per_epoch: How many items per "epoch"
-        num_audio_samples: Audio length in samples (default 64000 = 4s @ 16kHz)
-        num_frames: Number of control-rate frames
-        fs: Sample rate
-        lagrange_order: Lagrange interpolation order
-        lti: If True, generate LTI (single pluck, static params)
-        blend_lti: If True and lti is False, LTI samples are randomly mixed along time-varying samples
-        random_seed: Base random seed
+        num_samples_per_epoch: Items per epoch.
+        num_audio_samples:     Audio length in samples.
+        num_frames:            Control-rate frames (for synth rendering).
+        fs:                    Sample rate.
+        lagrange_order:        Lagrange interpolation order.
+        random_seed:           Base random seed.
+        max_events_per_sample: Max events to generate.
+        min_events_per_sample: Min events per sample.
     """
 
     def __init__(
-            self,
-            num_samples_per_epoch: int,
-            num_audio_samples: int = 64000,
-            num_frames: int = 250,
-            fs: int = 16000,
-            lagrange_order: int = 5,
-            lti: bool = False,
-            blend_lti: bool = True,
-            random_seed: int = 42,
+        self,
+        num_samples_per_epoch: int,
+        num_audio_samples: int = 64000,
+        num_frames: int = 250,
+        fs: int = 16000,
+        lagrange_order: int = 5,
+        random_seed: int = 42,
+        max_events_per_sample: int = 10,
+        min_events_per_sample: int = 1,
     ):
         super().__init__()
         self.num_samples_per_epoch = num_samples_per_epoch
@@ -73,71 +72,56 @@ class SyntheticDataset(IterableDataset):
         self.num_frames = num_frames
         self.fs = fs
         self.lagrange_order = lagrange_order
-        self.lti = lti
-        self.blend_lti = blend_lti
         self.random_seed = random_seed
+        self.max_events_per_sample = min(max_events_per_sample, MAX_EVENTS)
+        self.min_events_per_sample = min_events_per_sample
         self.epoch = 0
+        self.duration_s = num_audio_samples / fs
 
-        # log_scale=True → sampled in dB space.
-        # low/high → linear range for _sample_param.
         self.priors = {
-            'first_onset':       dict(mean=0.5,  conc=1,  low_s=0.0,  high_s=0.5),
-            'trigger_gap':       dict(mean=0.25, conc=3,  low_s=0.1,  high_s=4.0),
-            'prob_note_change':  dict(prob=0.30),
-            'prob_octave_shift': dict(prob=0.20),
-            'prob_slide':        dict(prob=0.20),
-            'prob_vibrato':      dict(prob=0.20),
-            'prob_skip_trigger': dict(prob=0.20),
-            'vibrato_rate':      dict(low=0.1,   high=7.0),
-            'vibrato_depth':     dict(low=0.1,   high=0.5),
-            'pluck_position':    dict(mean=0.25,  conc=5,  low=0.01,   high=0.5),
-            'burst_gain':        dict(mean=0.5,  conc=5,  low_db=-40.0, high_db=0.0, log_scale=True),
-            'dynamic_level':     dict(mean=0.5,  conc=5,  low_db=-40.0, high_db=0.0, log_scale=True),
-            'a1':                dict(mean=0.3,  conc=5,  low=0.0,    high=0.75),
-            'decay':             dict(mean=0.95, conc=5,  low=0.9,    high=1.0),
-        }
-
-        self.ltv_extras = {
-            'pluck_position': dict(change_prob=0.70),
-            'dynamic_level':  dict(change_prob=0.70),
-            'a1':             dict(change_prob=0.70),
-            'decay':          dict(change_prob=0.70),
+            # Event timing
+            "min_gap_s":     0.05,
+            "first_onset":   dict(lo=0.0, hi=0.3),
+            # Synth params
+            "burst_gain":    dict(mean=0.5, conc=3, lo_db=-40.0, hi_db=0.0),
+            "pluck_position": dict(mean=0.25, conc=5,
+                                   lo=PLUCK_POSITION_MIN, hi=PLUCK_POSITION_MAX),
+            "dynamic_level": dict(mean=0.5, conc=3, lo_db=-40.0, hi_db=0.0),
+            "a1":            dict(mean=0.3, conc=5, lo=DAMPING_MIN, hi=DAMPING_MAX),
+            "decay":         dict(mean=0.95, conc=5, lo=DECAY_MIN, hi=DECAY_MAX),
         }
 
     def set_epoch(self, epoch: int) -> None:
         self.epoch = epoch
 
-    @property
-    def _fps(self) -> float:
-        """Frames per second."""
-        return self.num_frames * self.fs / self.num_audio_samples
+    def _sample_beta(self, rng, mean: float, conc: float) -> float:
+        a = mean * conc
+        b = (1 - mean) * conc
+        return float(rng.beta(a, b))
 
-    def _seconds_to_frames(self, s: float) -> int:
-        return int(round(s * self._fps))
-
-    def _sample_beta(self, rng, mean, concentration, size=1):
-        a = mean * concentration
-        b = (1 - mean) * concentration
-        return rng.beta(a, b, size=size)
-
-    def _mirror(self, val: float, low: float = None, high: float = None) -> float:
-        while val < low or val > high:
-            if val < low:
-                val = low + (low - val)
-            elif val > high:
-                val = high - (val - high)
+    def _mirror(self, val: float, lo: float, hi: float) -> float:
+        while val < lo or val > hi:
+            if val < lo:
+                val = lo + (lo - val)
+            elif val > hi:
+                val = hi - (val - hi)
         return val
 
-    def _sample_param(self, rng, prior: dict, high_override: float = None) -> float:
-        if prior.get('log_scale'):
-            raw = float(self._sample_beta(rng, prior['mean'], prior['conc'])[0])
-            db = prior['low_db'] + raw * (prior['high_db'] - prior['low_db'])
-            return 10.0 ** (db / 20.0)
-        high = high_override if high_override is not None else prior['high']
-        low = prior['low']
-        raw = float(self._sample_beta(rng, prior['mean'], prior['conc'])[0])
-        span = high - low
-        return low + self._mirror(raw * span, low=0.0, high=span)
+    def _sample_linear(self, rng, prior: dict) -> float:
+        """Sample from beta distribution scaled to [lo, hi]."""
+        raw = self._sample_beta(rng, prior["mean"], prior["conc"])
+        span = prior["hi"] - prior["lo"]
+        return prior["lo"] + self._mirror(raw * span, lo=0.0, hi=span)
+
+    def _sample_db(self, rng, prior: dict) -> float:
+        """Sample in dB space, return linear amplitude."""
+        raw = self._sample_beta(rng, prior["mean"], prior["conc"])
+        db = prior["lo_db"] + raw * (prior["hi_db"] - prior["lo_db"])
+        return 10.0 ** (db / 20.0)
+
+    def _a1_max_for_midi(self, midi: float) -> float:
+        t = (midi - MIDI_D1) / (MIDI_D6 - MIDI_D1)
+        return self._mirror(0.8 - t * 0.7, lo=0.1, hi=0.8)
 
     def _a1_max_for_fs(self) -> float:
         if self.fs <= 16000:  return 0.7
@@ -145,215 +129,90 @@ class SyntheticDataset(IterableDataset):
         if self.fs <= 44100:  return 0.9
         return 1.0
 
-    def _a1_max_for_midi(self, midi: float) -> float:
-        t = (midi - MIDI_D1) / (MIDI_D6 - MIDI_D1)
-        return self._mirror(0.8 - t * 0.7, low=0.1, high=0.8)
-
     def _a1_max(self, midi: float) -> float:
         return min(self._a1_max_for_midi(midi), self._a1_max_for_fs())
 
-    def _get_first_onset_frame(self, rng) -> int:
-        if self.lti:
-            return 0
-        p = self.priors['first_onset']
-        low_frame  = int(p['low_s']  * self._fps)
-        high_frame = int(p['high_s'] * self._fps)
-        raw = float(self._sample_beta(rng, p['mean'], p['conc'])[0])
-        onset_frame = int(low_frame + raw * (high_frame - low_frame))
-        return int(self._mirror(onset_frame, low=low_frame, high=high_frame))
+    def _generate_events(self, rng) -> tuple[dict[str, np.ndarray], int]:
+        """Generate a set of pluck events.
 
-    def _choose_next_midi(self, rng, current_midi: float) -> float:
-        ALL_INTERVALS = np.array([-7, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 7])
-        p_note   = self.priors['prob_note_change']['prob']
-        p_octave = self.priors['prob_octave_shift']['prob']
-
-        if rng.random() < p_note:
-            current_midi += rng.choice(ALL_INTERVALS)
-
-        while rng.random() < p_octave:
-            current_midi += rng.choice([12, -12])
-
-        return float(self._mirror(current_midi, low=MIDI_D1, high=MIDI_D6))
-
-    def _f0_period_to_frames(self, f0_hz: float) -> int:
-        return max(int(np.ceil(self._fps / f0_hz)), 1)
-
-    def _make_segments(self, rng) -> Segments:
+        Returns:
+            events:   {name: [MAX_EVENTS]} numpy arrays, padded with zeros.
+            n_events: actual number of real events.
         """
-        Sample segment boundary positions, f0 values, and pluck flags.
-        Segment generation continues until no further segment fits within num_frames.
-        """
-        tg             = self.priors['trigger_gap']
-        p_skip_trigger = self.priors['prob_skip_trigger']['prob']
+        p = self.priors
+        dur = self.duration_s
 
-        current_midi = rng.uniform(MIDI_D1, MIDI_D6 + 1)
-        first_onset  = self._get_first_onset_frame(rng)
-        indices      = [first_onset]
-        f0_hz        = [midi_to_hz(current_midi)]
-        is_pluck     = [True]  # first segment always plucks
+        # ── Sample constant f0 for this sample ─────────────────────────
+        midi = rng.uniform(MIDI_D1, MIDI_D6)
+        f0_hz = float(midi_to_hz(midi))
+        a1_max = self._a1_max(midi)
 
-        while True:
-            last_idx = indices[-1]
-            min_gap  = self._f0_period_to_frames(f0_hz[-1])
+        # ── Determine number of events ──────────────────────────────────
+        n_events = rng.integers(self.min_events_per_sample,
+                                self.max_events_per_sample + 1)
 
-            if last_idx + min_gap >= self.num_frames:
+        # ── Sample onset times ──────────────────────────────────────────
+        first_lo = p["first_onset"]["lo"]
+        first_hi = p["first_onset"]["hi"]
+        first_time = rng.uniform(first_lo, first_hi)
+
+        times = [first_time]
+        for _ in range(n_events - 1):
+            min_next = times[-1] + p["min_gap_s"]
+            if min_next >= dur:
                 break
+            next_time = rng.uniform(min_next, dur)
+            times.append(next_time)
 
-            raw        = float(self._sample_beta(rng, tg['mean'], tg['conc'])[0])
-            gap_s      = tg['low_s'] + raw * (tg['high_s'] - tg['low_s'])
-            gap_frames = self._seconds_to_frames(gap_s)
-            next_idx   = last_idx + max(gap_frames, min_gap)
+        n_events = len(times)
+        times_arr = np.array(times, dtype=np.float64) / dur  # normalise to [0, 1]
 
-            if next_idx >= self.num_frames:
-                break
+        # ── Initialise padded event arrays ──────────────────────────────
+        events = {
+            "exists":         np.zeros(MAX_EVENTS, dtype=np.float32),
+            "time":           np.zeros(MAX_EVENTS, dtype=np.float32),
+            "f0":             np.zeros(MAX_EVENTS, dtype=np.float32),
+            "burst_gain":     np.zeros(MAX_EVENTS, dtype=np.float32),
+            "decay":          np.zeros(MAX_EVENTS, dtype=np.float32),
+            "a1":             np.zeros(MAX_EVENTS, dtype=np.float32),
+            "pluck_position": np.zeros(MAX_EVENTS, dtype=np.float32),
+            "dynamic_level":  np.zeros(MAX_EVENTS, dtype=np.float32),
+        }
 
-            current_midi = self._choose_next_midi(rng, current_midi)
-            indices.append(next_idx)
-            f0_hz.append(midi_to_hz(current_midi))
-            is_pluck.append(rng.random() >= p_skip_trigger)
+        # ── Fill real events ────────────────────────────────────────────
+        for i in range(n_events):
+            events["exists"][i]         = 1.0
+            events["time"][i]           = times_arr[i]
+            events["f0"][i]             = f0_hz
+            events["burst_gain"][i]     = self._sample_db(rng, p["burst_gain"])
+            events["decay"][i]          = self._sample_linear(rng, p["decay"])
+            events["a1"][i]             = self._sample_linear(
+                rng, {**p["a1"], "hi": min(p["a1"]["hi"], a1_max)}
+            )
+            events["pluck_position"][i] = self._sample_linear(rng, p["pluck_position"])
+            events["dynamic_level"][i]  = self._sample_db(rng, p["dynamic_level"])
 
-        return Segments(
-            indices    = np.array(indices,  dtype=int),
-            f0_hz      = np.array(f0_hz,    dtype=float),
-            is_pluck   = np.array(is_pluck, dtype=bool),
-            num_frames = self.num_frames,
+        return events, n_events
+
+    # ── Audio rendering ─────────────────────────────────────────────────
+
+    def _synthesise(self, events: dict[str, np.ndarray], n_events: int) -> np.ndarray:
+        """Convert events to sample-rate params and render audio."""
+
+        frame_params = events_to_frames_np(
+            events, n_events, self.num_audio_samples, self.duration_s,
         )
 
-    def _apply_slide(self, f0_frames: np.ndarray, segs: Segments, i: int) -> None:
-        start, end = segs.segment_range(i)
-        f0_frames[start:end] = np.linspace(segs.f0_hz[i], segs.f0_hz[i + 1], end - start)
-
-    def _apply_vibrato(self, rng, f0_frames: np.ndarray, segs: Segments, i: int) -> None:
-        start, end    = segs.segment_range(i)
-        seg_len       = end - start
-        vibrato_rate  = rng.uniform(self.priors['vibrato_rate']['low'], self.priors['vibrato_rate']['high'])
-        vibrato_depth = rng.uniform(self.priors['vibrato_depth']['low'], self.priors['vibrato_depth']['high'])
-        t             = np.linspace(0, seg_len / self._fps, seg_len)
-        vibrato       = vibrato_depth * np.sin(2 * np.pi * vibrato_rate * t)
-        seg_midi      = hz_to_midi(f0_frames[start:end]) + vibrato
-        f0_frames[start:end] = midi_to_hz(np.clip(seg_midi, MIDI_D1, MIDI_D6))
-
-    def _build_f0_trajectory(self, rng, segs: Segments) -> np.ndarray:
-        p_slide = self.priors['prob_slide']['prob']
-        p_vib   = self.priors['prob_vibrato']['prob']
-
-        f0_frames = np.full(self.num_frames, segs.f0_hz[0], dtype=np.float64)
-
-        for i in range(len(segs)):
-            start, end = segs.segment_range(i)
-            f0_frames[start:end] = segs.f0_hz[i]
-
-            chance = rng.random()
-            if chance < p_slide and i + 1 < len(segs):
-                self._apply_slide(f0_frames, segs, i)
-            elif chance > 1 - p_vib:
-                self._apply_vibrato(rng, f0_frames, segs, i)
-
-        return f0_frames.astype(np.float32)
-
-    def _gen_triggers_and_f0(self, rng) -> tuple[np.ndarray, Segments]:
-        segs      = self._make_segments(rng)
-        f0_frames = self._build_f0_trajectory(rng, segs)
-        return f0_frames, segs
-
-    def _generate_varying_param(self, rng, segment_indices, mean, conc, change_prob,
-                                 low=None, high=None, log_scale=False,
-                                 low_db=-60.0, high_db=0.0, high_schedule=None):
-        """
-        Generate a frame-rate parameter that may change at segment boundaries.
-        log_scale=True → dB-space sampling; low/high ignored, use low_db/high_db.
-        high_schedule   → per-segment upper bounds (e.g. pitch-dependent a1 ceilings).
-        """
-        num_frames = self.num_frames
-        param = np.zeros(num_frames, dtype=np.float32)
-
-        def _draw(high_i):
-            raw = float(self._sample_beta(rng, mean, conc)[0])
-            if log_scale:
-                db = low_db + raw * (high_db - low_db)
-                return 10.0 ** (db / 20.0)
-            span = high_i - low
-            return low + self._mirror(raw * span, low=0.0, high=span)
-
-        current_val = _draw(high_schedule[0] if high_schedule else high)
-
-        for i, start in enumerate(segment_indices):
-            end    = segment_indices[i + 1] if i + 1 < len(segment_indices) else num_frames
-            high_i = high_schedule[i] if high_schedule else high
-
-            if i > 0 and rng.random() < change_prob:
-                current_val = _draw(high_i)
-            elif not log_scale:
-                span = high_i - low
-                current_val = low + self._mirror(current_val - low, low=0.0, high=span)
-            param[start:end] = current_val
-
-        if segment_indices[0] > 0:
-            param[:segment_indices[0]] = param[segment_indices[0]]
-
-        return param
-
-    def _generate_lti_params(self, rng) -> dict:
-        """Single pluck, static parameters throughout."""
-        num_frames  = self.num_frames
-        onset_frame = self._get_first_onset_frame(rng)
-
-        base_midi = rng.uniform(MIDI_D1, MIDI_D6)
-        f0_val    = midi_to_hz(base_midi)
-        a1_max    = self._a1_max(hz_to_midi(f0_val))
-
-        p = self.priors
-
-        burst_gain = np.zeros(num_frames, dtype=np.float32)
-        burst_gain[onset_frame] = self._sample_param(rng, p['burst_gain'])
-
-        return {
-            'f0':             np.full(num_frames, f0_val, dtype=np.float32),
-            'burst_gain':     burst_gain,
-            'pluck_position': np.full(num_frames, self._sample_param(rng, p['pluck_position']), dtype=np.float32),
-            'dynamic_level':  np.full(num_frames, self._sample_param(rng, p['dynamic_level']), dtype=np.float32),
-            'a1':             np.full(num_frames, self._sample_param(rng, p['a1'], high_override=a1_max), dtype=np.float32),
-            'decay':          np.full(num_frames, self._sample_param(rng, p['decay']), dtype=np.float32),
-        }
-
-    def _generate_params(self, rng) -> dict:
-        if self.lti or (self.blend_lti and rng.random() < 0.25):
-            return self._generate_lti_params(rng)
-
-        f0, segs = self._gen_triggers_and_f0(rng)
-
-        p  = self.priors
-        ex = self.ltv_extras
-
-        burst_gain = np.zeros(self.num_frames, dtype=np.float32)
-        for idx, hz, pluck in segs:
-            if pluck:
-                burst_gain[idx] = self._sample_param(rng, p['burst_gain'])
-
-        a1_highs = [self._a1_max(hz_to_midi(hz)) for hz in segs.f0_hz]
-
-        params = {
-            'f0':             f0,
-            'burst_gain':     burst_gain,
-            'pluck_position': self._generate_varying_param(rng, segs.indices, **p['pluck_position'], **ex['pluck_position']),
-            'dynamic_level':  self._generate_varying_param(rng, segs.indices, **p['dynamic_level'],  **ex['dynamic_level'],  low=0.0, high=1.0),
-            'a1':             self._generate_varying_param(rng, segs.indices, **p['a1'],             **ex['a1'],             high_schedule=a1_highs),
-            'decay':          self._generate_varying_param(rng, segs.indices, **p['decay'],          **ex['decay']),
-        }
-
-        validate_param_dict(params, context="SyntheticDataset._generate_params")
-        return params
-
-    def _synthesise(self, params_np: dict) -> np.ndarray:
         config = SynthConfig(
             num_samples=self.num_audio_samples,
             fs=self.fs,
             lagrange_order=self.lagrange_order,
         )
         synth = Synth(config)
-        params_torch = {k: torch.from_numpy(v).unsqueeze(0).float() for k, v in params_np.items()}
+        params_torch = {k: torch.from_numpy(v).unsqueeze(0).float()
+                        for k, v in frame_params.items()}
         with torch.no_grad():
-            audio, _ = synth.oracle_synth(params_torch)  # (audio [1, N], params)
+            audio, _ = synth.oracle_synth(params_torch)
         return audio.squeeze(0).numpy()
 
     def __iter__(self):
@@ -372,9 +231,52 @@ class SyntheticDataset(IterableDataset):
 
         for _ in range(num_to_yield):
             sample_rng = np.random.default_rng(rng.integers(0, 2 ** 31))
-            params = self._generate_params(sample_rng)
-            audio = self._synthesise(params)
+            events, n_events = self._generate_events(sample_rng)
+            audio = self._synthesise(events, n_events)
+
             yield {
-                'audio': torch.from_numpy(audio).float(),
-                'params': {k: torch.from_numpy(v).float() for k, v in params.items()},
+                "audio": torch.from_numpy(audio).float(),
+                "events": {k: torch.from_numpy(v).float()
+                           for k, v in events.items()},
+                "n_events": n_events,
             }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Smoke test
+# ═════════════════════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    print("Generating 4 event-based samples...")
+    ds = SyntheticDataset(
+        num_samples_per_epoch=4,
+        num_audio_samples=64000,
+        num_frames=250,
+        fs=16000,
+        random_seed=123,
+    )
+
+    for i, sample in enumerate(ds):
+        audio = sample["audio"]
+        events = sample["events"]
+        n = sample["n_events"]
+
+        print(f"\nSample {i}: {n} events, audio shape {audio.shape}")
+        print(f"  audio range: [{audio.min():.4f}, {audio.max():.4f}]")
+
+        for j in range(n):
+            print(f"  Event {j}: time={events['time'][j]:.3f} "
+                  f"f0={events['f0'][j]:.1f}Hz "
+                  f"gain={events['burst_gain'][j]:.3f} "
+                  f"decay={events['decay'][j]:.4f} "
+                  f"a1={events['a1'][j]:.3f} "
+                  f"pos={events['pluck_position'][j]:.3f} "
+                  f"dyn={events['dynamic_level'][j]:.3f}")
+
+        # Verify padding
+        assert events["exists"][:n].sum() == n
+        assert events["exists"][n:].sum() == 0
+        assert audio.shape == (64000,)
+        assert not torch.isnan(audio).any()
+
+    print("\n✓ All smoke tests passed.")

@@ -8,11 +8,9 @@ import pytorch_lightning as pl
 import wandb
 
 from src.model import SoundMatchingModel
-from src.losses import PLoss, MultiScaleSpectralLoss, SOT2048Loss
-from src.metrics import (
-    compute_mean_cents_distance,
-    compute_rms,
-)
+from src.losses import EventSetLoss, MultiScaleSpectralLoss, SOT2048Loss
+from src.metrics import compute_rms
+
 
 class SoundMatchingExperiment(pl.LightningModule):
     """
@@ -22,35 +20,36 @@ class SoundMatchingExperiment(pl.LightningModule):
         param_only_epochs:   (combined) param-only warm-up epochs.
         fadein_epochs:       (combined) spectral fade-in epochs.
         w_mss / w_sot / w_param: Loss weights.
-        param_weights:       Per-parameter weights for ``PLoss``.
-        eval_synthetic_metrics: Compute onset P/R/F1, cents, ploss.
-        eval_ood_metrics:    Compute wMFCC, RMS, MSS, SOT.
+        event_loss_weights:  Weights passed directly to EventSetLoss.
+        eval_synthetic_metrics: Compute synthetic metrics.
+        eval_ood_metrics:    Compute OOD metrics.
         lr / fs / duration_s: Optimiser / audio config.
     """
 
     def __init__(
-        self,
-        model: SoundMatchingModel,
-        objective: str = "combined",
-        param_only_epochs: int = 0,
-        fadein_epochs: int = 0,
-        w_mss: float = 1.0,
-        w_sot: float = 1.0,
-        w_param: float = 1.0,
-        param_weights: dict[str, float] | None = None,
-        eval_synthetic_metrics: bool = True,
-        eval_ood_metrics: bool = True,
-        lr: float = 1e-3,
-        fs: int = 16000,
-        duration_s: float = 4.0,
-        log_val_audio: bool = True,
-        num_val_audio_examples: int = 4
+            self,
+            model: SoundMatchingModel,
+            objective: str = "combined",
+            param_only_epochs: int = 0,
+            fadein_epochs: int = 0,
+            w_mss: float = 1.0,
+            w_sot: float = 1.0,
+            w_param: float = 1.0,
+            event_loss_weights: dict[str, float] | None = None,
+            eval_synthetic_metrics: bool = True,
+            eval_ood_metrics: bool = True,
+            lr: float = 1e-3,
+            fs: int = 16000,
+            duration_s: float = 4.0,
+            log_val_audio: bool = True,
+            num_val_audio_examples: int = 4
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
         self.model = model
 
-        self.ploss = PLoss(fs=fs, weights=param_weights or {})
+        self.event_loss = EventSetLoss(**(event_loss_weights or {}))
+
         self.mss = MultiScaleSpectralLoss()
         self.sot = SOT2048Loss(sample_rate=fs)
 
@@ -76,12 +75,12 @@ class SoundMatchingExperiment(pl.LightningModule):
     # ── Loss ─────────────────────────────────────────────────────────────
 
     def _compute_losses(
-        self,
-        pred_audio: torch.Tensor,
-        pred_params: dict[str, torch.Tensor],
-        target_audio: torch.Tensor,
-        target_params: dict[str, torch.Tensor] | None,
-        is_synthetic: bool,
+            self,
+            pred_audio: torch.Tensor,
+            pred_raw: dict[str, torch.Tensor],
+            target_audio: torch.Tensor,
+            target_params: dict[str, torch.Tensor] | None,
+            is_synthetic: bool,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         device = pred_audio.device
         info: dict[str, Any] = {}
@@ -97,7 +96,7 @@ class SoundMatchingExperiment(pl.LightningModule):
             info["sot"] = sot_loss.detach()
 
         if is_synthetic and self.hparams.objective != "spectral_only":
-            p_total, p_breakdown = self.ploss(pred_params, target_params)
+            p_total, p_breakdown = self.event_loss(pred_raw, target_params)
             total = total + self.hparams.w_param * p_total
             info["param"] = p_total.detach()
             info["param_breakdown"] = p_breakdown
@@ -107,21 +106,29 @@ class SoundMatchingExperiment(pl.LightningModule):
     # ── Single sub-batch step ────────────────────────────────────────────
 
     def _step_on_batch(
-        self,
-        batch: dict[str, Any],
-        stage: str,
-        tag: str,
+            self,
+            batch: dict[str, Any],
+            stage: str,
+            tag: str,
     ) -> torch.Tensor:
         target_audio = batch["audio"]
-        target_params = batch.get("params")            # None for OOD
-        detected = batch.get("detected")               # None for synthetic
+        target_params = batch.get("events") or batch.get("params")
+        detected = batch.get("detected")
         is_synthetic = target_params is not None
 
-        pred_audio, pred_params = self.model(target_audio, detected=detected)
+        pred_raw = self.model.encoder(target_audio)
+        pred_params = self.model.decoder.activate(pred_raw, detected)
+
+        if self.training:
+            pred_audio, _ = self.model.decoder.synthesise(pred_params)
+        else:
+            pred_audio, _ = self.model.decoder.oracle_synth(pred_params)
 
         total, info = self._compute_losses(
-            pred_audio, pred_params,
-            target_audio, target_params,
+            pred_audio=pred_audio,
+            pred_raw=pred_raw,
+            target_audio=target_audio,
+            target_params=target_params,
             is_synthetic=is_synthetic,
         )
 
@@ -139,8 +146,6 @@ class SoundMatchingExperiment(pl.LightningModule):
             self._log_audio_metrics(pred_audio, target_audio, tag)
             self._collect_val_audio_examples(pred_audio, target_audio, tag)
 
-            if is_synthetic and self.hparams.eval_synthetic_metrics:
-                self._log_synthetic_metrics(pred_params, target_params, tag)
         return total
 
     # ── Training ─────────────────────────────────────────────────────────
@@ -148,7 +153,6 @@ class SoundMatchingExperiment(pl.LightningModule):
     def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
         self.log("train/spectral_weight", self.spectral_weight)
 
-        # CombinedLoader → {"synthetic": {…}, "nsynth": {…}}
         if isinstance(batch, dict) and "audio" not in batch:
             total = torch.tensor(0.0, device=self.device)
             for key, sub_batch in batch.items():
@@ -164,9 +168,9 @@ class SoundMatchingExperiment(pl.LightningModule):
         self._val_audio_examples = {"val_synth": [], "val_ood": []}
 
     def validation_step(
-        self, batch: Dict[str, Any], batch_idx: int, dataloader_idx: int = 0,
+            self, batch: Dict[str, Any], batch_idx: int, dataloader_idx: int = 0,
     ) -> None:
-        is_synthetic = "params" in batch
+        is_synthetic = "events" in batch or "params" in batch
         tag = "val_synth" if is_synthetic else "val_ood"
         self._step_on_batch(batch, "val", tag)
 
@@ -196,7 +200,7 @@ class SoundMatchingExperiment(pl.LightningModule):
             return
 
         n_to_take = min(remaining, pred_audio.shape[0])
-        gap = int(0.1 * self.hparams.fs)  # 100 ms silence
+        gap = int(0.1 * self.hparams.fs)
 
         for b in range(n_to_take):
             target = target_audio[b].detach().float().cpu()
@@ -212,19 +216,6 @@ class SoundMatchingExperiment(pl.LightningModule):
             store.append(concat.numpy())
 
     # ── Metrics ──────────────────────────────────────────────────────────
-
-    @torch.no_grad()
-    def _log_synthetic_metrics(self, pred_params, target_params, tag):
-        B = pred_params["f0"].shape[0]
-
-        cents = []
-        for b in range(B):
-            cents.append(compute_mean_cents_distance(
-                pred_params["f0"][b].cpu().numpy(),
-                target_params["f0"][b].cpu().numpy()))
-
-        if cents:
-            self.log(f"{tag}/mean_cents", np.mean(cents), add_dataloader_idx=False)
 
     @torch.no_grad()
     def _log_audio_metrics(self, pred_audio, target_audio, tag):

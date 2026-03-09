@@ -61,42 +61,30 @@ def no_dc_burst(
     return ((burst_torch / burst_torch.max()) - 0.5) * 2
 
 def excitation(
-        burst_gain: T,
-        signal_length: int,
-        f0: T,
+        burst_gain: T,  # [B, num_samples]
+        signal_length: int, # num_samples
+        f0: T,          # [B, num_samples]
         fs: int = FS_MIN,
         noise_seed: int = RND_SEED,
 ) -> T:
-    """
-    Create excitation with noise bursts where burst_gain > 0.
-
-    :param burst_gain: [batch, num_frames] - zero = no onset, positive = onset with that gain
-    :param signal_length: total signal length in samples
-    :param f0: [batch, num_frames] - fundamental frequency in Hz per frame
-    :param fs: sample rate in Hz
-    :param noise_seed: seed for deterministic noise generation
-    :return: [batch, num_samples]; excitation signal
-    """
-    assert burst_gain.dim() == 2 == f0.dim()
-    assert burst_gain.shape == f0.shape
-    batch_size, num_frames = burst_gain.shape
-    hop_length = signal_length / num_frames
+    batch_size, num_samples = burst_gain.shape
     device = burst_gain.device
-
     output = torch.zeros(batch_size, signal_length, device=device)
 
+    assert f0.shape == burst_gain.shape
+    assert num_samples == signal_length
+
     for b in range(batch_size):
-        for i in range(num_frames):
-            if burst_gain[b, i].item() == 0.0:
-                continue
-            f0_hz = f0[b, i].item()
-            assert 0 < f0_hz <= fs / 2
+        trigger_indices = torch.nonzero(burst_gain[b] > 0).squeeze(-1)
+
+        for sample_idx in trigger_indices:
+            f0_hz = f0[b, sample_idx].item()
             burst_len = int(fs / f0_hz)
             noise_burst = no_dc_burst(burst_len, seed=noise_seed, device=device)
-            frame_start = int(i * hop_length)
-            frame_end = min(frame_start + burst_len, signal_length)
-            actual_len = frame_end - frame_start
-            output[b, frame_start:frame_end] += burst_gain[b, i] * noise_burst[:actual_len]
+
+            end_idx = min(sample_idx + burst_len, signal_length)
+            actual_len = end_idx - sample_idx
+            output[b, sample_idx:end_idx] += burst_gain[b, sample_idx] * noise_burst[:actual_len]
 
     return output
 

@@ -114,7 +114,7 @@ def _build_experiment(cfg: DictConfig, model: SoundMatchingModel) -> SoundMatchi
         w_mss=cfg.training.w_mss,
         w_sot=cfg.training.w_sot,
         w_param=cfg.training.w_param,
-        param_weights=OmegaConf.to_container(cfg.training.param_weights, resolve=True),
+        event_loss_weights=OmegaConf.to_container(cfg.training.event_loss_weights, resolve=True), # UPDATED THIS LINE
         eval_synthetic_metrics=cfg.experiment.eval_synthetic_metrics,
         eval_ood_metrics=cfg.experiment.eval_ood_metrics,
         lr=cfg.lr,
@@ -123,7 +123,6 @@ def _build_experiment(cfg: DictConfig, model: SoundMatchingModel) -> SoundMatchi
         log_val_audio=cfg.experiment.log_val_audio,
         num_val_audio_examples=cfg.experiment.num_val_audio_examples,
     )
-
 
 def _checkpoint_tag(cfg: DictConfig) -> str:
     data_tag = "Nsynth" if cfg.data.has_ood else "Synth"

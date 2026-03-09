@@ -1,14 +1,17 @@
 objective: param_only
+param_only_epochs: 0
+fadein_epochs: 0
 w_param: 1.0
 w_mss: 0.0
 w_sot: 0.0
-param_only_epochs: 0
-fadein_epochs: 0
 
-param_weights:
-  f0: 2.0
-  burst_gain: 5.0
-  pluck_position: 1.0
-  dynamic_level: 1.0
-  a1: 1.0
-  decay: 1.0
+# REPLACED param_weights WITH event_loss_weights
+event_loss_weights:
+  w_exists: 2.0
+  w_time: 5.0
+  w_f0: 2.0
+  w_gain: 1.0
+  w_decay: 0.5
+  w_damping: 0.5
+  w_pluck: 0.5
+  w_dyn: 0.5

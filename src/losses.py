@@ -2,43 +2,114 @@ from __future__ import annotations
 import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import scipy.signal.windows
 from torch import Tensor
+from scipy.optimize import linear_sum_assignment
 from sot import Wasserstein1DLoss
 
-from src.synths.param_registry import ParamSpec, PARAM_NAMES, make_default_registry, LossType
-from scipy.optimize import linear_sum_assignment
+from src.synths.param_registry import (
+    ParamSpec, PARAM_NAMES, make_default_registry, LossType,
+    EVENT_PARAM_NAMES,
+    F0_MIN_HZ, F0_MAX_HZ,
+    PLUCK_POSITION_MIN, PLUCK_POSITION_MAX,
+    DYNAMIC_LEVEL_MIN, DYNAMIC_LEVEL_MAX,
+    DAMPING_MIN, DAMPING_MAX,
+    DECAY_MIN, DECAY_MAX,
+    BURST_GAIN_MAX,
+)
 
 EPS = 1e-8
 
+def _sigmoid_range(x: Tensor, lo: float, hi: float) -> Tensor:
+    """Maps unbounded logits to the physical range [lo, hi]."""
+    return lo + (hi - lo) * torch.sigmoid(x)
 
 def mu_law(x: Tensor, mu: float = 255.0) -> Tensor:
-    """μ-law compression:  F(x) = ln(1 + μx) / ln(1 + μ).
-
-    Maps [0, 1] → [0, 1] with logarithmic curvature that matches
-    human loudness perception (Weber-Fechner law).  Crucially,
-    F(0) = 0 exactly — no ε floor needed for silent frames.
-
-    With μ=255 (standard), a quiet pluck at 0.1 maps to ~0.58,
-    giving the optimiser much stronger gradients for soft onsets
-    than linear L1 would.
-    """
+    """μ-law compression:  F(x) = ln(1 + μx) / ln(1 + μ)."""
     return torch.log1p(mu * x) / math.log1p(mu)
 
-
 def inverse_mu_law(x: Tensor, mu: float = 255.0) -> Tensor:
-    """Inverse μ-law compression:  G(x) = μ_law(1 − x).
-
-    High resolution near 1.0 (where x ≈ 1 → 1−x ≈ 0 → μ-law
-    provides maximum sensitivity).  Bounded to [0, 1], no gradient
-    explosions — unlike log(1−x) which goes to −∞.
-
-    Ideal for parameters like ``decay`` where perceptually important
-    differences cluster near the upper bound (e.g. 0.99 vs 0.999
-    is the difference between 1 s and 10 s of sustain).
-    """
+    """Inverse μ-law compression:  G(x) = μ_law(1 − x)."""
     return mu_law((1.0 - x).clamp(min=0.0, max=1.0), mu)
 
+def compute_harmonic_rt60(
+        f0: torch.Tensor,
+        a1: torch.Tensor,
+        g: torch.Tensor,
+        fs: float = 16000.0,
+        n_harmonics: int = 10
+) -> torch.Tensor:
+    """
+    Differentiable RT60 calculation for the first N harmonics of a KS string.
+    Returns: [B, num_events, n_harmonics] tensor of RT60 times in seconds.
+    """
+    # Create harmonic indices: [1, 2, 3, ..., n_harmonics]
+    k = torch.arange(1, n_harmonics + 1, device=f0.device).view(1, 1, -1)
+
+    # Frequencies of the harmonics: f_k = k * f0
+    freqs = f0.unsqueeze(-1) * k  # [B, N, H]
+
+    # Mask out harmonics that exceed Nyquist (fs / 2)
+    valid_mask = (freqs < fs / 2).float()
+
+    # Convert to radians/sample
+    omega = 2.0 * math.pi * freqs / fs
+    z_inv = torch.exp(-1j * omega)
+
+    # Loop filter Transfer Function: H_loop(z) = g * (1 - a1) / (1 - a1 * z^-1)
+    num = g.unsqueeze(-1) * (1.0 - a1.unsqueeze(-1))
+    den = 1.0 - a1.unsqueeze(-1) * z_inv
+
+    # Magnitude response of the loop filter at these exact frequencies
+    H_mag = torch.abs(num / den)
+
+    # Clamp to prevent log(0) or infinite RT60 if H_mag >= 1.0
+    H_mag = torch.clamp(H_mag, min=1e-6, max=1.0 - 1e-6)
+
+    # RT60 formula derived from loop attenuation
+    rt60_seconds = -3.0 / (f0.unsqueeze(-1) * torch.log10(H_mag))
+
+    return rt60_seconds * valid_mask
+
+def sigmoid_focal_loss(
+        inputs: Tensor,
+        targets: Tensor,
+        alpha: float = 0.25,
+        gamma: float = 2.0,
+) -> Tensor:
+    """
+    Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example (raw logits).
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                 classification label for each element in inputs (0 or 1).
+        alpha: (optional) Weighting factor in range (0,1) to balance
+                positive vs negative examples. Default = 0.25.
+        gamma: Exponent of the modulating factor (1 - p_t) to
+               balance easy vs hard examples.
+    Returns:
+        Loss tensor (scalar).
+    """
+    # Compute standard Cross Entropy Loss (numerically stable using logits)
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+
+    # Compute the predicted probabilities
+    p = torch.sigmoid(inputs)
+
+    # p_t is the probability of the true class
+    p_t = p * targets + (1 - p) * (1 - targets)
+
+    # Modulating factor: (1 - p_t)^gamma
+    loss = ce_loss * ((1 - p_t) ** gamma)
+
+    # Alpha weighting
+    if alpha >= 0:
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+        loss = alpha_t * loss
+
+    return loss.mean()
 
 class MultiScaleSpectralLoss(nn.Module):
     """Multi-scale log-magnitude STFT distance.
@@ -189,280 +260,296 @@ class SOT2048Loss(nn.Module):
         return self.loss_fn(x, x_target)
 
 
-class HungarianOnsetLoss(nn.Module):
-    """Bipartite-matching loss for sparse onset (burst_gain) prediction.
+class EventSetLoss(nn.Module):
+    """
+    Bipartite matching loss for DETR-style Event Packets.
 
-    Matches predicted active frames to ground-truth onset frames via the
-    Hungarian algorithm, then penalises time error, gain error, unmatched
-    predictions, and missed ground-truth onsets.
-
-    Args:
-        active_threshold: minimum predicted gain to count as "active".
-        w_time:           weight for normalised frame-distance of matched pairs.
-        w_gain:           weight for |μ(pred_gain) − μ(gt_gain)| of matched pairs.
-        w_unmatched_pred: weight penalty per unmatched predicted onset.
-        w_missed_gt:      weight penalty per missed ground-truth onset.
-        mu:               μ-law compression parameter (255 = standard).
+    Matches a set of N predicted events to N ground-truth events (padded with
+    exists=0). Matching is based on Time, Pitch, and Gain.
     """
 
     def __init__(
-        self,
-        active_threshold: float = 1e-4,
-        w_time: float = 0.1,
-        w_gain: float = 1.0,
-        w_unmatched_pred: float = 1.0,
-        w_missed_gt: float = 2.0,
-        mu: float = 255.0,
+            self,
+            # ── Matching Weights (used to build the cost matrix) ──
+            cost_class: float = 1.0,
+            cost_time: float = 1.0,
+            cost_f0: float = 1.0,
+            cost_gain: float = 0.5,
+            # ── Loss Weights (used for backprop after matching) ──
+            w_exists: float = 2.0,
+            w_time: float = 5.0,
+            w_f0: float = 2.0,
+            w_gain: float = 1.0,
+            w_rt60: float = 1.0,  # <-- REPLACES w_decay AND w_damping
+            w_pluck: float = 0.5,
+            w_dyn: float = 0.5,
+            mu: float = 255.0,
+            f0_min_hz: float = 32.0,
+            f0_max_hz: float = 2000.0,
+            n_f0_bins: int = 128,
+            fs: float = 16000.0,  # <-- ADDED sample rate
     ):
         super().__init__()
-        self.active_threshold = active_threshold
+        self.cost_time = cost_time
+        self.cost_f0 = cost_f0
+        self.cost_gain = cost_gain
+        self.cost_class = cost_class
+
+        self.w_exists = w_exists
         self.w_time = w_time
+        self.w_f0 = w_f0
         self.w_gain = w_gain
-        self.w_unmatched_pred = w_unmatched_pred
-        self.w_missed_gt = w_missed_gt
+        self.w_rt60 = w_rt60
+        self.w_pluck = w_pluck
+        self.w_dyn = w_dyn
         self.mu = mu
+        self.fs = fs
 
-    def forward(
-        self,
-        pred_gains: Tensor,   # [B, T]
-        gt_gains: Tensor,     # [B, T]  (ground-truth burst_gain; >0 = onset)
-    ) -> tuple[Tensor, dict]:
-        """
-        Returns:
-            loss   – scalar (batch-mean).
-            info   – dict with diagnostics (n_matched, n_unmatched, …).
-        """
-        B, T = pred_gains.shape
-        device = pred_gains.device
+        bin_centres = f0_min_hz * (
+                (f0_max_hz / f0_min_hz)
+                ** (torch.arange(n_f0_bins, dtype=torch.float32) / (n_f0_bins - 1))
+        )
+        self.register_buffer("f0_bin_centres", bin_centres)
 
-        total_loss = torch.tensor(0.0, device=device)
-        n_matched = n_unmatched = n_missed = 0
-        sum_time_err = sum_gain_err = 0.0
+    def _hz_to_bin_idx(self, f0_hz: Tensor) -> Tensor:
+        """Converts ground-truth Hz to the nearest bin index for CE loss."""
+        diffs = torch.abs(f0_hz.unsqueeze(-1) - self.f0_bin_centres)
+        return torch.argmin(diffs, dim=-1)
+
+    @torch.no_grad()
+    def _match(self, pred: dict[str, Tensor], tgt: dict[str, Tensor]) -> list[tuple[Tensor, Tensor]]:
+        B, num_queries = pred["exists"].shape[:2]
+
+        p_exists = torch.sigmoid(pred["exists"]).squeeze(-1)  # [B, N]
+        p_time = torch.sigmoid(pred["time"]).squeeze(-1)  # [B, N]
+        p_gain = torch.sigmoid(pred["params"][..., 0])  # [B, N]
+        p_f0 = pred["f0_hz"].squeeze(-1)  # [B, N]
+
+        t_time = tgt["time"]
+        t_gain = tgt["burst_gain"]
+        t_f0 = tgt["f0"]
+        t_exists = tgt["exists"]
+
+        indices = []
+        for b in range(B):
+            tgt_idx = torch.nonzero(t_exists[b]).squeeze(-1)
+
+            if len(tgt_idx) == 0:
+                indices.append((torch.arange(num_queries), torch.arange(num_queries)))
+                continue
+
+            tgt_t = t_time[b, tgt_idx]
+            tgt_g = t_gain[b, tgt_idx]
+            tgt_f = t_f0[b, tgt_idx]
+
+            out_exists = p_exists[b]  # [num_queries]
+            out_t = p_time[b]
+            out_g = p_gain[b]
+            out_f = p_f0[b]
+
+            cost_time = torch.cdist(out_t.unsqueeze(-1), tgt_t.unsqueeze(-1), p=1)
+            cost_f0 = torch.cdist(out_f.unsqueeze(-1), tgt_f.unsqueeze(-1), p=1) / 1000.0
+
+            out_g_mu = mu_law(out_g, self.mu)
+            tgt_g_mu = mu_law(tgt_g, self.mu)
+            cost_gain = torch.cdist(out_g_mu.unsqueeze(-1), tgt_g_mu.unsqueeze(-1), p=1)
+
+            # ── THE FIX: Subtract the predicted probability from the cost ──
+            # If a query is highly confident (prob -> 1.0), its cost drops,
+            # strongly encouraging the matcher to pair it with a real note
+            cost_class = -out_exists.unsqueeze(-1)  # Broadcasts to [num_queries, num_real_targets]
+
+            # Total cost matrix
+            C = (self.cost_time * cost_time +
+                 self.cost_f0 * cost_f0 +
+                 self.cost_gain * cost_gain +
+                 self.cost_class * cost_class)  # ADDED COST CLASS HERE
+
+            C = C.cpu().numpy()
+
+            row_ind, col_ind = linear_sum_assignment(C)
+
+            # [Keep the rest of the matching logic exactly as it was]
+            actual_tgt_ind = tgt_idx[col_ind]
+            # ...
+
+            # We must assign the unmatched queries to the dummy padded targets.
+            unmatched_queries = set(range(num_queries)) - set(row_ind)
+            unmatched_tgts = set(range(num_queries)) - set(actual_tgt_ind.tolist())
+
+            full_row = torch.cat([torch.tensor(row_ind), torch.tensor(list(unmatched_queries))])
+            full_col = torch.cat([actual_tgt_ind, torch.tensor(list(unmatched_tgts))])
+
+            # Sort by row (query index) so everything stays aligned
+            sort_idx = torch.argsort(full_row)
+            indices.append((full_row[sort_idx], full_col[sort_idx]))
+
+        return indices
+
+    def forward(self, pred_raw: dict[str, Tensor], tgt: dict[str, Tensor]) -> tuple[Tensor, dict]:
+        """
+        Computes the matching and the final loss.
+        """
+        device = pred_raw["exists"].device
+
+        # ── THE FIX 1: Extract num_queries here! ──
+        B, num_queries = pred_raw["exists"].shape[:2]
+
+        # 1. Bipartite Matching
+        indices = self._match(pred_raw, tgt)
+
+        # 2. Reorder targets to match predictions
+        tgt_reordered = {
+            k: torch.zeros(B, num_queries, device=device, dtype=v.dtype)
+            for k, v in tgt.items()
+        }
 
         for b in range(B):
-            pred_mask = pred_gains[b] > self.active_threshold
-            pred_idx = torch.where(pred_mask)[0]
-            pred_g = pred_gains[b, pred_idx]
-            N = len(pred_idx)
+            _, tgt_idx = indices[b]
 
-            gt_mask = gt_gains[b] > 0.0
-            gt_idx = torch.where(gt_mask)[0]
-            gt_g = gt_gains[b, gt_idx]
-            M = len(gt_idx)
+            # ── THE FIX: Force the indices to be integers! ──
+            tgt_idx = tgt_idx.long()
 
-            if M == 0 and N == 0:
-                continue
-            if M == 0: # All predictions are false positives
-                total_loss = total_loss + self.w_unmatched_pred * mu_law(pred_g, self.mu).sum()
-                n_unmatched += N
-                continue
-            if N == 0: # All ground-truth onsets are missed
-                total_loss = total_loss + self.w_missed_gt * (
-                    mu_law(gt_g, self.mu) - mu_law(pred_gains[b, gt_idx], self.mu)
-                ).sum()
-                n_missed += M
-                continue
+            for k in tgt.keys():
+                tgt_reordered[k][b] = tgt[k][b][tgt_idx]
 
-            cost = torch.cdist(
-                pred_idx.float().unsqueeze(1),
-                gt_idx.float().unsqueeze(1),
-            ) / T
-            row, col = linear_sum_assignment(cost.detach().cpu().numpy())
-            row_t = torch.tensor(row, device=device, dtype=torch.long)
-            col_t = torch.tensor(col, device=device, dtype=torch.long)
-
-            time_err = (pred_idx[row_t].float() - gt_idx[col_t].float()).abs() / T
-
-            # Gain error in μ-law compressed space
-            gain_err = (mu_law(pred_g[row_t], self.mu) - mu_law(gt_g[col_t], self.mu)).abs()
-
-            loss_matched = (self.w_time * time_err + self.w_gain * gain_err).sum()
-
-            matched_set = set(row.tolist())
-            unmatched_idx = [i for i in range(N) if i not in matched_set]
-            loss_unmatched = (
-                self.w_unmatched_pred * mu_law(pred_g[unmatched_idx], self.mu).sum()
-                if unmatched_idx else 0.0
-            )
-
-            matched_gt_set = set(col.tolist())
-            missed_gt_local = [j for j in range(M) if j not in matched_gt_set]
-            if missed_gt_local:
-                missed_positions = gt_idx[missed_gt_local]
-                loss_missed = self.w_missed_gt * (
-                    mu_law(gt_g[missed_gt_local], self.mu)
-                    - mu_law(pred_gains[b, missed_positions], self.mu)
-                ).sum()
-            else:
-                loss_missed = 0.0
-
-            n_missed_b = len(missed_gt_local)
-            total_loss = total_loss + loss_matched + loss_unmatched + loss_missed
-            n_matched += len(row)
-            n_unmatched += len(unmatched_idx)
-            n_missed += n_missed_b
-            sum_time_err += time_err.sum().item()
-            sum_gain_err += gain_err.sum().item()
-
-        loss = total_loss / B
-
-        info = dict(
-            n_matched=n_matched / B,
-            n_unmatched=n_unmatched / B,
-            n_missed=n_missed / B,
-            time_err_frames=sum_time_err / max(n_matched, 1) * T,
-            gain_err=sum_gain_err / max(n_matched, 1),
+        # 3. Compute Existence Loss (FOCAL LOSS)
+        # Replaces BCE + pos_weight. Gamma=2.0 dynamically penalizes hard examples
+        # (missing notes) while zeroing out the loss for obvious silence.
+        exists_loss = sigmoid_focal_loss(
+            pred_raw["exists"].squeeze(-1),
+            tgt_reordered["exists"],
+            alpha=0.5,
+            gamma=2.0
         )
-        return loss, info
 
-_LOG_FLOOR = 1e-6
+        # 4. Compute Physical Parameter Losses
+        # We only compute parameter losses for queries that matched a REAL event (exists=1)
+        real_mask = tgt_reordered["exists"] > 0
 
-class PLoss(nn.Module):
-    """Per-parameter loss between predicted and target synthesis parameters.
+        if not real_mask.any():
+            return self.w_exists * exists_loss, {"exists_loss": exists_loss.item(), "total": exists_loss.item()}
 
-    For each parameter the loss type is determined by the ParamSpec registry:
+        # Extract predictions for real events
+        p_time = torch.sigmoid(pred_raw["time"]).squeeze(-1)[real_mask]
+        p_f0_probs = pred_raw["f0_probs"][real_mask]
+        p_params = pred_raw["params"][real_mask]
 
-    * **MAE** – frame-wise L1.
-    * **LOG_MAE** – L1 on log-normalised logits:
-    * **HUNGARIAN** – bipartite matching loss for sparse burst_gain.
+        # Apply strict physical boundaries to match the decoder's reality
+        p_bg = _sigmoid_range(p_params[..., 0], 0.0, BURST_GAIN_MAX)
+        p_decay = _sigmoid_range(p_params[..., 1], DECAY_MIN, DECAY_MAX)
+        p_a1 = _sigmoid_range(p_params[..., 2], DAMPING_MIN, DAMPING_MAX)
+        p_pluck = _sigmoid_range(p_params[..., 3], PLUCK_POSITION_MIN, PLUCK_POSITION_MAX)
+        p_dyn = _sigmoid_range(p_params[..., 4], DYNAMIC_LEVEL_MIN, DYNAMIC_LEVEL_MAX)
 
-    Args:
-        fs:              Sample rate (used to build default registry bounds).
-        registry:        Optional pre-built ``{name: ParamSpec}`` dict.
-        weights:         Optional ``{param_name: float}`` loss weights.
-        hungarian_kwargs: Extra kwargs forwarded to ``HungarianOnsetLoss``.
-    """
+        # Extract targets for real events
+        t_time = tgt_reordered["time"][real_mask]
+        t_f0 = tgt_reordered["f0"][real_mask]
+        t_bg = tgt_reordered["burst_gain"][real_mask]
+        t_decay = tgt_reordered["decay"][real_mask]
+        t_a1 = tgt_reordered["a1"][real_mask]
+        t_pluck = tgt_reordered["pluck_position"][real_mask]
+        t_dyn = tgt_reordered["dynamic_level"][real_mask]
 
-    def __init__(
-        self,
-        fs: int = 16000,
-        registry: dict[str, ParamSpec] | None = None,
-        weights: dict[str, float] | None = None,
-        hungarian_kwargs: dict | None = None,
-    ):
-        super().__init__()
-        self.registry = registry or make_default_registry(fs)
-        self.fs = fs
-        self.weights = weights or {}
-        self.hungarian = HungarianOnsetLoss(**(hungarian_kwargs or {}))
+        # Losses
+        time_loss = F.l1_loss(p_time, t_time)
 
-    def _log_mae(self, pred: Tensor, target: Tensor, spec: ParamSpec) -> Tensor:
-        """MAE in log-normalised logit space."""
-        lo = max(spec.low, _LOG_FLOOR)
-        ln_lo = math.log(lo)
-        ln_hi = math.log(spec.high)
-        scale = ln_hi - ln_lo
+        # f0 Loss: CrossEntropy on the bins
+        t_f0_bins = self._hz_to_bin_idx(t_f0)
+        f0_loss = F.nll_loss(torch.log(p_f0_probs + 1e-8), t_f0_bins)
 
-        pred_logit = (torch.log(pred + lo) - ln_lo) / scale
-        target_logit = (torch.log(target + lo) - ln_lo) / scale
-        return (pred_logit - target_logit).abs().mean()
+        # ── PERCEPTUAL TIMBRE LOSS (Unified RT60) ──
+        # Calculate the RT60 across 10 harmonics for predictions and targets.
+        # Notice we feed the TARGET pitch (t_f0) to both, so the loss gradient
+        # is strictly isolated to correcting the a1 and decay (g) parameters!
+        p_rt60 = compute_harmonic_rt60(t_f0, p_a1, p_decay, fs=self.fs, n_harmonics=10)
+        t_rt60 = compute_harmonic_rt60(t_f0, t_a1, t_decay, fs=self.fs, n_harmonics=10)
 
-    @staticmethod
-    def _inverse_mu_law_mae(pred: Tensor, target: Tensor, mu: float = 255.0) -> Tensor:
-        return (inverse_mu_law(pred, mu) - inverse_mu_law(target, mu)).abs().mean()
+        # Log-space L1 loss (because differences in short decays are perceptually
+        # more obvious than identical differences in long decays).
+        rt60_loss = F.l1_loss(torch.log1p(p_rt60), torch.log1p(t_rt60))
 
-    def forward(
-        self,
-        pred_params: dict[str, Tensor],    # {name: [B, num_frames]}
-        target_params: dict[str, Tensor],  # {name: [B, num_frames]}
-    ) -> tuple[Tensor, dict[str, Tensor]]:
-        """Compute weighted sum of per-parameter losses.
+        # Physical param losses (Gain, Pluck, Dynamics)
+        gain_loss = F.l1_loss(mu_law(p_bg, self.mu), mu_law(t_bg, self.mu))
+        pluck_loss = F.l1_loss(p_pluck, t_pluck)
+        dyn_loss = F.l1_loss(p_dyn, t_dyn)
 
-        Returns:
-            total_loss – scalar.
-            breakdown  – ``{param_name: scalar_loss}`` before weighting.
-        """
-        breakdown: dict[str, Tensor] = {}
-        total = torch.tensor(0.0, device=next(iter(pred_params.values())).device)
+        # Total Weighted Loss
+        total_loss = (
+                self.w_exists * exists_loss +
+                self.w_time * time_loss +
+                self.w_f0 * f0_loss +
+                self.w_gain * gain_loss +
+                self.w_rt60 * rt60_loss +  # <-- REPLACES w_decay and w_damping
+                self.w_pluck * pluck_loss +
+                self.w_dyn * dyn_loss
+        )
 
-        for name in PARAM_NAMES:
-            if name not in pred_params or name not in target_params:
-                continue
+        breakdown = {
+            "total": total_loss.item(),
+            "exists": exists_loss.item(),
+            "time": time_loss.item(),
+            "f0_ce": f0_loss.item(),
+            "gain_mu": gain_loss.item(),
+            "rt60": rt60_loss.item(),
+            "pluck": pluck_loss.item(),
+            "dyn": dyn_loss.item(),
+        }
 
-            spec = self.registry[name]
-            pred = pred_params[name]
-            target = target_params[name]
-            w = self.weights.get(name, 1.0)
+        return total_loss, breakdown
 
-            if spec.loss_type == LossType.MAE:
-                loss_i = (pred - target).abs().mean()
-            elif spec.loss_type == LossType.LOG_MAE:
-                loss_i = self._log_mae(pred, target, spec)
-            elif spec.loss_type == LossType.LOG1M_MAE:
-                loss_i = self._inverse_mu_law_mae(pred, target)
-            elif spec.loss_type == LossType.HUNGARIAN:
-                loss_i, _info = self.hungarian(pred, target)
-            else:
-                raise ValueError(f"Unknown loss type: {spec.loss_type}")
-
-            breakdown[name] = loss_i.detach()
-            total = total + w * loss_i
-
-        return total, breakdown
-
+# =============================================================================
+#                           TESTS
+# =============================================================================
 if __name__ == "__main__":
-    from src.data.synthetic_dataset import SyntheticDataset
+    from src.synths.param_registry import EVENT_PARAM_NAMES
 
-    FS = 16000
-    NUM_AUDIO_SAMPLES = 64000
-    NUM_FRAMES = 250
+    B, num_queries = 2, 40
+    d_model = 64
 
-    print("Generating 4 samples from SyntheticDataset...")
-    ds = SyntheticDataset(
-        num_samples_per_epoch=4,
-        num_audio_samples=NUM_AUDIO_SAMPLES,
-        num_frames=NUM_FRAMES,
-        fs=FS,
-        lti=False,
-        random_seed=123,
-    )
-    samples = [s for s in ds]
-    target_audio  = torch.stack([s['audio']  for s in samples])
-    target_params = {k: torch.stack([s['params'][k] for s in samples])
-                     for k in PARAM_NAMES}
+    pred_raw = {
+        "exists": torch.randn(B, num_queries, 1),
+        "time": torch.randn(B, num_queries, 1),
+        "f0_probs": F.softmax(torch.randn(B, num_queries, 128), dim=-1),
+        "f0_hz": torch.rand(B, num_queries, 1) * 1000 + 100,
+        "params": torch.randn(B, num_queries, 5)
+    }
 
-    print(f"  audio:  {target_audio.shape}")
-    print(f"  params: { {k: v.shape for k, v in target_params.items()} }")
+    tgt = {k: torch.zeros(B, num_queries) for k in EVENT_PARAM_NAMES}
 
-    pred_params = {}
-    for k, v in target_params.items():
-        if k == "burst_gain":
-            pred_params[k] = torch.roll(v, shifts=12, dims=1) * 0.9
-        elif k == "f0":
-            pred_params[k] = v * (1.0 + 0.02 * torch.randn_like(v))
-        else:
-            pred_params[k] = (v + 0.05 * torch.randn_like(v)).clamp(min=0.0)
+    tgt["exists"][0, 0] = 1.0
+    tgt["time"][0, 0] = 0.5
+    tgt["f0"][0, 0] = 440.0
+    tgt["burst_gain"][0, 0] = 0.8
+    tgt["decay"][0, 0] = 0.99
 
-    print("\n─── PLoss ───")
-    ploss = PLoss(fs=FS, weights={"f0": 2.0, "burst_gain": 5.0})
-    total, breakdown = ploss(pred_params, target_params)
-    print(f"  total:  {total.item():.4f}")
+    tgt["exists"][1, 0:2] = 1.0
+    tgt["time"][1, 0] = 0.2
+    tgt["f0"][1, 0] = 220.0
+    tgt["burst_gain"][1, 0] = 0.5
+
+    tgt["time"][1, 1] = 0.8
+    tgt["f0"][1, 1] = 880.0
+    tgt["burst_gain"][1, 1] = 0.9
+
+    print("Testing EventSetLoss...")
+    loss_fn = EventSetLoss()
+    total_loss, breakdown = loss_fn(pred_raw, tgt)
+
+    print(f"\nTotal Loss: {total_loss.item():.4f}")
     for k, v in breakdown.items():
-        print(f"  {k:20s}: {v.item():.4f}")
+        if k != "total":
+            print(f"  {k:15s}: {v:.4f}")
 
-    print("\n─── Gradient flow check ───")
-    for p in pred_params.values():
-        p.requires_grad_(True)
-    total_g, _ = ploss(pred_params, target_params)
-    total_g.backward()
-    for k, v in pred_params.items():
-        gn = v.grad.norm().item() if v.grad is not None else 0.0
-        print(f"  {k:20s} grad_norm: {gn:.6f}")
+    for tensor in pred_raw.values():
+        tensor.requires_grad_(True)
 
-    print("\n─── MultiScaleSpectral Loss ───")
-    mss = MultiScaleSpectralLoss()
-    mss_val = mss(target_audio, target_audio + 0.01 * torch.randn_like(target_audio))
-    print(f"  MSS (near-identical): {mss_val.item():.4f}")
+    total_loss, _ = loss_fn(pred_raw, tgt)
+    total_loss.backward()
 
-    print("\n─── Spectral Optimal Transport ───")
-    sot = SOT2048Loss(sample_rate=FS)
-    sot_val = sot(target_audio, target_audio + 0.01 * torch.randn_like(target_audio))
-    print(f"  SOT (near-identical): {sot_val.item():.4f}")
+    print("\nGradient Check:")
+    for k, v in pred_raw.items():
+        grad_norm = v.grad.norm().item() if v.grad is not None else 0.0
+        print(f"  {k:15s} grad_norm: {grad_norm:.6f}")
 
-    print("\n─── μ-law sanity check ───")
-    x = torch.tensor([0.0, 0.01, 0.1, 0.5, 1.0])
-    print(f"  linear:          {x.tolist()}")
-    print(f"  μ-law:           {mu_law(x).tolist()}")
-    print(f"  inverse μ-law:   {inverse_mu_law(x).tolist()}")
-
-    print("\n✓ All smoke tests passed.")
+    print("\n✓ Smoke test passed.")
