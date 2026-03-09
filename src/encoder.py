@@ -177,18 +177,35 @@ class CQTFrontend(nn.Module):
 
         return torch.log1p(mag)
 
-class CrossAttentionDecoderLayer(nn.Module):
-    """A lean, standard softmax cross-attention layer for event detection.
+class PositionalEncoding1D(nn.Module):
+    """Standard 1D Sinusoidal Positional Encoding."""
 
-    The learnable event queries look at the dense frame memory produced by
-    the TCN backbone to lock onto specific, localized audio features.
-    No self-attention is used to save parameters.
-    """
-
-    def __init__(self, d_model: int = 64, n_heads: int = 4, ff_mult: int = 2, dropout: float = 0.1):
+    def __init__(self, d_model: int, max_len: int = 1000):
         super().__init__()
-        self.cross_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        # Using math.log ensures precision, and creating exactly d_model // 2 terms prevents mismatches
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+
+        # This handles both even and odd d_model sizes safely
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term[:d_model // 2])
+
+        self.register_buffer('pe', pe.unsqueeze(0))  # [1, max_len, d_model]
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: [B, T, d_model]"""
+        return x + self.pe[:, :x.size(1), :]
+
+class DETRDecoderLayer(nn.Module):
+    """Full DETR Decoder layer: Self-Attention -> Cross-Attention -> FFN."""
+
+    def __init__(self, d_model: int = 64, n_heads: int = 4, ff_mult: int = 4, dropout: float = 0.1):
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
         self.norm1 = nn.LayerNorm(d_model)
+        self.cross_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+        self.norm2 = nn.LayerNorm(d_model)
 
         ff_hidden = d_model * ff_mult
         self.ffn = nn.Sequential(
@@ -198,18 +215,21 @@ class CrossAttentionDecoderLayer(nn.Module):
             nn.Linear(ff_hidden, d_model),
             nn.Dropout(dropout),
         )
-        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
 
     def forward(self, queries: torch.Tensor, memory: torch.Tensor) -> torch.Tensor:
         """
         queries: [B, max_events, d_model]
         memory:  [B, T_frames, d_model]
         """
-        attn_out, _ = self.cross_attn(query=queries, key=memory, value=memory)
-        queries = self.norm1(queries + attn_out)
-        queries = self.norm2(queries + self.ffn(queries))
-        return queries
+        q2, _ = self.self_attn(query=queries, key=queries, value=queries)
+        queries = self.norm1(queries + q2)
 
+        q2, _ = self.cross_attn(query=queries, key=memory, value=memory)
+        queries = self.norm2(queries + q2)
+
+        queries = self.norm3(queries + self.ffn(queries))
+        return queries
 
 class KSEventEncoder(nn.Module):
     """Unified DETR-style Encoder for Karplus-Strong Event Packets.
@@ -247,15 +267,16 @@ class KSEventEncoder(nn.Module):
                               kernel_size, dilation_base, dropout,
                               causal=False)
 
+        self.pos_encoder = PositionalEncoding1D(d_model)
         self.query_embed = nn.Parameter(torch.randn(1, max_events, d_model))
 
         self.decoder_blocks = nn.ModuleList([
-            CrossAttentionDecoderLayer(d_model, cross_attn_heads, ff_mult=2, dropout=dropout)
+            DETRDecoderLayer(d_model, cross_attn_heads, ff_mult=2, dropout=dropout)
             for _ in range(cross_attn_layers)
         ])
 
         # FOCAL LOSS
-        prior_prob = 0.01
+        prior_prob = 0.4
         bias_value = -math.log((1.0 - prior_prob) / prior_prob)
         self.head_exists = nn.Linear(d_model, 1)
         self.head_exists.bias.data.fill_(bias_value)
@@ -284,23 +305,22 @@ class KSEventEncoder(nn.Module):
         x = self.proj_in(x)  # [B, d_model, T]
         x = self.tcn(x)  # [B, d_model, T]
 
-        # Prepare memory for transformer (needs [B, T, d_model])
-        memory = x.permute(0, 2, 1)
+        memory = x.permute(0, 2, 1)  # [B, T, d_model]
+        memory = self.pos_encoder(memory)
 
-        # ── Cross-Attention Decoder ──
         queries = self.query_embed.expand(B, -1, -1)  # [B, max_events, d_model]
 
         for block in self.decoder_blocks:
             queries = block(queries, memory)  # [B, max_events, d_model]
 
         # ── Heads ──
-        exists_logits = self.head_exists(queries)  # [B, 40, 1]
-        time_logits = self.head_time(queries)  # [B, 40, 1]
-        param_logits = self.head_params(queries)  # [B, 40, 5]
+        exists_logits = self.head_exists(queries)  # [B, max_events 1]
+        time_logits = self.head_time(queries)  # [B, max_events 1]
+        param_logits = self.head_params(queries)  # [B, max_events 5]
 
-        f0_logits = self.head_f0(queries)  # [B, 40, 128]
+        f0_logits = self.head_f0(queries)  # [B, max_events 128]
         f0_probs = F.softmax(f0_logits, dim=-1)
-        f0_hz = (f0_probs * self.f0_bin_centres).sum(dim=-1, keepdim=True)  # [B, 40, 1]
+        f0_hz = (f0_probs * self.f0_bin_centres).sum(dim=-1, keepdim=True)  # [B, max_events 1]
 
         return {
             "exists": exists_logits,
