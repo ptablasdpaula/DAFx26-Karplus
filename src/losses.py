@@ -292,11 +292,14 @@ class EventSetLoss(nn.Module):
     @torch.no_grad()
     def _match(self, pred: dict[str, Tensor], tgt: dict[str, Tensor]) -> list[tuple[Tensor, Tensor]]:
         B, num_queries = pred["exists"].shape[:2]
+        device = pred["exists"].device  # <-- THE FIX: Grab the device!
 
         p_exists = torch.sigmoid(pred["exists"]).squeeze(-1)  # [B, N]
         p_time = torch.sigmoid(pred["time"]).squeeze(-1)  # [B, N]
+        p_gain = torch.sigmoid(pred["params"][..., 0])  # [B, N]
 
         t_time = tgt["time"]
+        t_gain = tgt["burst_gain"]
         t_exists = tgt["exists"]
 
         indices = []
@@ -304,30 +307,48 @@ class EventSetLoss(nn.Module):
             tgt_idx = torch.nonzero(t_exists[b]).squeeze(-1)
 
             if len(tgt_idx) == 0:
-                indices.append((torch.arange(num_queries), torch.arange(num_queries)))
+                # <-- THE FIX: Put the dummy indices on the device
+                indices.append((
+                    torch.arange(num_queries, device=device), 
+                    torch.arange(num_queries, device=device)
+                ))
                 continue
 
             tgt_t = t_time[b, tgt_idx]
-            out_exists = p_exists[b]
+            tgt_g = t_gain[b, tgt_idx]
+
+            out_exists = p_exists[b]  
             out_t = p_time[b]
+            out_g = p_gain[b]
 
+            # Cost Time
             cost_time = torch.cdist(out_t.unsqueeze(-1), tgt_t.unsqueeze(-1), p=1)
-            cost_class = -out_exists.unsqueeze(-1)
 
+            # Cost Class (Probability)
+            cost_class = -out_exists.unsqueeze(-1) 
+
+            # Total cost matrix (Purely Spatio-Temporal!)
             C = (self.cost_time * cost_time +
-                 self.cost_class * cost_class)
+                 self.cost_class * cost_class) 
 
             C = C.cpu().numpy()
 
             row_ind, col_ind = linear_sum_assignment(C)
 
             actual_tgt_ind = tgt_idx[col_ind]
-
+            
             unmatched_queries = set(range(num_queries)) - set(row_ind)
             unmatched_tgts = set(range(num_queries)) - set(actual_tgt_ind.tolist())
 
-            full_row = torch.cat([torch.tensor(row_ind), torch.tensor(list(unmatched_queries))])
-            full_col = torch.cat([actual_tgt_ind, torch.tensor(list(unmatched_tgts))])
+            # <-- THE FIX: Force all newly created tensors onto the correct device!
+            full_row = torch.cat([
+                torch.tensor(row_ind, device=device), 
+                torch.tensor(list(unmatched_queries), device=device)
+            ])
+            full_col = torch.cat([
+                actual_tgt_ind, 
+                torch.tensor(list(unmatched_tgts), device=device)
+            ])
 
             sort_idx = torch.argsort(full_row)
             indices.append((full_row[sort_idx], full_col[sort_idx]))
