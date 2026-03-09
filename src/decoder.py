@@ -168,7 +168,6 @@ class KSDecoder(Decoder):
     def _events_to_samples(self, events: dict[str, Tensor], B: int, num_samples: int) -> dict[str, Tensor]:
         device = events["exists"].device
 
-        # INITIALIZE TO SAFE PHYSICAL DEFAULTS (NOT ZEROS!)
         dense = {
             "f0": torch.full((B, num_samples), 440.0, device=device),
             "burst_gain": torch.zeros((B, num_samples), device=device),  # Gain stays 0
@@ -179,8 +178,8 @@ class KSDecoder(Decoder):
         }
 
         for b in range(B):
-            # 1. Lower the threshold to almost zero so the spectral loss can "hear" the guesses
-            valid_mask = events["exists"][b] > 0.01
+            valid_mask = events["exists"][b] > 0.5
+
             if not valid_mask.any():
                 continue
 
@@ -189,14 +188,7 @@ class KSDecoder(Decoder):
 
             v_time = valid_times[sorted_idx]
             v_f0 = events["f0"][b, valid_mask][sorted_idx]
-
-            # Extract raw burst_gain AND the exists probability
-            v_bg_raw = events["burst_gain"][b, valid_mask][sorted_idx]
-            v_exists = events["exists"][b, valid_mask][sorted_idx]
-
-            # 2. THE SOFT GATE: Scale the physical gain by the network's confidence!
-            v_bg = v_bg_raw * v_exists
-
+            v_bg = events["burst_gain"][b, valid_mask][sorted_idx]
             v_decay = events["decay"][b, valid_mask][sorted_idx]
             v_a1 = events["a1"][b, valid_mask][sorted_idx]
             v_pluck = events["pluck_position"][b, valid_mask][sorted_idx]

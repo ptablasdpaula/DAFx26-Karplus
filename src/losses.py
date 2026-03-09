@@ -21,17 +21,15 @@ from src.synths.param_registry import (
 
 EPS = 1e-8
 
+
 def _sigmoid_range(x: Tensor, lo: float, hi: float) -> Tensor:
     """Maps unbounded logits to the physical range [lo, hi]."""
     return lo + (hi - lo) * torch.sigmoid(x)
 
-def mu_law(x: Tensor, mu: float = 255.0) -> Tensor:
-    """μ-law compression:  F(x) = ln(1 + μx) / ln(1 + μ)."""
-    return torch.log1p(mu * x) / math.log1p(mu)
+def amplitude_to_db(amp: Tensor, min_amp: float = 1e-5) -> Tensor:
+    """Converts linear amplitude to decibels, clamped for stability."""
+    return 20.0 * torch.log10(torch.clamp(amp, min=min_amp))
 
-def inverse_mu_law(x: Tensor, mu: float = 255.0) -> Tensor:
-    """Inverse μ-law compression:  G(x) = μ_law(1 − x)."""
-    return mu_law((1.0 - x).clamp(min=0.0, max=1.0), mu)
 
 def compute_harmonic_rt60(
         f0: torch.Tensor,
@@ -72,6 +70,7 @@ def compute_harmonic_rt60(
 
     return rt60_seconds * valid_mask
 
+
 def sigmoid_focal_loss(
         inputs: Tensor,
         targets: Tensor,
@@ -80,36 +79,18 @@ def sigmoid_focal_loss(
 ) -> Tensor:
     """
     Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
-    Args:
-        inputs: A float tensor of arbitrary shape.
-                The predictions for each example (raw logits).
-        targets: A float tensor with the same shape as inputs. Stores the binary
-                 classification label for each element in inputs (0 or 1).
-        alpha: (optional) Weighting factor in range (0,1) to balance
-                positive vs negative examples. Default = 0.25.
-        gamma: Exponent of the modulating factor (1 - p_t) to
-               balance easy vs hard examples.
-    Returns:
-        Loss tensor (scalar).
     """
-    # Compute standard Cross Entropy Loss (numerically stable using logits)
     ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
-
-    # Compute the predicted probabilities
     p = torch.sigmoid(inputs)
-
-    # p_t is the probability of the true class
     p_t = p * targets + (1 - p) * (1 - targets)
-
-    # Modulating factor: (1 - p_t)^gamma
     loss = ce_loss * ((1 - p_t) ** gamma)
 
-    # Alpha weighting
     if alpha >= 0:
         alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
         loss = alpha_t * loss
 
     return loss.mean()
+
 
 class MultiScaleSpectralLoss(nn.Module):
     """Multi-scale log-magnitude STFT distance.
@@ -263,9 +244,8 @@ class SOT2048Loss(nn.Module):
 class EventSetLoss(nn.Module):
     """
     Bipartite matching loss for DETR-style Event Packets.
-
-    Matches a set of N predicted events to N ground-truth events (padded with
-    exists=0). Matching is based on Time, Pitch, and Gain.
+    Matches a set of N predicted events to N ground-truth events based on
+    Time, Existence Probability, and Decibel Intensity. Pitch/Timbre are optimized later.
     """
 
     def __init__(
@@ -273,26 +253,21 @@ class EventSetLoss(nn.Module):
             # ── Matching Weights (used to build the cost matrix) ──
             cost_class: float = 1.0,
             cost_time: float = 1.0,
-            cost_f0: float = 1.0,
-            cost_gain: float = 0.5,
             # ── Loss Weights (used for backprop after matching) ──
-            w_exists: float = 2.0,
-            w_time: float = 5.0,
+            w_exists: float = 20.0,
+            w_time: float = 10.0,
             w_f0: float = 2.0,
             w_gain: float = 1.0,
-            w_rt60: float = 1.0,  # <-- REPLACES w_decay AND w_damping
+            w_rt60: float = 1.0,
             w_pluck: float = 0.5,
             w_dyn: float = 0.5,
-            mu: float = 255.0,
             f0_min_hz: float = 32.0,
             f0_max_hz: float = 2000.0,
             n_f0_bins: int = 128,
-            fs: float = 16000.0,  # <-- ADDED sample rate
+            fs: float = 16000.0,
     ):
         super().__init__()
         self.cost_time = cost_time
-        self.cost_f0 = cost_f0
-        self.cost_gain = cost_gain
         self.cost_class = cost_class
 
         self.w_exists = w_exists
@@ -302,7 +277,6 @@ class EventSetLoss(nn.Module):
         self.w_rt60 = w_rt60
         self.w_pluck = w_pluck
         self.w_dyn = w_dyn
-        self.mu = mu
         self.fs = fs
 
         bin_centres = f0_min_hz * (
@@ -312,7 +286,6 @@ class EventSetLoss(nn.Module):
         self.register_buffer("f0_bin_centres", bin_centres)
 
     def _hz_to_bin_idx(self, f0_hz: Tensor) -> Tensor:
-        """Converts ground-truth Hz to the nearest bin index for CE loss."""
         diffs = torch.abs(f0_hz.unsqueeze(-1) - self.f0_bin_centres)
         return torch.argmin(diffs, dim=-1)
 
@@ -322,12 +295,8 @@ class EventSetLoss(nn.Module):
 
         p_exists = torch.sigmoid(pred["exists"]).squeeze(-1)  # [B, N]
         p_time = torch.sigmoid(pred["time"]).squeeze(-1)  # [B, N]
-        p_gain = torch.sigmoid(pred["params"][..., 0])  # [B, N]
-        p_f0 = pred["f0_hz"].squeeze(-1)  # [B, N]
 
         t_time = tgt["time"]
-        t_gain = tgt["burst_gain"]
-        t_f0 = tgt["f0"]
         t_exists = tgt["exists"]
 
         indices = []
@@ -339,60 +308,34 @@ class EventSetLoss(nn.Module):
                 continue
 
             tgt_t = t_time[b, tgt_idx]
-            tgt_g = t_gain[b, tgt_idx]
-            tgt_f = t_f0[b, tgt_idx]
-
-            out_exists = p_exists[b]  # [num_queries]
+            out_exists = p_exists[b]
             out_t = p_time[b]
-            out_g = p_gain[b]
-            out_f = p_f0[b]
 
             cost_time = torch.cdist(out_t.unsqueeze(-1), tgt_t.unsqueeze(-1), p=1)
-            cost_f0 = torch.cdist(out_f.unsqueeze(-1), tgt_f.unsqueeze(-1), p=1) / 1000.0
+            cost_class = -out_exists.unsqueeze(-1)
 
-            out_g_mu = mu_law(out_g, self.mu)
-            tgt_g_mu = mu_law(tgt_g, self.mu)
-            cost_gain = torch.cdist(out_g_mu.unsqueeze(-1), tgt_g_mu.unsqueeze(-1), p=1)
-
-            # ── THE FIX: Subtract the predicted probability from the cost ──
-            # If a query is highly confident (prob -> 1.0), its cost drops,
-            # strongly encouraging the matcher to pair it with a real note
-            cost_class = -out_exists.unsqueeze(-1)  # Broadcasts to [num_queries, num_real_targets]
-
-            # Total cost matrix
             C = (self.cost_time * cost_time +
-                 self.cost_f0 * cost_f0 +
-                 self.cost_gain * cost_gain +
-                 self.cost_class * cost_class)  # ADDED COST CLASS HERE
+                 self.cost_class * cost_class)
 
             C = C.cpu().numpy()
 
             row_ind, col_ind = linear_sum_assignment(C)
 
-            # [Keep the rest of the matching logic exactly as it was]
             actual_tgt_ind = tgt_idx[col_ind]
-            # ...
 
-            # We must assign the unmatched queries to the dummy padded targets.
             unmatched_queries = set(range(num_queries)) - set(row_ind)
             unmatched_tgts = set(range(num_queries)) - set(actual_tgt_ind.tolist())
 
             full_row = torch.cat([torch.tensor(row_ind), torch.tensor(list(unmatched_queries))])
             full_col = torch.cat([actual_tgt_ind, torch.tensor(list(unmatched_tgts))])
 
-            # Sort by row (query index) so everything stays aligned
             sort_idx = torch.argsort(full_row)
             indices.append((full_row[sort_idx], full_col[sort_idx]))
 
         return indices
 
     def forward(self, pred_raw: dict[str, Tensor], tgt: dict[str, Tensor]) -> tuple[Tensor, dict]:
-        """
-        Computes the matching and the final loss.
-        """
         device = pred_raw["exists"].device
-
-        # ── THE FIX 1: Extract num_queries here! ──
         B, num_queries = pred_raw["exists"].shape[:2]
 
         # 1. Bipartite Matching
@@ -406,16 +349,12 @@ class EventSetLoss(nn.Module):
 
         for b in range(B):
             _, tgt_idx = indices[b]
-
-            # ── THE FIX: Force the indices to be integers! ──
             tgt_idx = tgt_idx.long()
 
             for k in tgt.keys():
                 tgt_reordered[k][b] = tgt[k][b][tgt_idx]
 
         # 3. Compute Existence Loss (FOCAL LOSS)
-        # Replaces BCE + pos_weight. Gamma=2.0 dynamically penalizes hard examples
-        # (missing notes) while zeroing out the loss for obvious silence.
         exists_loss = sigmoid_focal_loss(
             pred_raw["exists"].squeeze(-1),
             tgt_reordered["exists"],
@@ -424,25 +363,22 @@ class EventSetLoss(nn.Module):
         )
 
         # 4. Compute Physical Parameter Losses
-        # We only compute parameter losses for queries that matched a REAL event (exists=1)
         real_mask = tgt_reordered["exists"] > 0
 
         if not real_mask.any():
             return self.w_exists * exists_loss, {"exists_loss": exists_loss.item(), "total": exists_loss.item()}
 
-        # Extract predictions for real events
         p_time = torch.sigmoid(pred_raw["time"]).squeeze(-1)[real_mask]
         p_f0_probs = pred_raw["f0_probs"][real_mask]
         p_params = pred_raw["params"][real_mask]
 
-        # Apply strict physical boundaries to match the decoder's reality
+        #TODO why sigmoid before loss?
         p_bg = _sigmoid_range(p_params[..., 0], 0.0, BURST_GAIN_MAX)
         p_decay = _sigmoid_range(p_params[..., 1], DECAY_MIN, DECAY_MAX)
         p_a1 = _sigmoid_range(p_params[..., 2], DAMPING_MIN, DAMPING_MAX)
         p_pluck = _sigmoid_range(p_params[..., 3], PLUCK_POSITION_MIN, PLUCK_POSITION_MAX)
         p_dyn = _sigmoid_range(p_params[..., 4], DYNAMIC_LEVEL_MIN, DYNAMIC_LEVEL_MAX)
 
-        # Extract targets for real events
         t_time = tgt_reordered["time"][real_mask]
         t_f0 = tgt_reordered["f0"][real_mask]
         t_bg = tgt_reordered["burst_gain"][real_mask]
@@ -454,33 +390,23 @@ class EventSetLoss(nn.Module):
         # Losses
         time_loss = F.l1_loss(p_time, t_time)
 
-        # f0 Loss: CrossEntropy on the bins
         t_f0_bins = self._hz_to_bin_idx(t_f0)
         f0_loss = F.nll_loss(torch.log(p_f0_probs + 1e-8), t_f0_bins)
 
-        # ── PERCEPTUAL TIMBRE LOSS (Unified RT60) ──
-        # Calculate the RT60 across 10 harmonics for predictions and targets.
-        # Notice we feed the TARGET pitch (t_f0) to both, so the loss gradient
-        # is strictly isolated to correcting the a1 and decay (g) parameters!
         p_rt60 = compute_harmonic_rt60(t_f0, p_a1, p_decay, fs=self.fs, n_harmonics=10)
         t_rt60 = compute_harmonic_rt60(t_f0, t_a1, t_decay, fs=self.fs, n_harmonics=10)
-
-        # Log-space L1 loss (because differences in short decays are perceptually
-        # more obvious than identical differences in long decays).
         rt60_loss = F.l1_loss(torch.log1p(p_rt60), torch.log1p(t_rt60))
 
-        # Physical param losses (Gain, Pluck, Dynamics)
-        gain_loss = F.l1_loss(mu_law(p_bg, self.mu), mu_law(t_bg, self.mu))
+        gain_loss = F.l1_loss(amplitude_to_db(p_bg), amplitude_to_db(t_bg))
         pluck_loss = F.l1_loss(p_pluck, t_pluck)
-        dyn_loss = F.l1_loss(p_dyn, t_dyn)
+        dyn_loss = F.l1_loss(amplitude_to_db(p_dyn), amplitude_to_db(t_dyn))
 
-        # Total Weighted Loss
         total_loss = (
                 self.w_exists * exists_loss +
                 self.w_time * time_loss +
                 self.w_f0 * f0_loss +
                 self.w_gain * gain_loss +
-                self.w_rt60 * rt60_loss +  # <-- REPLACES w_decay and w_damping
+                self.w_rt60 * rt60_loss +
                 self.w_pluck * pluck_loss +
                 self.w_dyn * dyn_loss
         )
@@ -490,10 +416,10 @@ class EventSetLoss(nn.Module):
             "exists": exists_loss.item(),
             "time": time_loss.item(),
             "f0_ce": f0_loss.item(),
-            "gain_mu": gain_loss.item(),
+            "gain_db": gain_loss.item(),
             "rt60": rt60_loss.item(),
             "pluck": pluck_loss.item(),
-            "dyn": dyn_loss.item(),
+            "dyn_db": dyn_loss.item(),
         }
 
         return total_loss, breakdown
@@ -504,7 +430,7 @@ class EventSetLoss(nn.Module):
 if __name__ == "__main__":
     from src.synths.param_registry import EVENT_PARAM_NAMES
 
-    B, num_queries = 2, 40
+    B, num_queries = 2, 10
     d_model = 64
 
     pred_raw = {
