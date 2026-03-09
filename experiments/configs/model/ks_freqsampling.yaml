@@ -1,31 +1,25 @@
 decoder: ks
 implementation: frequency_sampling
 encoder:
-  resonator_kwargs:
-    cqt_kwargs:
-      fs: ${fs}
-      f_min: 32.0
-      n_octaves: 7
-      bins_per_octave: 24
-      hop_length: 256
-      q_factor: 1.0
-    tcn_channels: 64
-    num_blocks: 6
-    kernel_size: 3
-    dilation_base: 2
-    dropout: 0.1
-    n_f0_bins: 128
-    f0_min_hz: 32.0
-    f0_max_hz: 2000.0
-    attn_heads: 4
-    attn_layers: 2
-    attn_ff_mult: 2
-  excitation_kwargs:
-    tcn_channels: 32
-    num_blocks: 4
-    kernel_size: 3
-    dilation_base: 2
-    dropout: 0.1
+  max_events: 40
+  d_model: 64
+  num_blocks: 6
+  kernel_size: 3
+  dilation_base: 2
+  dropout: 0.1
+  cross_attn_heads: 4
+  cross_attn_layers: 2
+  n_f0_bins: 128
+  f0_min_hz: 32.0
+  f0_max_hz: 2000.0
+  cqt_kwargs:
+    fs: ${fs}
+    f_min: 32.0
+    n_octaves: 7
+    bins_per_octave: 24
+    hop_length: 256
+    q_factor: 1.0
+  frontend_kwargs: {}
 synth:
   lagrange_order: 5
   n_fft: 2048

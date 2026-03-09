@@ -39,35 +39,25 @@ def no_dc_burst(burst_length: int, seed: int=RND_SEED) -> npt.NDArray:
 @njit
 def noise_burst_excitation(
         num_samples: int,
-        burst_gain: npt.NDArray,  # [num_frames]
-        f0: npt.NDArray,  # [num_frames] frame-rate f0
+        burst_gain: npt.NDArray,  # [num_samples]
+        f0: npt.NDArray,  # [num_samples]
         fs: int,
         seed: int = RND_SEED
 ) -> npt.NDArray:
-    """
-    Create excitation with noise bursts where burst_gain > 0.
-
-    :param num_samples: Total length of output signal in samples
-    :param burst_gain: [num_frames] Zero = no onset, positive = onset with that gain
-    :param f0: [num_frames] Fundamental frequencies in Hz at frame-rate
-    :param fs: Sample rate in Hz
-    :param seed: Random seed
-    :return: Excitation signal [num_samples] with scaled noise bursts
-    """
     excitation = np.zeros(num_samples)
-    num_frames = len(f0)
-    hop_length = num_samples / num_frames
 
-    for frame_idx in range(num_frames):
-        if burst_gain[frame_idx] == 0:
+    assert burst_gain.shape == f0.shape
+    assert burst_gain.shape[0] == num_samples
+
+    for n in range(num_samples):
+        if burst_gain[n] <= 0:
             continue
 
-        trigger_sample = int(frame_idx * hop_length)
-        f0_at_trigger = f0[frame_idx]
+        f0_at_trigger = f0[n]
         burst_length = int(fs / f0_at_trigger)
-        end_sample = min(trigger_sample + burst_length, num_samples)
-        burst_length = end_sample - trigger_sample
-        excitation[trigger_sample:end_sample] = burst_gain[frame_idx] * no_dc_burst(burst_length, seed=seed)
+        end_sample = min(n + burst_length, num_samples)
+        actual_length = end_sample - n
+        excitation[n:end_sample] += burst_gain[n] * no_dc_burst(burst_length, seed=seed)[:actual_length]
 
     return excitation
 
@@ -366,32 +356,17 @@ def compute_ksa_rt60(
     return -60 / (20 * np.log10(pole_r)) / fs
 
 def oracle_physical_model(
-        f0: npt.NDArray,                # [num_frames]
-        pluck_position: npt.NDArray,    # [num_frames]
-        burst_gain: npt.NDArray,        # [num_frames]
-        dynamic_level: npt.NDArray,     # [num_frames]
-        a1: npt.NDArray,                # [num_frames]
-        decay: npt.NDArray,             # [num_frames]
+        f0: npt.NDArray,                # [num_samples]
+        pluck_position: npt.NDArray,    # [num_samples]
+        burst_gain: npt.NDArray,        # [num_samples]
+        dynamic_level: npt.NDArray,     # [num_samples]
+        a1: npt.NDArray,                # [num_samples]
+        decay: npt.NDArray,             # [num_samples]
         num_samples: int,
         fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER,
         random_seed: int = RND_SEED,
 ) -> npt.NDArray:
-    """
-    Oracle physical model with frame-rate parameter inputs.
-
-    :param f0: [num_frames] Fundamental frequency in Hz
-    :param pluck_position: [num_frames] Pluck position [0, 1]
-    :param burst_gain: [num_frames] Zero = no onset, positive = onset with that gain
-    :param dynamic_level: [num_frames] Dynamic level [0, 1]
-    :param a1: [num_frames] Filter coefficient [0, 1]
-    :param decay: [num_frames] Decay coefficient [0, 1]
-    :param num_samples: Total signal length in samples
-    :param fs: Sample rate in Hz
-    :param lagrange_order: Order of Lagrange interpolator
-    :param random_seed: Random seed for noise generation
-    :return: Synthesized audio [num_samples]
-    """
     x = noise_burst_excitation(
         num_samples=num_samples,
         burst_gain=burst_gain,
@@ -400,39 +375,59 @@ def oracle_physical_model(
         seed=random_seed
     )
 
-    # Upsample all parameters to sample-rate
-    p = upsample_frames_to_samples(
-        signal_length=num_samples,
-        f0=f0,
-        pluck_position=pluck_position,
-        dynamic_level=dynamic_level,
-        a1=a1,
-        decay=decay
-    )
-
-    x = pluck_position_filter(
-        x=x,
-        f0=p['f0'],
-        position=p['pluck_position'],
-        fs=fs,
-    )
-
-    x = dynamics_filter(
-        x=x,
-        f0=p['f0'],
-        dynamic_level=p['dynamic_level'],
-        fs=fs
-    )
+    x = pluck_position_filter(x=x, f0=f0, position=pluck_position, fs=fs)
+    x = dynamics_filter(x=x, f0=f0, dynamic_level=dynamic_level, fs=fs)
 
     return karplus_strong(
-        x=x,
-        f0=p['f0'],
-        a1=p['a1'],
-        g=p['decay'],
-        fs=fs,
-        lagrange_order=lagrange_order
+        x=x, f0=f0, a1=a1, g=decay,
+        fs=fs, lagrange_order=lagrange_order
     )
 
+
+def events_to_samples_np(
+        events: dict[str, npt.NDArray],
+        num_samples: int,
+        exist_threshold: float = 0.5
+) -> dict[str, npt.NDArray]:
+    """
+    Numpy version of the sparse-to-dense expansion for Dataset generation.
+    events should contain 1D arrays of length max_events.
+    """
+    param_names = ["f0", "burst_gain", "decay", "a1", "pluck_position", "dynamic_level"]
+    dense = {k: np.zeros(num_samples) for k in param_names}
+
+    valid_mask = events["exists"] > exist_threshold
+
+    if not np.any(valid_mask):
+        dense["f0"][:] = 440.0
+        dense["decay"][:] = 0.99
+        dense["a1"][:] = 0.5
+        return dense
+
+    valid_times = events["time"][valid_mask]
+    sorted_idx = np.argsort(valid_times)
+
+    # Sort all valid parameters by time
+    v_time = valid_times[sorted_idx]
+    v_params = {k: events[k][valid_mask][sorted_idx] for k in param_names}
+
+    num_valid = len(v_time)
+    for i in range(num_valid):
+        start_sample = int(v_time[i] * num_samples)
+        start_sample = max(0, min(start_sample, num_samples - 1))
+
+        end_sample = num_samples
+        if i < num_valid - 1:
+            end_sample = int(v_time[i + 1] * num_samples)
+            end_sample = max(start_sample, min(end_sample, num_samples))
+
+        for k in param_names:
+            if k == "burst_gain":
+                dense[k][start_sample] = v_params[k][i]  # Impulse
+            else:
+                dense[k][start_sample:end_sample] = v_params[k][i]  # Step function
+
+    return dense
 
 if __name__ == "__main__":
     duration = 1.0
@@ -450,7 +445,7 @@ if __name__ == "__main__":
 
     sweeps = {
         'f0': (55.0, 3520.0),
-        'pluck_position': (0.0, 1.0),
+        'pluck_position': (0.01, 0.5),
         'burst_gain': (0.0, 1.0),
         'dynamic_level': (0.0, 1.0),
         'a1': (0.0, 1.0),
@@ -480,10 +475,12 @@ if __name__ == "__main__":
             if param_name == 'burst_gain':
                 params['burst_gain'][[0, 25, 50, 75]] = np.linspace(min_val + 0.01, max_val, 4)
 
+            sample_params = upsample_frames_to_samples(signal_length, **params)
+
             y = oracle_physical_model(
                 num_samples=signal_length,
                 fs=fs,
-                **params
+                **sample_params
             )
 
             if np.isnan(y).any() or np.isinf(y).any():
@@ -500,10 +497,12 @@ if __name__ == "__main__":
 
         start = time.time()
 
+        sample_params = upsample_frames_to_samples(signal_length, **params)
+
         y = oracle_physical_model(
             num_samples=signal_length,
             fs=fs,
-            **params
+            **sample_params
         )
 
         elapsed = time.time() - start

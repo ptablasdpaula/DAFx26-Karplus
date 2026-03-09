@@ -1,8 +1,9 @@
 objective: spectral_only
+param_only_epochs: 0
+fadein_epochs: 0
 w_param: 0.0
 w_mss: 1.0
 w_sot: 1.0
-param_only_epochs: 0
-fadein_epochs: 0
 
-param_weights: {}
+# REPLACED param_weights WITH event_loss_weights
+event_loss_weights: {}

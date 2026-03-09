@@ -1,14 +1,16 @@
 objective: combined
-param_only_epochs: 50
-fadein_epochs: 50
+param_only_epochs: 15
+fadein_epochs: 15
 w_param: 1.0
 w_mss: 1.0
 w_sot: 1.0
 
-param_weights:
-  f0: 2.0
-  burst_gain: 5.0
-  pluck_position: 1.0
-  dynamic_level: 1.0
-  a1: 1.0
-  decay: 1.0
+event_loss_weights:
+  w_exists: 100.0
+  w_time: 10.0
+  w_f0: 2.0
+  w_gain: 1.0
+  w_rt60: 1.0       # Replaces w_decay and w_damping
+  w_pluck: 0.5
+  w_dyn: 0.5
+  fs: ${fs}         # Passes 16000 dynamically from your main config

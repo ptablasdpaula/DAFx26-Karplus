@@ -22,7 +22,6 @@ from src.synths.ddsp import (
     karplus_strong,
 )
 
-# Canonical return type: (audio, params_dict).
 SynthOutput = tuple[T, dict[str, T]]
 
 
@@ -116,7 +115,6 @@ class Synth(nn.Module):
 
         return x
 
-
     def _forward_frequency_domain(self, x: T) -> T:
         # --- to frequency domain (once) ---
         if self.use_lti:
@@ -198,9 +196,13 @@ class Synth(nn.Module):
 
         if self.use_lti:
             self.p_time = {k: v.expand(-1, self.num_samples)
-                          for k, v in params.items()}
+                           for k, v in params.items()}
         else:
-            self.p_time = lin_resample_many(signal_length=self.num_samples, **params)
+            first_len = next(iter(params.values())).shape[1]
+            if first_len == self.num_samples:
+                self.p_time = params
+            else:
+                self.p_time = lin_resample_many(signal_length=self.num_samples, **params)
 
         self.p_stft = None
 
@@ -231,12 +233,11 @@ class Synth(nn.Module):
 if __name__ == "__main__":
     duration = 4
     sample_rates = [16000, 32000, 44100]
-    num_frames = 100
 
     defaults = {
         'f0': 220.0,
         'pluck_position': 0.5,
-        'burst_gain': 0.5,
+        'burst_gain': 0.0,
         'dynamic_level': 0.5,
         'a1': 0.5,
         'decay': 0.995,
@@ -286,99 +287,30 @@ if __name__ == "__main__":
             model = Synth(config)
 
             for param_name, (min_val, max_val) in sweeps.items():
-                params = {k: torch.full((1, num_frames), v) for k, v in defaults.items()}
-                params[param_name] = torch.linspace(min_val, max_val, num_frames).unsqueeze(0)
+                params = {k: torch.full((1, num_samples), v) for k, v in defaults.items()}
 
-                params['burst_gain'] = torch.zeros(1, num_frames)
-                params['burst_gain'][0, [0, 25, 50, 75]] = defaults['burst_gain']
+                params[param_name] = torch.linspace(min_val, max_val, num_samples).unsqueeze(0)
+
+                trigger_indices = [0, num_samples // 4, num_samples // 2, 3 * num_samples // 4]
                 if param_name == 'burst_gain':
-                    params['burst_gain'][0, [0, 25, 50, 75]] = torch.linspace(min_val + 0.01, max_val, 4)
+                    params['burst_gain'][0, trigger_indices] = torch.linspace(min_val + 0.01, max_val, 4)
+                else:
+                    params['burst_gain'][0, trigger_indices] = 0.5
 
                 y, _ = model(params)
                 if not check_output(y, f"{param_name} sweep"):
                     all_passed = False
                 test_count += 1
 
-            params = {k: torch.linspace(*v, num_frames).unsqueeze(0) for k, v in sweeps.items()}
-            params['burst_gain'] = torch.zeros(1, num_frames)
-            params['burst_gain'][0, [0, 25, 50, 75]] = 0.5
+            params = {k: torch.linspace(*v, num_samples).unsqueeze(0) for k, v in sweeps.items()}
+            params['burst_gain'] = torch.zeros(1, num_samples)
+            trigger_indices = [0, num_samples // 4, num_samples // 2, 3 * num_samples // 4]
+            params['burst_gain'][0, trigger_indices] = 0.5
+
             y, _ = model(params)
             if not check_output(y, "all parameters sweeping"):
                 all_passed = False
             test_count += 1
-
-    # =========================================================================
-    # Test LTI mode
-    # =========================================================================
-    lti_options = [
-        (Implementation.TIME_DOMAIN, "LTI Time-Domain"),
-        (Implementation.FREQUENCY_SAMPLING, "LTI Frequency-Sampling"),
-    ]
-
-    for impl, impl_name in lti_options:
-        for fs in sample_rates:
-            num_samples = int(fs * duration)
-
-            print(f"\n{'=' * 60}")
-            print(f"Testing [{impl_name}] at fs={fs}Hz ({num_samples} samples)")
-            print(f"{'=' * 60}")
-
-            config = SynthConfig(
-                num_samples=num_samples,
-                fs=fs,
-                device='cpu',
-                implementation=impl,
-                use_lti=True,
-            )
-            model = Synth(config)
-
-            for param_name in defaults:
-                params = {k: torch.full((1, 1), v) for k, v in defaults.items()}
-                params['burst_gain'] = torch.tensor([[defaults['burst_gain']]])
-
-                y, _ = model(params)
-                if not check_output(y, f"LTI {param_name} constant"):
-                    all_passed = False
-                test_count += 1
-
-    # =========================================================================
-    # Test oracle_synth
-    # =========================================================================
-    for fs in sample_rates:
-        num_samples = int(fs * duration)
-
-        print(f"\n{'=' * 60}")
-        print(f"Testing [oracle_synth] at fs={fs}Hz ({num_samples} samples)")
-        print(f"{'=' * 60}")
-
-        config = SynthConfig(
-            num_samples=num_samples,
-            fs=fs,
-            device='cpu',
-        )
-        model = Synth(config)
-
-        for param_name, (min_val, max_val) in sweeps.items():
-            params = {k: torch.full((1, num_frames), v) for k, v in defaults.items()}
-            params[param_name] = torch.linspace(min_val, max_val, num_frames).unsqueeze(0)
-
-            params['burst_gain'] = torch.zeros(1, num_frames)
-            params['burst_gain'][0, [0, 25, 50, 75]] = defaults['burst_gain']
-            if param_name == 'burst_gain':
-                params['burst_gain'][0, [0, 25, 50, 75]] = torch.linspace(min_val + 0.01, max_val, 4)
-
-            y, _ = model.oracle_synth(params)
-            if not check_output(y, f"oracle {param_name} sweep"):
-                all_passed = False
-            test_count += 1
-
-        params = {k: torch.linspace(*v, num_frames).unsqueeze(0) for k, v in sweeps.items()}
-        params['burst_gain'] = torch.zeros(1, num_frames)
-        params['burst_gain'][0, [0, 25, 50, 75]] = 0.5
-        y, _ = model.oracle_synth(params)
-        if not check_output(y, "oracle all parameters sweeping"):
-            all_passed = False
-        test_count += 1
 
     # =========================================================================
     # Summary

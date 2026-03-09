@@ -41,13 +41,11 @@ class SoundMatchingDataModule(pl.LightningDataModule):
         hp = self.hparams
         syn_cfg = hp.synthetic_cfg or {}
 
-        # ── NSynth (create first so we know its size) ────────────────────
+        # ── NSynth ───────────────────────────────────────────────────────
         if hp.has_ood:
             from src.data.nsynth.nsynth_guitar_dataset import NsynthGuitarDataset
 
-            assert hp.nsynth_root is not None, (
-                "has_ood=True but nsynth_root not set."
-            )
+            assert hp.nsynth_root is not None, "has_ood=True but nsynth_root not set."
             self.train_nsynth = NsynthGuitarDataset(
                 nsynth_root=hp.nsynth_root,
                 split=hp.nsynth_split_train,
@@ -65,12 +63,9 @@ class SoundMatchingDataModule(pl.LightningDataModule):
 
         # ── Synthetic ────────────────────────────────────────────────────
         if hp.has_synthetic:
-            # When training alongside nsynth, match synthetic epoch size
-            # to the nsynth training set so both streams see equal data
             if hp.has_ood:
                 num_synth_per_epoch = len(self.train_nsynth)
-                print(f"Matching synthetic samples per epoch to NSynth "
-                      f"training set size: {num_synth_per_epoch}")
+                print(f"Matching synthetic epoch size to NSynth: {num_synth_per_epoch}")
             else:
                 num_synth_per_epoch = syn_cfg.get("num_samples_per_epoch", 4096)
 
@@ -79,18 +74,18 @@ class SoundMatchingDataModule(pl.LightningDataModule):
                 num_audio_samples=hp.num_audio_samples,
                 num_frames=hp.num_frames,
                 fs=hp.fs,
-                lti=syn_cfg.get("lti", False),
-                blend_lti=syn_cfg.get("blend_lti", True),
                 random_seed=syn_cfg.get("random_seed", 42),
+                max_events_per_sample=syn_cfg.get("max_events_per_sample", 10),
+                min_events_per_sample=syn_cfg.get("min_events_per_sample", 1),
             )
             self.val_synthetic = SyntheticDataset(
                 num_samples_per_epoch=hp.val_synthetic_size,
                 num_audio_samples=hp.num_audio_samples,
                 num_frames=hp.num_frames,
                 fs=hp.fs,
-                lti=syn_cfg.get("lti", False),
-                blend_lti=syn_cfg.get("blend_lti", True),
                 random_seed=hp.val_synthetic_seed,
+                max_events_per_sample=syn_cfg.get("max_events_per_sample", 10),
+                min_events_per_sample=syn_cfg.get("min_events_per_sample", 1),
             )
 
     def set_train_epoch(self, epoch: int) -> None:

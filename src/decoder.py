@@ -72,106 +72,163 @@ class STEReLU(torch.autograd.Function):
 # ═════════════════════════════════════════════════════════════════════════════
 
 class KSDecoder(Decoder):
-    """KS decoder for the dual-pipeline (CQT + LearnableFrontend) encoder.
+    """KS decoder for the DETR-style Event Encoder.
 
-    Expected input layout (from ``KSEncoder``)::
+    Expected input layout (from ``KSEventEncoder``)::
 
         raw = {
-            "resonator":  [B, 3, T]
-                ch 0 → f0 in Hz      ** pre-activated by soft-argmax **
-                ch 1 → decay         (raw logit)
-                ch 2 → a1 / damping  (raw logit)
-            "excitation": [B, 3, T]
-                ch 0 → burst_gain        (raw logit)
-                ch 1 → dynamic_level     (raw logit)
-                ch 2 → pluck_position    (raw logit)
-            "f0_probs":   [B, T, n_f0_bins]   (for optional loss)
+            "exists":   [B, max_events, 1]  (raw logits)
+            "time":     [B, max_events, 1]  (raw logits)
+            "f0_hz":    [B, max_events, 1]  (pre-activated by soft-argmax)
+            "params":   [B, max_events, 5]  (raw logits for physical params)
         }
-
-    f0 arrives already in Hz from the encoder's soft-argmax, so
-    ``activate()`` uses it directly (clamped to synth range).
 
     Args:
         synth:                  The KS ``Synth`` instance.
-        use_external_detectors: If True, ``detected["onsets"]`` gates
-                                burst_gain and ``detected["f0"]``
-                                overrides the soft-argmax f0.
+        num_samples:            The dense sample resolution to expand to (e.g., 64000).
+        exist_threshold:        Probability threshold to render an event.
+        use_external_detectors: If True, overrides predicted exists/f0 with external signals.
     """
 
-    _RES_IDX = {"f0": 0, "decay": 1, "a1": 2}
-    _EXC_IDX = {"burst_gain": 0, "dynamic_level": 1, "pluck_position": 2}
+    _PARAM_IDX = {"burst_gain": 0, "decay": 1, "a1": 2, "pluck_position": 3, "dynamic_level": 4}
 
     def __init__(
-        self,
-        synth: Synth,
-        use_external_detectors: bool = False,
+            self,
+            synth: Synth,
+            num_samples: int = 64000,
+            exist_threshold: float = 0.5,
+            use_external_detectors: bool = False,
     ):
         super().__init__()
         self.synth = synth
+        self.num_samples = num_samples
+        self.exist_threshold = exist_threshold
         self.use_external_detectors = use_external_detectors
 
         self.param_names = KS_PARAM_NAMES
         self.num_params = len(self.param_names)
 
     def activate(
-        self,
-        raw: dict[str, Tensor],
-        detected: dict[str, Tensor] | None = None,
+            self,
+            raw: dict[str, Tensor],
+            detected: dict[str, Tensor] | None = None,
     ) -> dict[str, Tensor]:
-        detected = detected or {}
-        ext = self.use_external_detectors
-        res = raw["resonator"]
-        exc = raw["excitation"]
+        """
+        Takes raw event logits, applies sigmoid boundaries, maps external detectors,
+        and expands them into dense sample arrays for the synthesizer.
+        """
+        B, max_events, _ = raw["exists"].shape
+        pi = self._PARAM_IDX
 
-        ri, ei = self._RES_IDX, self._EXC_IDX
+        # ── 1. Standard Activations ──────────────────────────────────────────
+        exists_prob = torch.sigmoid(raw["exists"]).squeeze(-1)
+        time_val = torch.sigmoid(raw["time"]).squeeze(-1)
+        f0_val = raw["f0_hz"].squeeze(-1).clamp(F0_MIN_HZ, F0_MAX_HZ)
 
-        # ── f0 (pre-activated in Hz by soft-argmax) ─────────────────────
-        det_f0 = detected.get("f0")
-        if ext and det_f0 is not None:
-            f0 = det_f0
-        else:
-            f0 = res[:, ri["f0"], :].clamp(F0_MIN_HZ, F0_MAX_HZ)
+        # ── 2. External Detector Overrides ──────────────────────────────────
+        if self.use_external_detectors and detected is not None:
+            det_onsets = detected.get("onsets")  # Expected: [B, num_frames]
+            det_f0 = detected.get("f0")  # Expected: [B, num_frames]
 
-        # ── decay, a1 (raw logits → sigmoid_range) ─────────────────────
-        decay = _sigmoid_range(res[:, ri["decay"], :],
-                               DECAY_MIN, DECAY_MAX)
-        a1 = _sigmoid_range(res[:, ri["a1"], :],
-                            DAMPING_MIN, DAMPING_MAX)
+            if det_onsets is not None and det_f0 is not None:
+                num_frames = det_f0.shape[1]
 
-        # ── Excitation params ───────────────────────────────────────────
-        det_onsets = detected.get("onsets")
-        if ext and det_onsets is not None:
-            burst_gain = (
-                BURST_GAIN_MAX
-                * torch.sigmoid(exc[:, ei["burst_gain"], :])
-                * det_onsets
-            )
-        else:
-            burst_gain = STEReLU.apply(exc[:, ei["burst_gain"], :])
+                # Convert continuous predicted time [0, 1] to a frame index [0, 249]
+                frame_indices = (time_val * num_frames).long().clamp(0, num_frames - 1)
 
-        dynamic_level = _sigmoid_range(
-            exc[:, ei["dynamic_level"], :],
-            DYNAMIC_LEVEL_MIN + 1e-3, DYNAMIC_LEVEL_MAX,
-        )
-        pluck_position = _sigmoid_range(
-            exc[:, ei["pluck_position"], :],
-            PLUCK_POSITION_MIN, PLUCK_POSITION_MAX,
-        ).clamp(min=PLUCK_POSITION_MIN, max=PLUCK_POSITION_MAX)
+                # Gather the external detector values exactly where the queries are looking
+                det_onsets_gathered = torch.gather(det_onsets, 1, frame_indices)
+                det_f0_gathered = torch.gather(det_f0, 1, frame_indices)
 
-        return {
-            "f0":             f0,
-            "burst_gain":     burst_gain,
-            "pluck_position": pluck_position,
-            "dynamic_level":  dynamic_level,
-            "a1":             a1,
-            "decay":          decay,
+                # Substitute existence and f0
+                exists_prob = det_onsets_gathered
+                f0_val = det_f0_gathered.clamp(F0_MIN_HZ, F0_MAX_HZ)
+
+        # ── 3. Package Events ───────────────────────────────────────────────
+        events = {
+            "exists": exists_prob,
+            "time": time_val,
+            "f0": f0_val,
+
+            # Physical parameters (apply boundaries)
+            "burst_gain": _sigmoid_range(raw["params"][..., pi["burst_gain"]], 0.0, BURST_GAIN_MAX),
+            "decay": _sigmoid_range(raw["params"][..., pi["decay"]], DECAY_MIN, DECAY_MAX),
+            "a1": _sigmoid_range(raw["params"][..., pi["a1"]], DAMPING_MIN, DAMPING_MAX),
+            "pluck_position": _sigmoid_range(raw["params"][..., pi["pluck_position"]], PLUCK_POSITION_MIN,
+                                             PLUCK_POSITION_MAX),
+            "dynamic_level": _sigmoid_range(raw["params"][..., pi["dynamic_level"]], DYNAMIC_LEVEL_MIN,
+                                            DYNAMIC_LEVEL_MAX),
         }
 
-    def synthesise(self, params: dict[str, Tensor]) -> SynthOutput:
+        # ── 4. Expand Sparse Events to Dense Samples ────────────────────────
+        dense_params = self._events_to_samples(events, B, self.num_samples)
+
+        return dense_params
+
+    def _events_to_samples(self, events: dict[str, Tensor], B: int, num_samples: int) -> dict[str, Tensor]:
+        device = events["exists"].device
+
+        # INITIALIZE TO SAFE PHYSICAL DEFAULTS (NOT ZEROS!)
+        dense = {
+            "f0": torch.full((B, num_samples), 440.0, device=device),
+            "burst_gain": torch.zeros((B, num_samples), device=device),  # Gain stays 0
+            "decay": torch.full((B, num_samples), DECAY_MIN, device=device),
+            "a1": torch.full((B, num_samples), 0.5, device=device),
+            "pluck_position": torch.full((B, num_samples), 0.5, device=device),
+            "dynamic_level": torch.full((B, num_samples), 0.5, device=device),
+        }
+
+        for b in range(B):
+            # 1. Lower the threshold to almost zero so the spectral loss can "hear" the guesses
+            valid_mask = events["exists"][b] > 0.01
+            if not valid_mask.any():
+                continue
+
+            valid_times = events["time"][b, valid_mask]
+            sorted_idx = torch.argsort(valid_times)
+
+            v_time = valid_times[sorted_idx]
+            v_f0 = events["f0"][b, valid_mask][sorted_idx]
+
+            # Extract raw burst_gain AND the exists probability
+            v_bg_raw = events["burst_gain"][b, valid_mask][sorted_idx]
+            v_exists = events["exists"][b, valid_mask][sorted_idx]
+
+            # 2. THE SOFT GATE: Scale the physical gain by the network's confidence!
+            v_bg = v_bg_raw * v_exists
+
+            v_decay = events["decay"][b, valid_mask][sorted_idx]
+            v_a1 = events["a1"][b, valid_mask][sorted_idx]
+            v_pluck = events["pluck_position"][b, valid_mask][sorted_idx]
+            v_dyn = events["dynamic_level"][b, valid_mask][sorted_idx]
+
+            for i in range(len(v_time)):
+                start_sample = int(v_time[i].item() * num_samples)
+                start_sample = max(0, min(start_sample, num_samples - 1))
+
+                end_sample = num_samples
+                if i < len(v_time) - 1:
+                    end_sample = int(v_time[i + 1].item() * num_samples)
+                    end_sample = max(start_sample, min(end_sample, num_samples))
+
+                fill_start = 0 if i == 0 else start_sample
+
+                dense["f0"][b, fill_start:end_sample] = v_f0[i]
+                dense["decay"][b, fill_start:end_sample] = v_decay[i]
+                dense["a1"][b, fill_start:end_sample] = v_a1[i]
+                dense["pluck_position"][b, fill_start:end_sample] = v_pluck[i]
+                dense["dynamic_level"][b, fill_start:end_sample] = v_dyn[i]
+
+                # 3. Apply the Soft-Gated impulse!
+                dense["burst_gain"][b, start_sample] = v_bg[i]
+
+        return dense
+
+    def synthesise(self, params: dict[str, torch.Tensor]) -> SynthOutput:
         return self.synth(params)
 
     @torch.no_grad()
-    def oracle_synth(self, params: dict[str, Tensor]) -> SynthOutput:
+    def oracle_synth(self, params: dict[str, torch.Tensor]) -> SynthOutput:
         return self.synth.oracle_synth(params)
 
 
