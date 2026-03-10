@@ -5,13 +5,12 @@ w_param: 1.0
 w_mss: 0.0
 w_sot: 0.0
 
-# REPLACED param_weights WITH event_loss_weights
 event_loss_weights:
-  w_exists: 2.0
-  w_time: 5.0
+  w_exists: 100.0
+  w_time: 10.0
   w_f0: 2.0
   w_gain: 1.0
-  w_decay: 0.5
-  w_damping: 0.5
+  w_dyn: 1.0
+  w_rt60: 1.0
   w_pluck: 0.5
-  w_dyn: 0.5
+  fs: ${fs}

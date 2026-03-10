@@ -5,5 +5,4 @@ w_param: 0.0
 w_mss: 1.0
 w_sot: 1.0
 
-# REPLACED param_weights WITH event_loss_weights
 event_loss_weights: {}
