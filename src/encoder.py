@@ -218,18 +218,24 @@ class DETRDecoderLayer(nn.Module):
         self.norm3 = nn.LayerNorm(d_model)
 
     def forward(self, queries: torch.Tensor, memory: torch.Tensor) -> torch.Tensor:
-        """
-        queries: [B, max_events, d_model]
-        memory:  [B, T_frames, d_model]
-        """
-        q2, _ = self.self_attn(query=queries, key=queries, value=queries)
-        queries = self.norm1(queries + q2)
+            """
+            queries: [B, max_events, d_model]
+            memory:  [B, T_frames, d_model]
+            """
+            # Pre-LN Self-Attention
+            q_norm1 = self.norm1(queries)
+            q2, _ = self.self_attn(query=q_norm1, key=q_norm1, value=q_norm1)
+            queries = queries + q2
 
-        q2, _ = self.cross_attn(query=queries, key=memory, value=memory)
-        queries = self.norm2(queries + q2)
+            # Pre-LN Cross-Attention
+            q_norm2 = self.norm2(queries)
+            q2, _ = self.cross_attn(query=q_norm2, key=memory, value=memory)
+            queries = queries + q2
 
-        queries = self.norm3(queries + self.ffn(queries))
-        return queries
+            # Pre-LN FFN
+            q_norm3 = self.norm3(queries)
+            queries = queries + self.ffn(q_norm3)
+            return queries
 
 class KSEventEncoder(nn.Module):
     """Unified DETR-style Encoder for Karplus-Strong Event Packets.
@@ -268,7 +274,11 @@ class KSEventEncoder(nn.Module):
                               causal=False)
 
         self.pos_encoder = PositionalEncoding1D(d_model)
-        self.query_embed = nn.Parameter(torch.randn(1, max_events, d_model))
+        self.memory_norm = nn.LayerNorm(d_model)
+
+        self.query_embed = nn.Parameter(
+            torch.randn(1, max_events, d_model) / math.sqrt(d_model)
+        )
 
         self.decoder_blocks = nn.ModuleList([
             DETRDecoderLayer(d_model, cross_attn_heads, ff_mult=2, dropout=dropout)
@@ -276,10 +286,13 @@ class KSEventEncoder(nn.Module):
         ])
 
         # FOCAL LOSS
-        prior_prob = 0.4
+        prior_prob = 0.55
         bias_value = -math.log((1.0 - prior_prob) / prior_prob)
         self.head_exists = nn.Linear(d_model, 1)
         self.head_exists.bias.data.fill_(bias_value)
+        
+        # ── FIXED: Zero the weights so the bias actually works at Epoch 0! ──
+        nn.init.constant_(self.head_exists.weight, 0.0)
 
         self.head_time = nn.Linear(d_model, 1)
         self.head_f0 = nn.Linear(d_model, n_f0_bins)
@@ -307,6 +320,7 @@ class KSEventEncoder(nn.Module):
 
         memory = x.permute(0, 2, 1)  # [B, T, d_model]
         memory = self.pos_encoder(memory)
+        memory = self.memory_norm(memory)
 
         queries = self.query_embed.expand(B, -1, -1)  # [B, max_events, d_model]
 
