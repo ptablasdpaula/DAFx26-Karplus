@@ -106,7 +106,6 @@ class SoundMatchingExperiment(pl.LightningModule):
             
             info["param"] = p_total.detach()
             info["param_breakdown"] = p_breakdown
-            info["param_multiplier"] = torch.tensor(param_multiplier, device=device)
 
         return total, info
 
