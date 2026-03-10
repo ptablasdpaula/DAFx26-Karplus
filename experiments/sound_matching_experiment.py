@@ -35,6 +35,7 @@ class SoundMatchingExperiment(pl.LightningModule):
             w_mss: float = 1.0,
             w_sot: float = 1.0,
             w_param: float = 1.0,
+            min_param_ratio: float = 0.5,
             event_loss_weights: dict[str, float] | None = None,
             eval_synthetic_metrics: bool = True,
             eval_ood_metrics: bool = True,
@@ -96,10 +97,16 @@ class SoundMatchingExperiment(pl.LightningModule):
             info["sot"] = sot_loss.detach()
 
         if is_synthetic and self.hparams.objective != "spectral_only":
+            max_drop = 1.0 - self.hparams.min_param_ratio
+            param_multiplier = 1.0 - (sw * max_drop) 
+            
             p_total, p_breakdown = self.event_loss(pred_raw, target_params)
-            total = total + self.hparams.w_param * p_total
+            
+            total = total + (self.hparams.w_param * param_multiplier) * p_total
+            
             info["param"] = p_total.detach()
             info["param_breakdown"] = p_breakdown
+            info["param_multiplier"] = torch.tensor(param_multiplier, device=device)
 
         return total, info
 
@@ -151,7 +158,12 @@ class SoundMatchingExperiment(pl.LightningModule):
     # ── Training ─────────────────────────────────────────────────────────
 
     def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
-        self.log("train/spectral_weight", self.spectral_weight)
+        sw = self.spectral_weight
+        self.log("train/spectral_weight", sw)
+        
+        # Log the dynamic multiplier
+        max_drop = 1.0 - self.hparams.min_param_ratio
+        self.log("train/param_multiplier", 1.0 - (sw * max_drop))
 
         if isinstance(batch, dict) and "audio" not in batch:
             total = torch.tensor(0.0, device=self.device)
@@ -241,9 +253,9 @@ class SoundMatchingExperiment(pl.LightningModule):
 
     # ── Optimiser ────────────────────────────────────────────────────────
 
-def configure_optimizers(self):
-        return torch.optim.AdamW(
-            self.model.parameters(), 
-            lr=self.hparams.lr, 
-            weight_decay=1e-4
-        )
+    def configure_optimizers(self):
+            return torch.optim.AdamW(
+                self.model.parameters(), 
+                lr=self.hparams.lr, 
+                weight_decay=1e-4
+            )

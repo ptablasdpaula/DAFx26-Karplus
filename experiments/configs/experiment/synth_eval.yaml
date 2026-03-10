@@ -1,10 +1,10 @@
 eval_synthetic_metrics: true
 eval_ood_metrics: false
 max_epochs: 10000
-patience: 10
+patience: 50
 gradient_clip_val: 1.0
-batch_size: 8
+batch_size: 16
 num_workers: 4
-val_check_interval: 1.0   # validate every epoch
+val_check_interval: 1.0
 log_val_audio: true
 num_val_audio_examples: 4

@@ -10,7 +10,7 @@ hydra:
   run:
     dir: experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
-lr: 1e-3
+lr: 1e-4
 seed: 42
 fs: 16000
 num_audio_samples: 64000
