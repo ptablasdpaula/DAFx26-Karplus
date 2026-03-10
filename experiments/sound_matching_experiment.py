@@ -241,5 +241,9 @@ class SoundMatchingExperiment(pl.LightningModule):
 
     # ── Optimiser ────────────────────────────────────────────────────────
 
-    def configure_optimizers(self):
-        return torch.optim.Adam(self.model.parameters(), lr=self.hparams.lr)
+def configure_optimizers(self):
+        return torch.optim.AdamW(
+            self.model.parameters(), 
+            lr=self.hparams.lr, 
+            weight_decay=1e-4
+        )
