@@ -3,7 +3,7 @@ implementation: time_domain
 encoder:
   max_events: 10
   d_model: 64
-  num_blocks: 6
+  num_blocks: 7
   kernel_size: 3
   dilation_base: 2
   dropout: 0.1
