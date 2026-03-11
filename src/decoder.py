@@ -145,12 +145,10 @@ class KSDecoder(Decoder):
                 f0_val = det_f0_gathered.clamp(F0_MIN_HZ, F0_MAX_HZ)
 
         # ── 3. Package Events ───────────────────────────────────────────────
-        events = {
+        return {
             "exists": exists_prob,
             "time": time_val,
             "f0": f0_val,
-
-            # Physical parameters (apply boundaries)
             "burst_gain": _sigmoid_range(raw["params"][..., pi["burst_gain"]], 0.0, BURST_GAIN_MAX),
             "decay": _sigmoid_range(raw["params"][..., pi["decay"]], DECAY_MIN, DECAY_MAX),
             "a1": _sigmoid_range(raw["params"][..., pi["a1"]], DAMPING_MIN, DAMPING_MAX),
@@ -159,11 +157,6 @@ class KSDecoder(Decoder):
             "dynamic_level": _sigmoid_range(raw["params"][..., pi["dynamic_level"]], DYNAMIC_LEVEL_MIN,
                                             DYNAMIC_LEVEL_MAX),
         }
-
-        # ── 4. Expand Sparse Events to Dense Samples ────────────────────────
-        dense_params = self._events_to_samples(events, B, self.num_samples)
-
-        return dense_params
 
     def _events_to_samples(self, events: dict[str, Tensor], B: int, num_samples: int) -> dict[str, Tensor]:
         device = events["exists"].device
@@ -255,24 +248,37 @@ class HarmonicsNoiseDecoder(Decoder):
                             "noise_magnitudes", "f0")
 
     def activate(
-        self,
-        raw: Tensor,
-        detected: dict[str, Tensor] | None = None,
+            self,
+            raw: dict[str, Tensor],
+            detected: dict[str, Tensor] | None = None,
     ) -> dict[str, Tensor]:
-        detected = detected or {}
-        nh = self.n_harmonics
-        nn_ = self.n_noise_bands
+        B, max_events, _ = raw["exists"].shape
+        pi = self._PARAM_IDX
 
-        amplitude = detected["loudness"]
-        f0 = detected["f0"]
-        harm_dist = _modified_sigmoid(raw[:, :nh, :])
-        noise_mag = _modified_sigmoid(raw[:, nh:nh + nn_, :])
+        exists_prob = torch.sigmoid(raw["exists"]).squeeze(-1)
+        time_val = torch.sigmoid(raw["time"]).squeeze(-1)
+        f0_val = raw["f0_hz"].squeeze(-1).clamp(F0_MIN_HZ, F0_MAX_HZ)
+
+        if self.use_external_detectors and detected is not None:
+            det_onsets = detected.get("onsets")
+            det_f0 = detected.get("f0")
+            if det_onsets is not None and det_f0 is not None:
+                num_frames = det_f0.shape[1]
+                frame_indices = (time_val * num_frames).long().clamp(0, num_frames - 1)
+                exists_prob = torch.gather(det_onsets, 1, frame_indices)
+                f0_val = torch.gather(det_f0, 1, frame_indices).clamp(F0_MIN_HZ, F0_MAX_HZ)
 
         return {
-            "amplitude":             amplitude,
-            "harmonic_distribution": harm_dist,
-            "noise_magnitudes":      noise_mag,
-            "f0":                    f0,
+            "exists": exists_prob,
+            "time": time_val,
+            "f0": f0_val,
+            "burst_gain": _sigmoid_range(raw["params"][..., pi["burst_gain"]], 0.0, BURST_GAIN_MAX),
+            "decay": _sigmoid_range(raw["params"][..., pi["decay"]], DECAY_MIN, DECAY_MAX),
+            "a1": _sigmoid_range(raw["params"][..., pi["a1"]], DAMPING_MIN, DAMPING_MAX),
+            "pluck_position": _sigmoid_range(raw["params"][..., pi["pluck_position"]], PLUCK_POSITION_MIN,
+                                             PLUCK_POSITION_MAX),
+            "dynamic_level": _sigmoid_range(raw["params"][..., pi["dynamic_level"]], DYNAMIC_LEVEL_MIN,
+                                            DYNAMIC_LEVEL_MAX),
         }
 
     def synthesise(self, params: dict[str, Tensor]) -> SynthOutput:

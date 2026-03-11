@@ -93,7 +93,6 @@ def _build_datamodule(cfg: DictConfig) -> SoundMatchingDataModule:
         has_ood=cfg.data.has_ood,
         fs=cfg.fs,
         num_audio_samples=cfg.num_audio_samples,
-        num_frames=cfg.num_frames,
         duration_s=cfg.duration_s,
         batch_size=cfg.experiment.batch_size,
         num_workers=cfg.experiment.num_workers,

@@ -60,33 +60,50 @@ def no_dc_burst(
     burst_torch = torch.from_numpy(burst).to(device)
     return ((burst_torch / burst_torch.max()) - 0.5) * 2
 
-def excitation(
-        burst_gain: T,  # [B, num_samples]
-        signal_length: int, # num_samples
-        f0: T,          # [B, num_samples]
-        fs: int = FS_MIN,
-        noise_seed: int = RND_SEED,
+
+def spectral_excitation(
+        times: T,  # [B, max_events] continuous [0, 1]
+        gains: T,  # [B, max_events]
+        exists: T,  # [B, max_events]
+        f0: T,  # [B, max_events]
+        signal_length: int,
+        fs: int = 16000,
+        noise_seed: int = 42,
 ) -> T:
-    batch_size, num_samples = burst_gain.shape
-    device = burst_gain.device
-    output = torch.zeros(batch_size, signal_length, device=device)
+    """
+    Generates a differentiable excitation signal using phase-rotation.
+    Returns the time-domain excitation [B, signal_length].
+    """
+    batch_size, max_events = times.shape
+    device = times.device
 
-    assert f0.shape == burst_gain.shape
-    assert num_samples == signal_length
+    n_fft = signal_length
+    n_bins = n_fft // 2 + 1
 
-    for b in range(batch_size):
-        trigger_indices = torch.nonzero(burst_gain[b] > 0).squeeze(-1)
+    bins = torch.arange(n_bins, device=device).float()
+    omega = 2.0 * torch.pi * bins / n_fft
 
-        for sample_idx in trigger_indices:
-            f0_hz = f0[b, sample_idx].item()
-            burst_len = int(fs / f0_hz)
-            noise_burst = no_dc_burst(burst_len, seed=noise_seed, device=device)
+    total_X = torch.zeros((batch_size, n_bins), device=device, dtype=torch.complex64)
 
-            end_idx = min(sample_idx + burst_len, signal_length)
-            actual_len = end_idx - sample_idx
-            output[b, sample_idx:end_idx] += burst_gain[b, sample_idx] * noise_burst[:actual_len]
+    for i in range(max_events):
+        f0_hz = f0[:, i].mean().item()
+        burst_len = int(fs / f0_hz)
 
-    return output
+        noise = no_dc_burst(burst_len, seed=noise_seed + i, device=device)
+        noise_padded = F.pad(noise, (0, n_fft - burst_len))
+        X_noise = torch.fft.rfft(noise_padded)  # [n_bins]
+
+        # Apply Differentiable Phase Shift
+        t_samples = times[:, i:i + 1] * (signal_length - 1)
+        phase_shift = torch.exp(-1j * omega.unsqueeze(0) * t_samples)
+
+        exists_gate = (exists[:, i:i + 1] > 0.5).float().detach()
+
+        # Scale and accumulate
+        event_X = X_noise.unsqueeze(0) * phase_shift * gains[:, i:i + 1] * exists_gate
+        total_X += event_X
+
+    return torch.fft.irfft(total_X, n=n_fft)
 
 
 # =============================================================================

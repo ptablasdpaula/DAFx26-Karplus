@@ -35,7 +35,6 @@ from src.synths.param_registry import (
     DAMPING_MIN, DAMPING_MAX,
     DECAY_MIN, DECAY_MAX,
     MAX_EVENTS,
-    events_to_frames_np,
 )
 
 
@@ -47,7 +46,6 @@ class SyntheticDataset(IterableDataset):
     Args:
         num_samples_per_epoch: Items per epoch.
         num_audio_samples:     Audio length in samples.
-        num_frames:            Control-rate frames (for synth rendering).
         fs:                    Sample rate.
         lagrange_order:        Lagrange interpolation order.
         random_seed:           Base random seed.
@@ -59,7 +57,6 @@ class SyntheticDataset(IterableDataset):
         self,
         num_samples_per_epoch: int,
         num_audio_samples: int = 64000,
-        num_frames: int = 250,
         fs: int = 16000,
         lagrange_order: int = 5,
         random_seed: int = 42,
@@ -69,7 +66,6 @@ class SyntheticDataset(IterableDataset):
         super().__init__()
         self.num_samples_per_epoch = num_samples_per_epoch
         self.num_audio_samples = num_audio_samples
-        self.num_frames = num_frames
         self.fs = fs
         self.lagrange_order = lagrange_order
         self.random_seed = random_seed
@@ -197,22 +193,19 @@ class SyntheticDataset(IterableDataset):
     # ── Audio rendering ─────────────────────────────────────────────────
 
     def _synthesise(self, events: dict[str, np.ndarray], n_events: int) -> np.ndarray:
-        """Convert events to sample-rate params and render audio."""
-
-        frame_params = events_to_frames_np(
-            events, n_events, self.num_audio_samples, self.duration_s,
-        )
+        params_torch = {
+            k: torch.from_numpy(v).unsqueeze(0).float()
+            for k, v in events.items()
+        }
 
         config = SynthConfig(
             num_samples=self.num_audio_samples,
             fs=self.fs,
             lagrange_order=self.lagrange_order,
         )
+
         synth = Synth(config)
-        params_torch = {k: torch.from_numpy(v).unsqueeze(0).float()
-                        for k, v in frame_params.items()}
-        with torch.no_grad():
-            audio, _ = synth.oracle_synth(params_torch)
+        audio, _ = synth.oracle_synth(params_torch)
         return audio.squeeze(0).numpy()
 
     def __iter__(self):
@@ -251,7 +244,6 @@ if __name__ == "__main__":
     ds = SyntheticDataset(
         num_samples_per_epoch=4,
         num_audio_samples=64000,
-        num_frames=250,
         fs=16000,
         random_seed=123,
     )

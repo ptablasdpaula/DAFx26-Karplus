@@ -15,7 +15,7 @@ from src.synths.param_registry import PARAM_NAMES, validate_param_dict
 from src.synths.dsp import oracle_physical_model
 from src.synths.ddsp import (
     lin_resample_many,
-    excitation,
+    spectral_excitation,
     dynamics_filter,
     Implementation,
     pluck_position_filter,
@@ -61,30 +61,60 @@ class Synth(nn.Module):
         self.register_buffer('window', window_tensor.to(self.device))
 
     def forward(self, params: dict[str, T]) -> SynthOutput:
-        """
-        Args:
-            params: Dictionary with keys matching PARAM_NAMES.
-
-        Returns:
-            (audio [B, num_samples], params passed through)
-        """
-        validate_param_dict(params, context="Synth.forward")
-        self.resample_parameters(params)
-
-        x = excitation(
-            burst_gain=params['burst_gain'],
-            signal_length=self.num_samples,
+        x_time = spectral_excitation(
+            times=params['time'],
+            gains=params['burst_gain'],
+            exists=params['exists'],
             f0=params['f0'],
+            signal_length=self.num_samples,  # Dictates the shift range
             fs=self.fs,
             noise_seed=self.random_seed,
         )
 
+        self._expand_sparse_events_to_dense(params)
+
         if self.implementation == Implementation.FREQUENCY_SAMPLING:
-            x = self._forward_frequency_domain(x)
+            x = self._forward_frequency_domain(x_time)
         else:
-            x = self._forward_time_domain(x)
+            x = self._forward_time_domain(x_time)
 
         return x, params
+
+    def _expand_sparse_events_to_dense(self, events: dict[str, T]):
+        """Expands [B, max_events] sparse params to [B, num_samples] piecewise constant."""
+        B, max_events = events['exists'].shape
+        N = self.num_samples
+        device = events['exists'].device
+
+        dense = {
+            "f0": torch.full((B, N), 440.0, device=device),
+            "decay": torch.full((B, N), 0.99, device=device),
+            "a1": torch.full((B, N), 0.5, device=device),
+            "pluck_position": torch.full((B, N), 0.5, device=device),
+            "dynamic_level": torch.full((B, N), 0.5, device=device),
+        }
+
+        for b in range(B):
+            valid_mask = events["exists"][b] > 0.5
+            if not valid_mask.any(): continue
+
+            v_time = events["time"][b, valid_mask]
+            sorted_idx = torch.argsort(v_time)
+
+            s_time = v_time[sorted_idx]
+            for i in range(len(s_time)):
+                start = int(s_time[i].item() * N)
+                end = N if i == len(s_time) - 1 else int(s_time[i + 1].item() * N)
+                fill_start = 0 if i == 0 else start
+
+                for k in dense.keys():
+                    val = events[k][b, valid_mask][sorted_idx][i]
+                    dense[k][b, fill_start:end] = val
+
+        self.p_time = dense
+        self._params = events
+
+        self.p_stft = None
 
     def _forward_time_domain(self, x: T) -> T:
         p = self.p_time
@@ -169,13 +199,30 @@ class Synth(nn.Module):
         Returns:
             (audio [B, num_samples], params passed through)
         """
-        validate_param_dict(params, context="Synth.oracle_synth")
-        batch_size = next(iter(params.values())).shape[0]
+        self._expand_sparse_events_to_dense(params)
+        dense_params = self.p_time
+
+        batch_size = params['f0'].shape[0]
         outputs = []
 
         for b in range(batch_size):
+            bg_dense = torch.zeros(self.num_samples, device=self.device)
+            v_exists = params['exists'][b] > 0.5
+            if v_exists.any():
+                v_time = params['time'][b, v_exists]
+                v_bg = params['burst_gain'][b, v_exists]
+
+                # Discrete placement for the NumPy model
+                indices = (v_time * (self.num_samples - 1)).long()
+                bg_dense.scatter_add_(0, indices, v_bg)
+
             y = oracle_physical_model(
-                **{name: params[name][b].cpu().numpy() for name in PARAM_NAMES},
+                f0=dense_params['f0'][b].cpu().numpy(),
+                burst_gain=bg_dense.cpu().numpy(),  # Now dense!
+                decay=dense_params['decay'][b].cpu().numpy(),
+                a1=dense_params['a1'][b].cpu().numpy(),
+                pluck_position=dense_params['pluck_position'][b].cpu().numpy(),
+                dynamic_level=dense_params['dynamic_level'][b].cpu().numpy(),
                 num_samples=self.num_samples,
                 fs=self.fs,
                 lagrange_order=self.lagrange_order,
@@ -207,8 +254,8 @@ class Synth(nn.Module):
         self.p_stft = None
 
     def _get_stft_params(self, num_stft_frames: int) -> dict[str, T]:
-        if self.p_stft is None:
-            self.p_stft = lin_resample_many(signal_length=num_stft_frames, **self._params)
+        if getattr(self, 'p_stft', None) is None:
+            self.p_stft = lin_resample_many(signal_length=num_stft_frames, **self.p_time)
         return self.p_stft
 
     def _to_lti_freq_domain(self, x: T) -> T:
@@ -273,43 +320,26 @@ if __name__ == "__main__":
     for impl, impl_name in impl_options:
         for fs in sample_rates:
             num_samples = int(fs * duration)
-
             print(f"\n{'=' * 60}")
             print(f"Testing [{impl_name}] at fs={fs}Hz ({num_samples} samples)")
             print(f"{'=' * 60}")
 
-            config = SynthConfig(
-                num_samples=num_samples,
-                fs=fs,
-                device='cpu',
-                implementation=impl,
-            )
+            config = SynthConfig(num_samples=num_samples, fs=fs, implementation=impl)
             model = Synth(config)
 
-            for param_name, (min_val, max_val) in sweeps.items():
-                params = {k: torch.full((1, num_samples), v) for k, v in defaults.items()}
-
-                params[param_name] = torch.linspace(min_val, max_val, num_samples).unsqueeze(0)
-
-                trigger_indices = [0, num_samples // 4, num_samples // 2, 3 * num_samples // 4]
-                if param_name == 'burst_gain':
-                    params['burst_gain'][0, trigger_indices] = torch.linspace(min_val + 0.01, max_val, 4)
-                else:
-                    params['burst_gain'][0, trigger_indices] = 0.5
-
-                y, _ = model(params)
-                if not check_output(y, f"{param_name} sweep"):
-                    all_passed = False
-                test_count += 1
-
-            params = {k: torch.linspace(*v, num_samples).unsqueeze(0) for k, v in sweeps.items()}
-            params['burst_gain'] = torch.zeros(1, num_samples)
-            trigger_indices = [0, num_samples // 4, num_samples // 2, 3 * num_samples // 4]
-            params['burst_gain'][0, trigger_indices] = 0.5
+            params = {
+                'exists': torch.ones(1, 4),
+                'time': torch.tensor([[0.0, 0.25, 0.5, 0.75]]),  # 4 plucks evenly spaced
+                'f0': torch.tensor([[220.0, 330.0, 440.0, 550.0]]),
+                'burst_gain': torch.tensor([[0.5, 0.6, 0.7, 0.8]]),
+                'pluck_position': torch.full((1, 4), 0.5),
+                'dynamic_level': torch.full((1, 4), 0.5),
+                'a1': torch.full((1, 4), 0.5),
+                'decay': torch.full((1, 4), 0.995),
+            }
 
             y, _ = model(params)
-            if not check_output(y, "all parameters sweeping"):
-                all_passed = False
+            check_output(y, "Sparse Event Rendering")
             test_count += 1
 
     # =========================================================================

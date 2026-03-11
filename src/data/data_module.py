@@ -9,7 +9,7 @@ class SoundMatchingDataModule(pl.LightningDataModule):
     """
     Args:
         has_synthetic / has_ood:  Which data sources to include.
-        fs / num_audio_samples / num_frames / duration_s: Audio params.
+        fs / num_audio_samples / duration_s: Audio params.
         batch_size / num_workers: DataLoader config.
         synthetic_cfg:  Dict of kwargs for ``SyntheticDataset``.
         nsynth_root:    Path to nsynth data dir.
@@ -23,7 +23,6 @@ class SoundMatchingDataModule(pl.LightningDataModule):
         has_ood: bool = False,
         fs: int = 16000,
         num_audio_samples: int = 64000,
-        num_frames: int = 250,
         duration_s: float = 4.0,
         batch_size: int = 16,
         num_workers: int = 4,
@@ -72,7 +71,6 @@ class SoundMatchingDataModule(pl.LightningDataModule):
             self.train_synthetic = SyntheticDataset(
                 num_samples_per_epoch=num_synth_per_epoch,
                 num_audio_samples=hp.num_audio_samples,
-                num_frames=hp.num_frames,
                 fs=hp.fs,
                 random_seed=syn_cfg.get("random_seed", 42),
                 max_events_per_sample=syn_cfg.get("max_events_per_sample", 10),
@@ -81,7 +79,6 @@ class SoundMatchingDataModule(pl.LightningDataModule):
             self.val_synthetic = SyntheticDataset(
                 num_samples_per_epoch=hp.val_synthetic_size,
                 num_audio_samples=hp.num_audio_samples,
-                num_frames=hp.num_frames,
                 fs=hp.fs,
                 random_seed=hp.val_synthetic_seed,
                 max_events_per_sample=syn_cfg.get("max_events_per_sample", 10),
