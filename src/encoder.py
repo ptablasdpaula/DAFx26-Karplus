@@ -265,7 +265,10 @@ class KSEventEncoder(nn.Module):
 
         f0_logits = self.head_f0(queries)
         f0_probs = F.softmax(f0_logits, dim=-1)
-        f0_hz = (f0_probs * self.f0_bin_centres).sum(dim=-1, keepdim=True)
+
+        log_centres = torch.log(self.f0_bin_centres)
+        expected_log_f0 = (f0_probs * log_centres).sum(dim=-1, keepdim=True)
+        f0_hz = torch.exp(expected_log_f0)
 
         return {
             "exists": exists_logits,
