@@ -1,6 +1,4 @@
 objective: param_only
-param_only_epochs: 0
-fadein_epochs: 0
 w_param: 1.0
 w_mss: 0.0
 w_sot: 0.0

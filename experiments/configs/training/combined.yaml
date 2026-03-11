@@ -1,10 +1,7 @@
 objective: combined
-param_only_epochs: 100
-fadein_epochs: 50
-w_param: 1.0
-w_mss: 0.001
+w_param: 0.5
+w_mss: 0.01
 w_sot: 0.01
-min_param_ratio: 0.5
 
 event_loss_weights:
   w_exists: 100.0

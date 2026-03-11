@@ -17,8 +17,6 @@ class SoundMatchingExperiment(pl.LightningModule):
     Args:
         model:               ``SoundMatchingModel`` instance.
         objective:           ``"param_only"`` | ``"spectral_only"`` | ``"combined"``.
-        param_only_epochs:   (combined) param-only warm-up epochs.
-        fadein_epochs:       (combined) spectral fade-in epochs.
         w_mss / w_sot / w_param: Loss weights.
         event_loss_weights:  Weights passed directly to EventSetLoss.
         eval_synthetic_metrics: Compute synthetic metrics.
@@ -30,12 +28,9 @@ class SoundMatchingExperiment(pl.LightningModule):
             self,
             model: SoundMatchingModel,
             objective: str = "combined",
-            param_only_epochs: int = 0,
-            fadein_epochs: int = 0,
             w_mss: float = 1.0,
             w_sot: float = 1.0,
             w_param: float = 1.0,
-            min_param_ratio: float = 0.5,
             event_loss_weights: dict[str, float] | None = None,
             eval_synthetic_metrics: bool = True,
             eval_ood_metrics: bool = True,
@@ -56,23 +51,6 @@ class SoundMatchingExperiment(pl.LightningModule):
 
         self._val_audio_examples = {"val_synth": [], "val_ood": []}
 
-    # ── Curriculum ───────────────────────────────────────────────────────
-
-    @property
-    def spectral_weight(self) -> float:
-        obj = self.hparams.objective
-        if obj == "param_only":
-            return 0.0
-        if obj == "spectral_only":
-            return 1.0
-        epoch = self.current_epoch
-        if epoch < self.hparams.param_only_epochs:
-            return 0.0
-        fade = epoch - self.hparams.param_only_epochs
-        if self.hparams.fadein_epochs > 0 and fade < self.hparams.fadein_epochs:
-            return fade / self.hparams.fadein_epochs
-        return 1.0
-
     # ── Loss ─────────────────────────────────────────────────────────────
 
     def _compute_losses(
@@ -86,24 +64,20 @@ class SoundMatchingExperiment(pl.LightningModule):
         device = pred_audio.device
         info: dict[str, Any] = {}
         total = torch.tensor(0.0, device=device)
+        
+        obj = self.hparams.objective
 
-        sw = self.spectral_weight
-        if sw > 0:
+        if obj in ["spectral_only", "combined"]:
             mss_loss = self.mss(pred_audio, target_audio)
             sot_loss = self.sot(pred_audio, target_audio)
-            total = total + self.hparams.w_mss * sw * mss_loss
-            total = total + self.hparams.w_sot * sw * sot_loss
+            total = total + self.hparams.w_mss * mss_loss
+            total = total + self.hparams.w_sot * sot_loss
             info["mss"] = mss_loss.detach()
             info["sot"] = sot_loss.detach()
 
-        if is_synthetic and self.hparams.objective != "spectral_only":
-            max_drop = 1.0 - self.hparams.min_param_ratio
-            param_multiplier = 1.0 - (sw * max_drop) 
-            
+        if is_synthetic and obj in ["param_only", "combined"]:
             p_total, p_breakdown = self.event_loss(pred_raw, target_params)
-            
-            total = total + (self.hparams.w_param * param_multiplier) * p_total
-            
+            total = total + self.hparams.w_param * p_total
             info["param"] = p_total.detach()
             info["param_breakdown"] = p_breakdown
 
@@ -157,13 +131,6 @@ class SoundMatchingExperiment(pl.LightningModule):
     # ── Training ─────────────────────────────────────────────────────────
 
     def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
-        sw = self.spectral_weight
-        self.log("train/spectral_weight", sw)
-        
-        # Log the dynamic multiplier
-        max_drop = 1.0 - self.hparams.min_param_ratio
-        self.log("train/param_multiplier", 1.0 - (sw * max_drop))
-
         if isinstance(batch, dict) and "audio" not in batch:
             total = torch.tensor(0.0, device=self.device)
             for key, sub_batch in batch.items():

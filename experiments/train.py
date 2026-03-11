@@ -109,8 +109,6 @@ def _build_experiment(cfg: DictConfig, model: SoundMatchingModel) -> SoundMatchi
     return SoundMatchingExperiment(
         model=model,
         objective=cfg.training.objective,
-        param_only_epochs=cfg.training.param_only_epochs,
-        fadein_epochs=cfg.training.fadein_epochs,
         w_mss=cfg.training.w_mss,
         w_sot=cfg.training.w_sot,
         w_param=cfg.training.w_param,
