@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import weight_norm
+import torchaudio
 
 class CausalConv1d(nn.Conv1d):
     """Causal 1-D convolution (left-pad only)."""
@@ -21,7 +21,6 @@ class CausalConv1d(nn.Conv1d):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return super().forward(F.pad(x, (self._causal_padding, 0)))
 
-
 class NonCausalConv1d(nn.Conv1d):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, dilation=1, groups=1, bias=True):
@@ -31,7 +30,6 @@ class NonCausalConv1d(nn.Conv1d):
             stride=stride, padding=padding, dilation=dilation,
             groups=groups, bias=bias,
         )
-
 
 class TCNBlock(nn.Module):
     def __init__(self, in_ch: int, hidden_ch: int, out_ch: int,
@@ -54,7 +52,6 @@ class TCNBlock(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.block(x) + self.residual(x)
 
-
 def _build_tcn(in_ch: int, tcn_channels: int, num_blocks: int,
                kernel_size: int, dilation_base: int,
                dropout: float, causal: bool = False) -> nn.Sequential:
@@ -70,12 +67,7 @@ def _build_tcn(in_ch: int, tcn_channels: int, num_blocks: int,
     return nn.Sequential(*blocks)
 
 class LearnableFrontend(nn.Module):
-    """Strided conv stack: raw audio [B, 1, N] → features [B, C, T_frames].
-
-    Good for temporal/energy features (onsets, dynamics).
-    Total default stride = 256 samples.
-    """
-
+    """Strided conv stack: raw audio [B, 1, N] → features [B, C, T_frames]."""
     DEFAULT_CHANNELS = [32, 64, 64, 64]
     DEFAULT_STRIDES  = [4, 4, 4, 4]
     DEFAULT_KERNELS  = [16, 16, 8, 8]
@@ -101,105 +93,62 @@ class LearnableFrontend(nn.Module):
         self.out_channels = channels[-1]
 
     def forward(self, wav: torch.Tensor) -> torch.Tensor:
-        """wav: [B, N] → [B, C, T_frames]"""
         return self.net(wav.unsqueeze(1))
 
-
-class CQTFrontend(nn.Module):
-    """Constant-Q Transform frontend for pitch/resonance features.
-
-    Computes a pseudo-CQT via a bank of log-spaced Gabor-like filters
-    realised as a single (non-trainable) Conv1d, followed by magnitude
-    and log-compression.
-
-    Args:
-        fs:              Sample rate (Hz).
-        f_min:           Lowest CQT bin centre (Hz).
-        n_octaves:       Number of octaves above ``f_min``.
-        bins_per_octave: Frequency resolution (12 = semitone, 24 = quarter-tone).
-        hop_length:      Frame hop in samples.
-        q_factor:        Quality factor multiplier.
+# ── NEW: Mel Spectrogram Frontend ──
+class MelSpectrogramFrontend(nn.Module):
+    """Mel Spectrogram frontend for pitch/resonance features.
+    
+    Provides strict temporal precision across all frequency bands, preventing
+    low-frequency smearing found in CQTs.
     """
-
     def __init__(
         self,
         fs: int = 16000,
-        f_min: float = 32.0,
-        n_octaves: int = 7,
-        bins_per_octave: int = 24,
+        n_fft: int = 1024,
         hop_length: int = 256,
-        q_factor: float = 1.0,
+        n_mels: int = 128,
+        f_min: float = 32.0,
+        f_max: float = 8000.0,
     ):
         super().__init__()
         self.fs = fs
         self.hop_length = hop_length
-        self.n_bins = n_octaves * bins_per_octave
+        self.out_channels = n_mels
 
-        freqs = f_min * 2.0 ** (torch.arange(self.n_bins).float()
-                                 / bins_per_octave)
-        Q = q_factor * (2 ** (1.0 / bins_per_octave) - 1) ** -1
-
-        max_len = int(math.ceil(Q * fs / freqs[0].item()))
-        if max_len % 2 == 0:
-            max_len += 1
-
-        filters_real = torch.zeros(self.n_bins, 1, max_len)
-        filters_imag = torch.zeros(self.n_bins, 1, max_len)
-
-        for k, f_k in enumerate(freqs):
-            N_k = int(math.ceil(Q * fs / f_k.item()))
-            if N_k % 2 == 0:
-                N_k += 1
-            t = torch.arange(N_k).float() - (N_k - 1) / 2
-            window = torch.hann_window(N_k)
-            kernel_real = window * torch.cos(2 * math.pi * f_k * t / fs)
-            kernel_imag = window * torch.sin(2 * math.pi * f_k * t / fs)
-            norm = kernel_real.norm() + 1e-8
-            kernel_real = kernel_real / norm
-            kernel_imag = kernel_imag / norm
-            pad_left = (max_len - N_k) // 2
-            filters_real[k, 0, pad_left:pad_left + N_k] = kernel_real
-            filters_imag[k, 0, pad_left:pad_left + N_k] = kernel_imag
-
-        self.register_buffer("filters_real", filters_real)
-        self.register_buffer("filters_imag", filters_imag)
-        self._pad = max_len // 2
-        self.out_channels = self.n_bins
+        self.mel_transform = torchaudio.transforms.MelSpectrogram(
+            sample_rate=fs,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            f_min=f_min,
+            f_max=f_max,
+            n_mels=n_mels,
+            center=True,
+            power=1.0,  # Use magnitude
+        )
 
     def forward(self, wav: torch.Tensor) -> torch.Tensor:
-        """wav: [B, N] → [B, n_bins, T_frames]  (log-magnitude CQT)."""
-        x = wav.unsqueeze(1)
-        x = F.pad(x, (self._pad, self._pad))
-
-        re = F.conv1d(x, self.filters_real, stride=self.hop_length)
-        im = F.conv1d(x, self.filters_imag, stride=self.hop_length)
-        mag = torch.sqrt(re ** 2 + im ** 2 + 1e-8)
-
-        return torch.log1p(mag)
+        """wav: [B, N] → [B, n_mels, T_frames]  (log-magnitude Mel)."""
+        mel_spec = self.mel_transform(wav)
+        # Apply logarithmic compression to prevent high-amplitude dominance
+        return torch.log1p(mel_spec)
 
 class PositionalEncoding1D(nn.Module):
-    """Standard 1D Sinusoidal Positional Encoding."""
-
     def __init__(self, d_model: int, max_len: int = 1000):
         super().__init__()
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        # Using math.log ensures precision, and creating exactly d_model // 2 terms prevents mismatches
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
 
-        # This handles both even and odd d_model sizes safely
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term[:d_model // 2])
 
-        self.register_buffer('pe', pe.unsqueeze(0))  # [1, max_len, d_model]
+        self.register_buffer('pe', pe.unsqueeze(0)) 
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: [B, T, d_model]"""
         return x + self.pe[:, :x.size(1), :]
 
 class DETRDecoderLayer(nn.Module):
-    """Full DETR Decoder layer: Self-Attention -> Cross-Attention -> FFN."""
-
     def __init__(self, d_model: int = 64, n_heads: int = 4, ff_mult: int = 4, dropout: float = 0.1):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
@@ -218,35 +167,23 @@ class DETRDecoderLayer(nn.Module):
         self.norm3 = nn.LayerNorm(d_model)
 
     def forward(self, queries: torch.Tensor, memory: torch.Tensor) -> torch.Tensor:
-            """
-            queries: [B, max_events, d_model]
-            memory:  [B, T_frames, d_model]
-            """
-            # Pre-LN Self-Attention
-            q_norm1 = self.norm1(queries)
-            q2, _ = self.self_attn(query=q_norm1, key=q_norm1, value=q_norm1)
-            queries = queries + q2
+        q_norm1 = self.norm1(queries)
+        q2, _ = self.self_attn(query=q_norm1, key=q_norm1, value=q_norm1)
+        queries = queries + q2
 
-            # Pre-LN Cross-Attention
-            q_norm2 = self.norm2(queries)
-            q2, _ = self.cross_attn(query=q_norm2, key=memory, value=memory)
-            queries = queries + q2
+        q_norm2 = self.norm2(queries)
+        q2, _ = self.cross_attn(query=q_norm2, key=memory, value=memory)
+        queries = queries + q2
 
-            # Pre-LN FFN
-            q_norm3 = self.norm3(queries)
-            queries = queries + self.ffn(q_norm3)
-            return queries
+        q_norm3 = self.norm3(queries)
+        queries = queries + self.ffn(q_norm3)
+        return queries
 
 class KSEventEncoder(nn.Module):
-    """Unified DETR-style Encoder for Karplus-Strong Event Packets.
-
-    Dual Frontend (CQT + Learnable) → Non-Causal TCN → Cross-Attention Decoder → MLP Heads.
-    """
-
     def __init__(
             self,
             max_events: int = 40,
-            cqt_kwargs: dict | None = None,
+            mel_kwargs: dict | None = None,  # <-- Renamed
             frontend_kwargs: dict | None = None,
             d_model: int = 64,
             num_blocks: int = 6,
@@ -263,10 +200,10 @@ class KSEventEncoder(nn.Module):
         self.max_events = max_events
         self.n_f0_bins = n_f0_bins
 
-        self.cqt = CQTFrontend(**(cqt_kwargs or {}))
+        self.mel = MelSpectrogramFrontend(**(mel_kwargs or {}))
         self.learnable = LearnableFrontend(**(frontend_kwargs or {}))
 
-        in_ch = self.cqt.out_channels + self.learnable.out_channels
+        in_ch = self.mel.out_channels + self.learnable.out_channels
 
         self.proj_in = nn.Conv1d(in_ch, d_model, kernel_size=1)
         self.tcn = _build_tcn(d_model, d_model, num_blocks,
@@ -285,13 +222,10 @@ class KSEventEncoder(nn.Module):
             for _ in range(cross_attn_layers)
         ])
 
-        # FOCAL LOSS
         prior_prob = 0.55
         bias_value = -math.log((1.0 - prior_prob) / prior_prob)
         self.head_exists = nn.Linear(d_model, 1)
         self.head_exists.bias.data.fill_(bias_value)
-        
-        # ── FIXED: Zero the weights so the bias actually works at Epoch 0! ──
         nn.init.constant_(self.head_exists.weight, 0.0)
 
         self.head_time = nn.Linear(d_model, 1)
@@ -304,37 +238,34 @@ class KSEventEncoder(nn.Module):
         self.head_params = nn.Linear(d_model, 5)
 
     def forward(self, wav: torch.Tensor) -> dict[str, torch.Tensor]:
-        """wav: [B, N] → Dict of event parameters."""
         B = wav.shape[0]
 
-        # ── Frontends ──
-        cqt_feat = self.cqt(wav)  # [B, C_cqt, T]
+        # ── FIXED: Compute and concat Mel Features ──
+        mel_feat = self.mel(wav)  # [B, C_mel, T]
         lrn_feat = self.learnable(wav)  # [B, C_lrn, T]
 
-        T = min(cqt_feat.shape[-1], lrn_feat.shape[-1])
-        x = torch.cat([cqt_feat[..., :T], lrn_feat[..., :T]], dim=1)  # [B, C, T]
+        T = min(mel_feat.shape[-1], lrn_feat.shape[-1])
+        x = torch.cat([mel_feat[..., :T], lrn_feat[..., :T]], dim=1)  # [B, C, T]
 
-        # ── Backbone ──
-        x = self.proj_in(x)  # [B, d_model, T]
-        x = self.tcn(x)  # [B, d_model, T]
+        x = self.proj_in(x) 
+        x = self.tcn(x)
 
-        memory = x.permute(0, 2, 1)  # [B, T, d_model]
+        memory = x.permute(0, 2, 1)  
         memory = self.pos_encoder(memory)
         memory = self.memory_norm(memory)
 
-        queries = self.query_embed.expand(B, -1, -1)  # [B, max_events, d_model]
+        queries = self.query_embed.expand(B, -1, -1)
 
         for block in self.decoder_blocks:
-            queries = block(queries, memory)  # [B, max_events, d_model]
+            queries = block(queries, memory) 
 
-        # ── Heads ──
-        exists_logits = self.head_exists(queries)  # [B, max_events 1]
-        time_logits = self.head_time(queries)  # [B, max_events 1]
-        param_logits = self.head_params(queries)  # [B, max_events 5]
+        exists_logits = self.head_exists(queries)
+        time_logits = self.head_time(queries)
+        param_logits = self.head_params(queries)
 
-        f0_logits = self.head_f0(queries)  # [B, max_events 128]
+        f0_logits = self.head_f0(queries)
         f0_probs = F.softmax(f0_logits, dim=-1)
-        f0_hz = (f0_probs * self.f0_bin_centres).sum(dim=-1, keepdim=True)  # [B, max_events 1]
+        f0_hz = (f0_probs * self.f0_bin_centres).sum(dim=-1, keepdim=True)
 
         return {
             "exists": exists_logits,
@@ -344,17 +275,7 @@ class KSEventEncoder(nn.Module):
             "params": param_logits
         }
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-# H+N Encoder  (kept for HarmonicsNoiseDecoder compatibility)
-# ═════════════════════════════════════════════════════════════════════════════
-
 class HpNEncoder(nn.Module):
-    """LearnableFrontend → TCN → [B, num_outputs, T] raw logits.
-
-    Used only by ``HarmonicsNoiseDecoder``.
-    """
-
     def __init__(
         self,
         num_outputs: int = 165,

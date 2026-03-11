@@ -12,13 +12,13 @@ encoder:
   n_f0_bins: 128
   f0_min_hz: 32.0
   f0_max_hz: 2000.0
-  cqt_kwargs:
+  mel_kwargs:
     fs: ${fs}
-    f_min: 32.0
-    n_octaves: 7
-    bins_per_octave: 24
+    n_fft: 1024
     hop_length: 256
-    q_factor: 1.0
+    n_mels: 128
+    f_min: 32.0
+    f_max: 8000.0
   frontend_kwargs: {}
 synth:
   lagrange_order: 5
