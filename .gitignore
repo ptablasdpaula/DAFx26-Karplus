@@ -12,8 +12,12 @@ __pycache__/
 experiments/outputs/*
 experiments/logs/*
 experiments/wandb/*
+experiments/checkpoints/*
+logs/*
+
 
 src/data/nsynth/test/*
 src/data/nsynth/validation/*
-src/data/nsynth/train/*
+src/data/nsynth/training/*
+src/data/nsynth/loudness_stats.json
 
