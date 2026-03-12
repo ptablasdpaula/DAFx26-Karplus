@@ -3,7 +3,7 @@ eval_ood_metrics: true
 max_epochs: 10000
 patience: 50
 gradient_clip_val: 1.0
-batch_size: 16
+batch_size: 64
 num_workers: 4
 val_check_interval: 1.0
 log_val_audio: true

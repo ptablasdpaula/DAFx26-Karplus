@@ -1,8 +1,8 @@
 has_synthetic: true
 has_ood: false
 synthetic:
-  num_samples_per_epoch: 80 # 4096
+  num_samples_per_epoch: 8360
   random_seed: 42
   max_events_per_sample: 10
   min_events_per_sample: 1
-  detector_batch_size: 16
+  detector_batch_size: 64
