@@ -7,6 +7,6 @@ synthetic:
   min_events_per_sample: 1
   detector_batch_size: 16
 nsynth:
-  root: ${oc.env:PROJECT_ROOT,src/data/nsynth}
+  root: ${oc.env:PROJECT_ROOT,.}/src/data/nsynth
   split_train: training
   split_val: validation
