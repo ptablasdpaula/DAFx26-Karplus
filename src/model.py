@@ -37,7 +37,7 @@ class SoundMatchingModel(nn.Module):
         if isinstance(decoder, KSDecoder):
             self.encoder = KSEventEncoder(**enc_kw)
         elif isinstance(decoder, HarmonicsNoiseDecoder):
-            enc_kw["num_outputs"] = decoder.num_params
+            enc_kw["num_outputs"] = getattr(decoder, "z_dim", 16)
             self.encoder = HpNEncoder(**enc_kw)
         else:
             raise ValueError(f"Unknown decoder type: {type(decoder)}")

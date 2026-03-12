@@ -242,20 +242,41 @@ class KSDecoder(Decoder):
         return self.synth.oracle_synth(params)
 
 
+class DDSPMLP(nn.Module):
+    """DDSP's MLP block replica: Dense -> LayerNorm -> LeakyReLU"""
+
+    def __init__(self, in_features: int, hidden_features: int = 512, num_layers: int = 3):
+        super().__init__()
+        layers = []
+        for i in range(num_layers):
+            d_in = in_features if i == 0 else hidden_features
+            layers.extend([
+                nn.Linear(d_in, hidden_features),
+                nn.LayerNorm(hidden_features),
+                nn.LeakyReLU(0.01)  # Standard DDSP LeakyReLU slope
+            ])
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
 # ═════════════════════════════════════════════════════════════════════════════
-# Harmonics + Noise Decoder  (unchanged — still uses flat [B, P, T] input)
+# Harmonics + Noise Decoder
 # ═════════════════════════════════════════════════════════════════════════════
 
 class HarmonicsNoiseDecoder(Decoder):
-    """Harmonics + Noise decoder (DDSP-style)."""
+    """DDSP Harmonics + Noise decoder from Engel et al. (2020)."""
 
     def __init__(
-        self,
-        fs: int = 16000,
-        num_samples: int = 64000,
-        n_harmonics: int = 100,
-        n_noise_bands: int = 65,
-        use_external_detectors: bool = True,
+            self,
+            fs: int = 16000,
+            num_samples: int = 64000,
+            n_harmonics: int = 100,
+            n_noise_bands: int = 65,
+            use_external_detectors: bool = True,
+            z_dim: int = 16,
+            hidden_dim: int = 512,
     ):
         super().__init__()
         assert use_external_detectors, (
@@ -267,43 +288,56 @@ class HarmonicsNoiseDecoder(Decoder):
         self.n_harmonics = n_harmonics
         self.n_noise_bands = n_noise_bands
         self.use_external_detectors = True
+        self.z_dim = z_dim
 
         self.num_params = n_harmonics + n_noise_bands
-        self.param_names = ("amplitude", "harmonic_distribution",
-                            "noise_magnitudes", "f0")
+        self.param_names = ("amplitude", "harmonic_distribution", "noise_magnitudes", "f0")
+
+        self.f0_mlp = DDSPMLP(1, hidden_dim, num_layers=3)
+        self.loudness_mlp = DDSPMLP(1, hidden_dim, num_layers=3)
+        self.z_mlp = DDSPMLP(z_dim, hidden_dim, num_layers=3)
+
+        self.rnn = nn.GRU(hidden_dim * 3, hidden_dim, batch_first=True)
+        self.out_mlp = DDSPMLP(hidden_dim * 3, hidden_dim, num_layers=3)
+
+        self.proj_amp = nn.Linear(hidden_dim, 1)
+        self.proj_harm = nn.Linear(hidden_dim, n_harmonics)
+        self.proj_noise = nn.Linear(hidden_dim, n_noise_bands)
 
     def activate(
             self,
-            raw: dict[str, Tensor],
-            detected: dict[str, Tensor] | None = None,
-    ) -> dict[str, Tensor]:
-        B, max_events, _ = raw["exists"].shape
-        pi = self._PARAM_IDX
+            raw: torch.Tensor, # [B, z_dim, T]
+            detected: dict[str, torch.Tensor] | None = None,
+    ) -> dict[str, torch.Tensor]:
+        if detected is None or "f0" not in detected or "loudness" not in detected:
+            raise ValueError("DDSP Decoder requires 'f0' and 'loudness' in the detected dict.")
 
-        exists_prob = torch.sigmoid(raw["exists"]).squeeze(-1)
-        time_val = torch.sigmoid(raw["time"]).squeeze(-1)
-        f0_val = raw["f0_hz"].squeeze(-1).clamp(F0_MIN_HZ, F0_MAX_HZ)
+        z = raw.permute(0, 2, 1) # [B, T, z_dim]
+        f0 = detected["f0"].unsqueeze(-1)  # [B, T, 1]
+        loudness = detected["loudness"].unsqueeze(-1)  # [B, T, 1]
 
-        if self.use_external_detectors and detected is not None:
-            det_onsets = detected.get("onsets")
-            det_f0 = detected.get("f0")
-            if det_onsets is not None and det_f0 is not None:
-                num_frames = det_f0.shape[1]
-                frame_indices = (time_val * num_frames).long().clamp(0, num_frames - 1)
-                exists_prob = torch.gather(det_onsets, 1, frame_indices)
-                f0_val = torch.gather(det_f0, 1, frame_indices).clamp(F0_MIN_HZ, F0_MAX_HZ)
+        # Log scale the F0 to keep values small for the MLPs
+        f0_scaled = torch.log2(f0 / 440.0 + 1e-5)
+
+        f0_emb = self.f0_mlp(f0_scaled)
+        loud_emb = self.loudness_mlp(loudness)
+        z_emb = self.z_mlp(z)
+
+        gru_in = torch.cat([f0_emb, loud_emb, z_emb], dim=-1)
+        gru_out, _ = self.rnn(gru_in)
+
+        x_out = torch.cat([f0_emb, loud_emb, gru_out], dim=-1)
+        features = self.out_mlp(x_out)
+
+        amp = _modified_sigmoid(self.proj_amp(features)).squeeze(-1)
+        harm_dist = _modified_sigmoid(self.proj_harm(features))
+        noise_mag = _modified_sigmoid(self.proj_noise(features))
 
         return {
-            "exists": exists_prob,
-            "time": time_val,
-            "f0": f0_val,
-            "burst_gain": _sigmoid_range(raw["params"][..., pi["burst_gain"]], 0.0, BURST_GAIN_MAX),
-            "decay": _sigmoid_range(raw["params"][..., pi["decay"]], DECAY_MIN, DECAY_MAX),
-            "a1": _sigmoid_range(raw["params"][..., pi["a1"]], DAMPING_MIN, DAMPING_MAX),
-            "pluck_position": _sigmoid_range(raw["params"][..., pi["pluck_position"]], PLUCK_POSITION_MIN,
-                                             PLUCK_POSITION_MAX),
-            "dynamic_level": _sigmoid_range(raw["params"][..., pi["dynamic_level"]], DYNAMIC_LEVEL_MIN,
-                                            DYNAMIC_LEVEL_MAX),
+            "f0": detected["f0"],
+            "amplitude": amp,
+            "harmonic_distribution": harm_dist,
+            "noise_magnitudes": noise_mag
         }
 
     def synthesise(self, params: dict[str, Tensor]) -> SynthOutput:

@@ -279,25 +279,40 @@ class KSEventEncoder(nn.Module):
         }
 
 class HpNEncoder(nn.Module):
+    """Replica of DDSP z-encoder: MFCC -> Normalization -> GRU -> Dense."""
+
     def __init__(
-        self,
-        num_outputs: int = 165,
-        tcn_channels: int = 64,
-        num_blocks: int = 5,
-        kernel_size: int = 3,
-        dilation_base: int = 2,
-        dropout: float = 0.1,
+            self,
+            num_outputs: int = 16,
+            fs: int = 16000,
     ):
         super().__init__()
         self.num_outputs = num_outputs
-        self.frontend = LearnableFrontend()
 
-        in_ch = self.frontend.out_channels
-        self.tcn = _build_tcn(in_ch, tcn_channels, num_blocks,
-                              kernel_size, dilation_base, dropout)
-        self.head = nn.Conv1d(tcn_channels, num_outputs, kernel_size=1)
+        self.mfcc_transform = torchaudio.transforms.MFCC(
+            sample_rate=fs,
+            n_mfcc=30,
+            melkwargs={
+                "n_fft": 1024,
+                "hop_length": 256,
+                "n_mels": 128,
+                "f_min": 20.0,
+                "f_max": 8000.0,
+                "center": True,
+            }
+        )
 
-    def forward(self, wav: torch.Tensor) -> torch.Tensor:
-        x = self.frontend(wav)
-        x = self.tcn(x)
-        return self.head(x)
+        self.norm = nn.InstanceNorm1d(30, affine=True)
+        self.gru = nn.GRU(input_size=30, hidden_size=512, batch_first=True)
+        self.head = nn.Linear(512, num_outputs)
+
+    def forward(
+            self,
+            wav: torch.Tensor # [B, T_audio]
+    ) -> torch.Tensor:
+        mfccs = self.mfcc_transform(wav) # [B, 30, T_frames]
+        x = self.norm(mfccs)
+        x = x.permute(0, 2, 1) # [B, T_frames, 30]
+        x, _ = self.gru(x)
+        z = self.head(x) # [B, T_frames, num_outputs]
+        return z.permute(0, 2, 1) # [B, num_outputs, T_frames]

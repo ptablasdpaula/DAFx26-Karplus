@@ -67,6 +67,8 @@ def _build_decoder(cfg: DictConfig):
             n_harmonics=cfg.model.get("n_harmonics", 100),
             n_noise_bands=cfg.model.get("n_noise_bands", 65),
             use_external_detectors=cfg.detector.use_external_detectors,
+            z_dim=cfg.model.get("z_dim", 16),
+            hidden_dim=cfg.model.get("hidden_dim", 512),
         )
 
     raise ValueError(f"Unknown decoder: {cfg.model.decoder}")
