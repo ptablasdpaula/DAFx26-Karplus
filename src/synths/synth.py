@@ -206,7 +206,8 @@ class Synth(nn.Module):
         outputs = []
 
         for b in range(batch_size):
-            bg_dense = torch.zeros(self.num_samples, device=self.device)
+            device = params['f0'].device
+            bg_dense = torch.zeros(self.num_samples, device=device)
             v_exists = params['exists'][b] > 0.5
             if v_exists.any():
                 v_time = params['time'][b, v_exists]
