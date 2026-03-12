@@ -78,6 +78,11 @@ class SyntheticDataset(IterableDataset):
             # Event timing
             "min_gap_s":     0.05,
             "first_onset":   dict(lo=0.0, hi=0.3),
+            # Mute Probabilities
+            "mute_prob": 0.3,
+            "mute_decay_reduction": dict(lo=0.05, hi=0.30),
+            "mute_a1_increase": dict(lo=0.05, hi=0.30),
+            "mute_dyn_reduction": dict(lo=0.20, hi=0.95),
             # Synth params
             "burst_gain":    dict(mean=0.5, conc=3, lo_db=-40.0, hi_db=0.0),
             "pluck_position": dict(mean=0.25, conc=5,
@@ -129,7 +134,7 @@ class SyntheticDataset(IterableDataset):
         return min(self._a1_max_for_midi(midi), self._a1_max_for_fs())
 
     def _generate_events(self, rng) -> tuple[dict[str, np.ndarray], int]:
-        """Generate a set of pluck events.
+        """Generate a set of pluck and mute events.
 
         Returns:
             events:   {name: [MAX_EVENTS]} numpy arrays, padded with zeros.
@@ -138,10 +143,11 @@ class SyntheticDataset(IterableDataset):
         p = self.priors
         dur = self.duration_s
 
-        # ── Sample constant f0 for this sample ─────────────────────────
+        # ── Sample constant global properties for this sample ───────────
         midi = rng.uniform(MIDI_D1, MIDI_D6)
         f0_hz = float(midi_to_hz(midi))
         a1_max = self._a1_max(midi)
+        global_burst_gain = self._sample_db(rng, p["burst_gain"])
 
         # ── Determine number of events ──────────────────────────────────
         n_events = rng.integers(self.min_events_per_sample,
@@ -176,17 +182,45 @@ class SyntheticDataset(IterableDataset):
         }
 
         # ── Fill real events ────────────────────────────────────────────
+        prev_was_mute = False  # Track state to prevent consecutive mutes
+
         for i in range(n_events):
-            events["exists"][i]         = 1.0
-            events["time"][i]           = times_arr[i]
-            events["f0"][i]             = f0_hz
-            events["burst_gain"][i]     = self._sample_db(rng, p["burst_gain"])
-            events["decay"][i]          = self._sample_linear(rng, p["decay"])
-            events["a1"][i]             = self._sample_linear(
-                rng, {**p["a1"], "hi": min(p["a1"]["hi"], a1_max)}
-            )
+            events["exists"][i] = 1.0
+            events["time"][i] = times_arr[i]
+            events["f0"][i] = f0_hz
+
+            # Distance/Preamp gain is static for the ENTIRE recording
+            events["burst_gain"][i] = global_burst_gain
+
+            is_mute = (i > 0) and (not prev_was_mute) and (rng.random() < p["mute_prob"])
+
+            if is_mute:
+                # Mute: Hand hits the string, causing a heavily reduced excitation
+                dyn_reduction = rng.uniform(p["mute_dyn_reduction"]["lo"], p["mute_dyn_reduction"]["hi"])
+                events["dynamic_level"][i] = events["dynamic_level"][i - 1] * (1.0 - dyn_reduction)
+
+                # Subtract 5% to 30% from the previous decay's energy
+                decay_reduction = rng.uniform(p["mute_decay_reduction"]["lo"], p["mute_decay_reduction"]["hi"])
+                events["decay"][i] = events["decay"][i - 1] * (1.0 - decay_reduction)
+
+                # Add 5% to 30% to the previous damping's energy
+                a1_increase = rng.uniform(p["mute_a1_increase"]["lo"], p["mute_a1_increase"]["hi"])
+                events["a1"][i] = events["a1"][i - 1] * (1.0 + a1_increase)
+
+                prev_was_mute = True
+
+            else:
+                # Standard Pluck
+                events["dynamic_level"][i] = self._sample_db(rng, p["dynamic_level"])
+                events["decay"][i] = self._sample_linear(rng, p["decay"])
+                events["a1"][i] = self._sample_linear(
+                    rng, {**p["a1"], "hi": min(p["a1"]["hi"], a1_max)}
+                )
+
+                prev_was_mute = False
+
+            # Pluck position changes in both cases
             events["pluck_position"][i] = self._sample_linear(rng, p["pluck_position"])
-            events["dynamic_level"][i]  = self._sample_db(rng, p["dynamic_level"])
 
         return events, n_events
 
