@@ -10,6 +10,7 @@ import wandb
 from src.model import SoundMatchingModel
 from src.losses import EventSetLoss, MultiScaleSpectralLoss, SOT2048Loss
 from src.metrics import compute_rms
+from src.detectors import run_detectors_on_batch
 
 
 class SoundMatchingExperiment(pl.LightningModule):
@@ -95,6 +96,13 @@ class SoundMatchingExperiment(pl.LightningModule):
         target_params = batch.get("events") or batch.get("params")
         detected = batch.get("detected")
         is_synthetic = target_params is not None
+
+        if self.model.decoder.use_external_detectors and detected is None:
+            detected = run_detectors_on_batch(
+                target_audio,
+                sr=self.hparams.fs,
+                num_frames=self.model.encoder.num_frames if hasattr(self.model.encoder, 'num_frames') else 250
+            )
 
         pred_raw = self.model.encoder(target_audio)
         pred_params = self.model.decoder.activate(pred_raw, detected)

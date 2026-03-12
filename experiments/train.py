@@ -88,6 +88,10 @@ def _build_datamodule(cfg: DictConfig) -> SoundMatchingDataModule:
         nsynth_split_train = cfg.data.nsynth.split_train
         nsynth_split_val = cfg.data.nsynth.split_val
 
+    syn_cfg = None
+    if cfg.data.has_synthetic:
+        syn_cfg = OmegaConf.to_container(cfg.data.synthetic, resolve=True)
+
     return SoundMatchingDataModule(
         has_synthetic=cfg.data.has_synthetic,
         has_ood=cfg.data.has_ood,
@@ -96,8 +100,7 @@ def _build_datamodule(cfg: DictConfig) -> SoundMatchingDataModule:
         duration_s=cfg.duration_s,
         batch_size=cfg.experiment.batch_size,
         num_workers=cfg.experiment.num_workers,
-        synthetic_cfg=OmegaConf.to_container(cfg.data.synthetic, resolve=True)
-        if cfg.data.has_synthetic else None,
+        synthetic_cfg=syn_cfg,
         nsynth_root=nsynth_root,
         nsynth_split_train=nsynth_split_train,
         nsynth_split_val=nsynth_split_val,
@@ -149,9 +152,11 @@ class SyntheticEpochCallback(Callback):
 def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
 
-    # ── Enforce H+N constraints ──
+    # ── Enforce Baseline Constraints ──
+    errors = []
+
+    # 1. Harmonics + Noise Constraints
     if cfg.model.decoder == "harmonics_noise":
-        errors = []
         if not cfg.detector.use_external_detectors:
             errors.append("detector=external (H+N requires f0 + loudness detectors)")
         if cfg.training.objective != "spectral_only":
@@ -162,14 +167,28 @@ def main(cfg: DictConfig) -> None:
             errors.append("data=nsynth_only (H+N requires NSynth OOD data)")
         if cfg.experiment.eval_synthetic_metrics:
             errors.append("experiment=ood_eval (H+N has no param-level metrics)")
-        if errors:
-            raise ValueError(
-                "harmonics_noise decoder requires:\n  "
-                + "\n  ".join(errors)
-                + "\n\nExample:\n  python experiments/train.py "
-                "model=harmonics_noise detector=external "
-                "training=spectral_only data=nsynth_only experiment=ood_eval"
-            )
+
+    # 2. Karplus-Strong Constraints
+    elif cfg.model.decoder == "ks":
+        if cfg.detector.use_external_detectors:
+            if cfg.training.objective != "spectral_only":
+                errors.append(
+                    "training=spectral_only (When using external detectors, "
+                    "timing/f0 are overridden, making parameter loss disconnected/redundant)"
+                )
+        else:
+            if cfg.training.objective == "spectral_only":
+                errors.append(
+                    "training=combined OR training=param_only (End-to-End detection "
+                    "requires EventSetLoss to learn discrete event existence/timing)"
+                )
+
+    if errors:
+        raise ValueError(
+            "Invalid configuration combination detected:\n  - "
+            + "\n  - ".join(errors)
+            + "\n\nPlease adjust your Hydra overrides."
+        )
 
     pl.seed_everything(cfg.seed, workers=True)
 

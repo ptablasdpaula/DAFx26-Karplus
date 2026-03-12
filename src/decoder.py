@@ -126,23 +126,48 @@ class KSDecoder(Decoder):
         f0_val = raw["f0_hz"].squeeze(-1).clamp(F0_MIN_HZ, F0_MAX_HZ)
 
         # ── 2. External Detector Overrides ──────────────────────────────────
-        if self.use_external_detectors and detected is not None:
-            det_onsets = detected.get("onsets")  # Expected: [B, num_frames]
-            det_f0 = detected.get("f0")  # Expected: [B, num_frames]
+        if self.use_external_detectors:
+            if detected is None or "onsets" not in detected or "f0" not in detected:
+                raise ValueError(
+                    "Decoder requested external detectors, but the batch is missing "
+                    "the 'detected' dictionary with 'onsets' and 'f0'. "
+                )
+
+            det_onsets = detected.get("onsets")  # Expected: [B, num_frames] binary mask
+            det_f0 = detected.get("f0")  # Expected: [B, num_frames] contour
 
             if det_onsets is not None and det_f0 is not None:
                 num_frames = det_f0.shape[1]
 
-                # Convert continuous predicted time [0, 1] to a frame index [0, 249]
-                frame_indices = (time_val * num_frames).long().clamp(0, num_frames - 1)
+                new_exists = torch.zeros_like(exists_prob)
+                new_time = torch.zeros_like(time_val)
+                new_f0 = torch.zeros_like(f0_val)
 
-                # Gather the external detector values exactly where the queries are looking
-                det_onsets_gathered = torch.gather(det_onsets, 1, frame_indices)
-                det_f0_gathered = torch.gather(det_f0, 1, frame_indices)
+                for b in range(B):
+                    onset_frames = torch.nonzero(det_onsets[b] > 0.5).squeeze(-1)
 
-                # Substitute existence and f0
-                exists_prob = det_onsets_gathered
-                f0_val = det_f0_gathered.clamp(F0_MIN_HZ, F0_MAX_HZ)
+                    num_onsets = min(len(onset_frames), max_events)
+                    onset_frames = onset_frames[:num_onsets]
+
+                    if num_onsets == 0:
+                        continue
+
+                    new_exists[b, :num_onsets] = 1.0
+                    new_time[b, :num_onsets] = onset_frames.float() / num_frames
+
+                    for i in range(num_onsets):
+                        start_frame = onset_frames[i]
+                        end_frame = onset_frames[i + 1] if i < num_onsets - 1 else num_frames
+
+                        segment_f0 = det_f0[b, start_frame:end_frame]
+                        if len(segment_f0) > 0:
+                            new_f0[b, i] = segment_f0.median()
+                        else:
+                            new_f0[b, i] = det_f0[b, start_frame]
+
+                exists_prob = new_exists
+                time_val = new_time
+                f0_val = new_f0.clamp(F0_MIN_HZ, F0_MAX_HZ)
 
         # ── 3. Package Events ───────────────────────────────────────────────
         return {
