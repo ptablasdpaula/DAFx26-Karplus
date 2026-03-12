@@ -32,6 +32,7 @@ class SoundMatchingDataModule(pl.LightningDataModule):
         nsynth_split_val: str = "test",
         val_synthetic_size: int = 250,
         val_synthetic_seed: int = 99999,
+        num_frames: int = 250,
     ):
         super().__init__()
         self.save_hyperparameters()

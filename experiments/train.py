@@ -104,6 +104,7 @@ def _build_datamodule(cfg: DictConfig) -> SoundMatchingDataModule:
         nsynth_root=nsynth_root,
         nsynth_split_train=nsynth_split_train,
         nsynth_split_val=nsynth_split_val,
+        num_frames=cfg.num_frames,
     )
 
 
