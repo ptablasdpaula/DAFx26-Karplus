@@ -361,8 +361,7 @@ class HarmonicsNoiseDecoder(Decoder):
 
         harmonic = self._harmonic_synth(f0_up, amplitudes)
         block_size = N // T
-        noise_mag_t = noise_mag.permute(0, 2, 1)
-        noise = self._noise_synth(noise_mag_t, block_size)
+        noise = self._noise_synth(noise_mag, block_size)
 
         audio = harmonic + noise
         return audio, params

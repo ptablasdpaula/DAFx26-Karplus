@@ -310,7 +310,8 @@ class HpNEncoder(nn.Module):
             self,
             wav: torch.Tensor # [B, T_audio]
     ) -> torch.Tensor:
-        mfccs = self.mfcc_transform(wav) # [B, 30, T_frames]
+        mfccs = self.mfcc_transform(wav) # [B, 30, T_frames + 1]
+        mfccs = mfccs[..., :-1] # [B, 30, T_frames]
         x = self.norm(mfccs)
         x = x.permute(0, 2, 1) # [B, T_frames, 30]
         x, _ = self.gru(x)
