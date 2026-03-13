@@ -64,6 +64,9 @@ CUDA_HOME = "$CONDA_PREFIX"
 TORCH_CUDA_ARCH_LIST = "8.0"
 FORCE_CUDA = "1"
 
+[feature.cuda.pypi-dependencies]
+transformers = ">=5.3.0, <6"
+
 [environments]
 default = { features = ["cpu"], solve-group = "cpu" }
 cuda = { features = ["cuda"], solve-group = "cuda" }
