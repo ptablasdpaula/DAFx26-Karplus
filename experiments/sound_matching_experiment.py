@@ -36,6 +36,9 @@ class SoundMatchingExperiment(pl.LightningModule):
             eval_synthetic_metrics: bool = True,
             eval_ood_metrics: bool = True,
             lr: float = 1e-3,
+            scheduler_patience: int = 15,
+            scheduler_factor: float = 0.5,
+            min_lr: float = 1e-6,
             fs: int = 16000,
             duration_s: float = 4.0,
             log_val_audio: bool = True,
@@ -228,8 +231,28 @@ class SoundMatchingExperiment(pl.LightningModule):
     # ── Optimiser ────────────────────────────────────────────────────────
 
     def configure_optimizers(self):
-            return torch.optim.AdamW(
-                self.model.parameters(), 
-                lr=self.hparams.lr, 
-                weight_decay=1e-4
-            )
+        optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.hparams.lr,
+            weight_decay=1e-4
+        )
+
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=self.hparams.scheduler_factor,
+            patience=self.hparams.scheduler_patience,
+            min_lr=self.hparams.min_lr,
+        )
+
+        monitor_metric = "val_synth/loss" if self.hparams.eval_synthetic_metrics else "val_ood/loss"
+
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": monitor_metric,
+                "interval": "epoch",
+                "frequency": 1,
+            },
+        }

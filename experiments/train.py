@@ -117,10 +117,13 @@ def _build_experiment(cfg: DictConfig, model: SoundMatchingModel) -> SoundMatchi
         w_mss=cfg.training.w_mss,
         w_sot=cfg.training.w_sot,
         w_param=cfg.training.w_param,
-        event_loss_weights=OmegaConf.to_container(cfg.training.event_loss_weights, resolve=True), # UPDATED THIS LINE
+        event_loss_weights=OmegaConf.to_container(cfg.training.event_loss_weights, resolve=True),
         eval_synthetic_metrics=cfg.experiment.eval_synthetic_metrics,
         eval_ood_metrics=cfg.experiment.eval_ood_metrics,
         lr=cfg.lr,
+        scheduler_patience=cfg.experiment.scheduler_patience,
+        scheduler_factor=cfg.experiment.scheduler_factor,
+        min_lr=cfg.experiment.min_lr,
         fs=cfg.fs,
         duration_s=cfg.duration_s,
         log_val_audio=cfg.experiment.log_val_audio,
@@ -224,7 +227,7 @@ def main(cfg: DictConfig) -> None:
 
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
 
-    monitor = "val_synth/loss" if cfg.data.has_synthetic else "val_ood/loss"
+    monitor = "val_synth/loss" if cfg.experiment.eval_synthetic_metrics else "val_ood/loss"
 
     ckpt_dir = EXPERIMENTS_DIR / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -251,6 +254,7 @@ def main(cfg: DictConfig) -> None:
     early_stop = EarlyStopping(
         monitor=monitor,
         patience=cfg.experiment.patience,
+        min_delta=cfg.experiment.min_delta,
         mode="min",
         verbose=True,
     )
