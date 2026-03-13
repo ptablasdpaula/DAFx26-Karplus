@@ -32,7 +32,7 @@ EVENT_SYNTH_PARAMS: tuple[str, ...] = (
     "f0", "burst_gain", "decay", "a1", "pluck_position", "dynamic_level",
 )
 
-MAX_EVENTS: int = 40
+MAX_EVENTS: int = 10
 
 MIDI_D1   = 26
 MIDI_D6   = 86
