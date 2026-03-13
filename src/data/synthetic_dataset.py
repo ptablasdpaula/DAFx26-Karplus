@@ -154,6 +154,7 @@ class SyntheticDataset(IterableDataset):
                                 self.max_events_per_sample + 1)
 
         # ── Sample onset times ──────────────────────────────────────────
+        max_onset_s = dur * 0.75  # no events in the last quarter
         first_lo = p["first_onset"]["lo"]
         first_hi = p["first_onset"]["hi"]
         first_time = rng.uniform(first_lo, first_hi)
@@ -161,9 +162,9 @@ class SyntheticDataset(IterableDataset):
         times = [first_time]
         for _ in range(n_events - 1):
             min_next = times[-1] + p["min_gap_s"]
-            if min_next >= dur:
+            if min_next >= max_onset_s:
                 break
-            next_time = rng.uniform(min_next, dur)
+            next_time = rng.uniform(min_next, max_onset_s)
             times.append(next_time)
 
         n_events = len(times)
