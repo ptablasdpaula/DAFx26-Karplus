@@ -96,16 +96,17 @@ class NsynthGuitarDataset(Dataset):
         audio = pt["audio"].float()
         assert audio.numel() == self.num_audio_samples
 
-        loudness_raw = self._resample_to_frames(pt["loudness"], fallback=-60.0)
+        loudness_raw = self._resample_to_frames(pt["loudness"])
 
         detected = {
-            "onsets":   self._onset_times_to_mask(pt["onset_times"]),
-            "f0":       self._resample_to_frames(pt["f0_hz"], fallback=220.0),
+            "onsets": self._onset_times_to_mask(pt["onset_times"]),
+            "f0": self._resample_to_frames(pt["f0_hz"]),
+            "confidence": self._resample_to_frames(pt["confidence"]),
             "loudness": self._normalize_loudness(loudness_raw),
         }
 
         return {
-            "audio":    audio,
+            "audio": audio,
             "detected": detected,
         }
 

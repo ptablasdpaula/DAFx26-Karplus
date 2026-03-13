@@ -38,13 +38,12 @@ def _process_cpu(args):
 
 @torch.no_grad()
 def preprocess_nsynth_guitar_acoustic(
-    splits: List[str] = ("test",),
+        splits: List[str] = ("test",),
 ) -> None:
     nsynth_root = Path(NSYNTH_DIR).resolve()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    # Pre-load CREPE weights once (avoids reload every predict call)
     torchcrepe.load.model(device, CREPE_MODEL)
     print(f"CREPE '{CREPE_MODEL}' model loaded on {device}")
 
@@ -93,7 +92,7 @@ def preprocess_nsynth_guitar_acoustic(
             num_batches = (len(keys) + AUDIO_BATCH_SIZE - 1) // AUDIO_BATCH_SIZE
             for batch_start in tqdm(range(0, len(keys), AUDIO_BATCH_SIZE),
                                     total=num_batches, desc=split, ncols=100):
-                batch_keys = keys[batch_start : batch_start + AUDIO_BATCH_SIZE]
+                batch_keys = keys[batch_start: batch_start + AUDIO_BATCH_SIZE]
 
                 # ---- Load audio -------------------------------------------------
                 t0 = time.time()
@@ -121,6 +120,7 @@ def preprocess_nsynth_guitar_acoustic(
                     batch_size=CREPE_FRAME_BATCH,
                     device=device,
                     return_periodicity=True,
+                    decoder=torchcrepe.decode.viterbi
                 )
                 t2 = time.time()
 
@@ -139,33 +139,35 @@ def preprocess_nsynth_guitar_acoustic(
                 for i, k in enumerate(batch_keys):
                     onset_times, loudness = cpu_results[k]
                     f0_hz = f0_batch[i, :-1].cpu().numpy()
+                    conf = conf_batch[i, :-1].cpu().numpy()
 
                     torch.save({
-                        "audio":       audios_t[i].cpu(),
+                        "audio": audios_t[i].cpu(),
                         "onset_times": torch.from_numpy(onset_times.astype(np.float32)),
-                        "f0_hz":       torch.from_numpy(f0_hz.astype(np.float32)),
-                        "loudness":    torch.from_numpy(loudness.astype(np.float32)),
+                        "f0_hz": torch.from_numpy(f0_hz.astype(np.float32)),
+                        "confidence": torch.from_numpy(conf.astype(np.float32)),
+                        "loudness": torch.from_numpy(loudness.astype(np.float32)),
                     }, items_dir / f"{k}.pt")
 
                     m = meta_json[k]
                     metadata[k] = {
-                        "path":                  f"{split}/preprocessed/items/{k}.pt",
-                        "num_samples":           int(audios_t[i].numel()),
+                        "path": f"{split}/preprocessed/items/{k}.pt",
+                        "num_samples": int(audios_t[i].numel()),
                         "instrument_family_str": m.get("instrument_family_str", ""),
                         "instrument_source_str": m.get("instrument_source_str", ""),
-                        "midi_pitch":            int(m.get("pitch", -1)),
-                        "midi_velocity":         int(m.get("velocity", -1)),
-                        "onset_times":           onset_times.tolist(),
+                        "midi_pitch": int(m.get("pitch", -1)),
+                        "midi_velocity": int(m.get("velocity", -1)),
+                        "onset_times": onset_times.tolist(),
                     }
                 t4 = time.time()
 
-                print(f"  batch {batch_start//AUDIO_BATCH_SIZE + 1}/{num_batches}: "
-                      f"load={t1-t0:.1f}s  crepe={t2-t1:.1f}s  "
-                      f"cpu={t3-t2:.1f}s  save={t4-t3:.1f}s")
+                print(f"  batch {batch_start // AUDIO_BATCH_SIZE + 1}/{num_batches}: "
+                      f"load={t1 - t0:.1f}s  crepe={t2 - t1:.1f}s  "
+                      f"cpu={t3 - t2:.1f}s  save={t4 - t3:.1f}s")
 
         split_elapsed = time.time() - split_t0
         print(f"Split '{split}' done in {split_elapsed:.1f}s "
-              f"({split_elapsed/60:.1f} min)")
+              f"({split_elapsed / 60:.1f} min)")
 
         # ---- Save split metadata ------------------------------------------------
         meta_path = split_out / "metadata.json"

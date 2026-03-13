@@ -135,6 +135,7 @@ class KSDecoder(Decoder):
 
             det_onsets = detected.get("onsets")  # Expected: [B, num_frames] binary mask
             det_f0 = detected.get("f0")  # Expected: [B, num_frames] contour
+            det_conf = detected.get("confidence")  # Expected: [B, num_frames] contour
 
             if det_onsets is not None and det_f0 is not None:
                 num_frames = det_f0.shape[1]
@@ -160,7 +161,15 @@ class KSDecoder(Decoder):
                         end_frame = onset_frames[i + 1] if i < num_onsets - 1 else num_frames
 
                         segment_f0 = det_f0[b, start_frame:end_frame]
-                        if len(segment_f0) > 0:
+
+                        segment_conf = det_conf[b, start_frame:end_frame]
+                        voiced_mask = segment_conf > 0.5
+
+                        if voiced_mask.any():
+                            # Target pitch = median of confident frames only
+                            new_f0[b, i] = segment_f0[voiced_mask].median()
+                        elif len(segment_f0) > 0:
+                            # Fallback if segment entirely unvoiced
                             new_f0[b, i] = segment_f0.median()
                         else:
                             new_f0[b, i] = det_f0[b, start_frame]
