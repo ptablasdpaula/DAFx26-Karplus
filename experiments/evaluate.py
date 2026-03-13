@@ -286,15 +286,17 @@ def run_evaluation(mode, args):
                         pred_mask = pred_exists > 0.5
                         tgt_mask = tgt_exists > 0.5
 
-                        # Onset precision / recall / F1
-                        pred_onsets_s = pred_times_s[pred_mask]
-                        tgt_onsets_s = tgt_times_s[tgt_mask]
+                        # ── NEW: Sort the arrays before passing to mir_eval ──
+                        pred_onsets_s = np.sort(pred_times_s[pred_mask])
+                        tgt_onsets_s = np.sort(tgt_times_s[tgt_mask])
+
                         try:
                             p, r, f1 = compute_onset_precision_recall(pred_onsets_s, tgt_onsets_s)
                             metrics["precision"].append(p)
                             metrics["recall"].append(r)
                             metrics["f1"].append(f1)
-                        except Exception:
+                        except Exception as e:
+                            print(f"mir_eval error: {e}") 
                             metrics["precision"].append(0.0)
                             metrics["recall"].append(0.0)
                             metrics["f1"].append(0.0)
