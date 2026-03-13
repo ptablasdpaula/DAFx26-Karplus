@@ -26,15 +26,15 @@ from src.detectors import run_detectors_on_batch
 # Losses and Metrics
 from src.losses import MultiScaleSpectralLoss, SOT2048Loss, EventSetLoss
 from src.metrics import (
-    compute_wmfcc, 
-    compute_rms, 
+    compute_wmfcc,
+    compute_rms,
     compute_mean_cents_distance,
     compute_onset_precision_recall
 )
 
-# ── FAITHFUL KERNEL AUDIO DISTANCE (KAD) IMPLEMENTATION ──────────────────────
 def compute_kad(real_features: torch.Tensor, fake_features: torch.Tensor) -> float:
-    with tqdm(total=4, desc="  ↳ Computing KAD", position=1, leave=False, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}]") as pbar:
+    with tqdm(total=4, desc="  ↳ Computing KAD", position=1, leave=False,
+              bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}]") as pbar:
         x = real_features.to(torch.float64)
         y = fake_features.to(torch.float64)
         n, m = x.size(0), y.size(0)
@@ -60,16 +60,18 @@ def compute_kad(real_features: torch.Tensor, fake_features: torch.Tensor) -> flo
         pbar.update(1)
 
         mmd_sq = (
-            (K_xx.sum() - torch.trace(K_xx)) / (n * (n - 1)) +
-            (K_yy.sum() - torch.trace(K_yy)) / (m * (m - 1)) -
-            2.0 * K_xy.mean()
+                (K_xx.sum() - torch.trace(K_xx)) / (n * (n - 1)) +
+                (K_yy.sum() - torch.trace(K_yy)) / (m * (m - 1)) -
+                2.0 * K_xy.mean()
         )
         pbar.update(1)
-        
+
     return float(mmd_sq.item() * 1000.0)
+
 
 # ── MODEL LOADING HELPERS ──────────────────────────────────────────────────
 IMPL_MAP = {"time_domain": Implementation.TIME_DOMAIN, "frequency_sampling": Implementation.FREQUENCY_SAMPLING}
+
 
 def _build_model_from_cfg(cfg) -> SoundMatchingModel:
     if cfg.model.decoder == "ks":
@@ -90,30 +92,31 @@ def _build_model_from_cfg(cfg) -> SoundMatchingModel:
         )
     return SoundMatchingModel(decoder=decoder, encoder_kwargs=OmegaConf.to_container(cfg.model.encoder, resolve=True))
 
+
 def _get_latest_run(tag: str, ckpt_dir: Path):
     """Finds the newest checkpoint and config file for a given tag based on the timestamp."""
     valid_runs = []
-    
+
     # Grab all checkpoints that start with our tag
     for ckpt_path in ckpt_dir.glob(f"{tag}*best.ckpt"):
         # Predict what the matching config file should be named
         config_name = ckpt_path.name.replace("_best.ckpt", "_config.yaml")
         config_path = ckpt_dir / config_name
-        
+
         # Only consider it valid if BOTH the checkpoint and config exist
         if config_path.exists():
             valid_runs.append((ckpt_path, config_path))
-            
+
     if not valid_runs:
         return None, None
-        
-    # Sort them by the checkpoint filename. Because your timestamps are 
+
     # YYYYMMDD_HHMMSS, an alphabetical sort is identical to a chronological sort!
     valid_runs.sort(key=lambda x: x[0].name)
-    
+
     # The last item in the list is the newest one
     latest_ckpt, latest_config = valid_runs[-1]
     return latest_config, latest_ckpt
+
 
 def _load_model(config_path: Path, ckpt_path: Path, device: torch.device):
     cfg = OmegaConf.load(config_path)
@@ -123,38 +126,40 @@ def _load_model(config_path: Path, ckpt_path: Path, device: torch.device):
     model.load_state_dict(state_dict)
     return model.to(device).eval()
 
+
 def _tag_to_rel_path(tag: str) -> str:
     return "/".join(tag.lower().split("_")[1:])
+
 
 # ── MAIN EVALUATION LOOP ────────────────────────────────────────────────────
 def run_evaluation(mode, args):
     device = torch.device(args.device)
     ckpt_dir = Path(args.ckpt_dir)
     audio_root = Path(args.out_dir) / "audio" / mode
-    
+
     # 1. Conditionally Load Perceptual Models
     if mode == "nsynth":
         print(f"\n--- Loading Perceptual Models to {device.type.upper()} ---")
         encodec = EncodecModel.from_pretrained("facebook/encodec_24khz").to(device).eval()
         clap_processor = ClapProcessor.from_pretrained("laion/clap-htsat-unfused")
         clap_model = ClapModel.from_pretrained("laion/clap-htsat-unfused").to(device).eval()
-    
+
     # 2. Setup Data and Domain-Specific Metric Functions
     if mode == "nsynth":
         ds = NsynthGuitarDataset(nsynth_root="src/data/nsynth", split="test")
-        tags = ["Nsynth_Free_Freq_Super",
-                "Nsynth_Free_Freq_Comb",
-                "Nsynth_Free_Time_Super", 
+        tags = ["Nsynth_Free_Freq_Comb",
                 "Nsynth_Free_Time_Comb",
                 "Nsynth_Det_Freq_Spec",
                 "Nsynth_Det_Time_Spec",
-                "Nsynth_Det_HpN_Spec"]
+                "Nsynth_Det_HpN_Spec",
+                "Synth_Free_Freq_Super", # No OOD training
+                "Synth_Free_Time_Super"] # No OOD training
     else:
         ds = SyntheticDataset(num_samples_per_epoch=250, fs=16000, random_seed=77777)
-        tags = [#"Synth_Free_Freq_Super",
-                #"Synth_Free_Freq_Comb",
-                #"Synth_Free_Time_Super", 
-                #"Synth_Free_Time_Comb",
+        tags = ["Synth_Free_Freq_Super",
+                "Synth_Free_Freq_Comb",
+                "Synth_Free_Time_Super",
+                "Synth_Free_Time_Comb",
                 "Synth_Det_Freq_Spec",
                 "Synth_Det_Time_Spec"]
         event_loss_fn = EventSetLoss(fs=16000).to(device)
@@ -166,42 +171,42 @@ def run_evaluation(mode, args):
     target_path = audio_root / "target"
     target_path.mkdir(parents=True, exist_ok=True)
     targets_saved = False
-    
+
     print(f"\n--- Starting {mode.upper()} Evaluation ---")
     all_results = {}
-    
+
     tag_pbar = tqdm(tags, desc="Overall Progress", position=0)
     for tag in tag_pbar:
         tag_pbar.set_postfix({"Current Model": tag})
-        
+
         # Look for the latest timestamped files dynamically
         config_path, ckpt_path = _get_latest_run(tag, ckpt_dir)
-        
+
         if config_path is None or ckpt_path is None:
             print(f"\n⚠️ Skipping {tag}: No valid checkpoint/config pair found.")
             continue
-            
+
         print(f"\n  ↳ Loading weights from: {ckpt_path.name}")
         model = _load_model(config_path, ckpt_path, device)
         pred_path = audio_root / "pred" / _tag_to_rel_path(tag)
         pred_path.mkdir(parents=True, exist_ok=True)
-        
+
         metrics = {"mss": [], "sot": [], "wmfcc": [], "rms": []}
         if mode == "nsynth":
             metrics["encodec_mse"] = []
             all_clap_tgt, all_clap_pred = [], []
         else:
             metrics.update({"precision": [], "recall": [], "f1": [], "cents_dist": [], "param_loss": []})
-        
+
         idx = 1
         with torch.inference_mode():
             batch_pbar = tqdm(loader, desc="  ↳ Processing Batches", position=1, leave=False)
             for batch in batch_pbar:
                 tgt_audio = batch["audio"].to(device)
-                
+
                 # Check if dataset has pre-computed detections
                 detected = {k: v.to(device) for k, v in batch["detected"].items()} if "detected" in batch else None
-                
+
                 # ON-THE-FLY DETECTION: Mirroring your training loop!
                 if model.decoder.use_external_detectors and detected is None:
                     num_frames = model.encoder.num_frames if hasattr(model.encoder, 'num_frames') else 250
@@ -212,49 +217,49 @@ def run_evaluation(mode, args):
                     )
                     # run_detectors_on_batch keeps things on the device, but let's be 100% safe
                     detected = {k: v.to(device) for k, v in detected.items()}
-                
+
                 raw = model.encoder(tgt_audio)
                 params = model.decoder.activate(raw, detected=detected)
                 pred_audio, _ = model.decoder.oracle_synth(params)
-                
+
                 metrics["mss"].append(mss_fn(pred_audio, tgt_audio).item())
                 metrics["sot"].append(sot_fn(pred_audio, tgt_audio).item())
-                
+
                 if mode == "nsynth":
                     t24 = torchaudio.functional.resample(tgt_audio, 16000, 24000).unsqueeze(1)
                     p24 = torchaudio.functional.resample(pred_audio, 16000, 24000).unsqueeze(1)
                     e_tgt = encodec.encode(t24).audio_codes.float()
                     e_pred = encodec.encode(p24).audio_codes.float()
                     metrics["encodec_mse"].append(torch.nn.functional.mse_loss(e_pred, e_tgt).item())
-                    
+
                     t48 = torchaudio.functional.resample(tgt_audio, 16000, 48000).cpu().numpy()
                     p48 = torchaudio.functional.resample(pred_audio, 16000, 48000).cpu().numpy()
-                    
+
                     out_tgt = clap_model.get_audio_features(
                         **clap_processor(audio=[a for a in t48], return_tensors="pt", sampling_rate=48000).to(device)
                     )
                     out_pred = clap_model.get_audio_features(
                         **clap_processor(audio=[a for a in p48], return_tensors="pt", sampling_rate=48000).to(device)
                     )
-                    
+
                     c_tgt = out_tgt if isinstance(out_tgt, torch.Tensor) else out_tgt.pooler_output
                     c_pred = out_pred if isinstance(out_pred, torch.Tensor) else out_pred.pooler_output
-                    
+
                     all_clap_tgt.append(c_tgt)
                     all_clap_pred.append(c_pred)
-                
-                else: 
+
+                else:
                     batch_events_dev = {k: v.to(device) for k, v in batch["events"].items()}
                     param_loss, _ = event_loss_fn(raw, batch_events_dev)
                     metrics["param_loss"].append(param_loss.item())
-                
+
                 for b in range(tgt_audio.shape[0]):
                     p_wav = pred_audio[b].cpu().numpy()
                     t_wav = tgt_audio[b].cpu().numpy()
-                    
+
                     metrics["wmfcc"].append(compute_wmfcc(t_wav, p_wav, sample_rate=16000))
                     metrics["rms"].append(compute_rms(t_wav, p_wav, sample_rate=16000))
-                    
+
                     if mode == "synthetic":
                         pred_exists = torch.sigmoid(raw["exists"][b]).squeeze(-1).detach().cpu().numpy()
                         tgt_exists = batch["events"]["exists"][b].detach().cpu().numpy()
@@ -262,20 +267,20 @@ def run_evaluation(mode, args):
                         if "events" in batch and "f0" in batch["events"]:
                             p_f0 = raw["f0_hz"][b].squeeze(-1).detach().cpu().numpy()
                             t_f0 = batch["events"]["f0"][b].detach().cpu().numpy()
-                            
+
                             valid_p_f0 = p_f0[pred_exists > 0.5]
                             valid_t_f0 = t_f0[tgt_exists > 0.5]
-                            
+
                             if len(valid_p_f0) > 0 and len(valid_t_f0) > 0:
                                 metrics["cents_dist"].append(compute_mean_cents_distance(valid_p_f0, valid_t_f0[0]))
-                        
+
                         if "events" in batch and "time" in batch["events"]:
                             pred_times = torch.sigmoid(raw["time"][b]).squeeze(-1).detach().cpu().numpy()
                             tgt_times = batch["events"]["time"][b].detach().cpu().numpy()
-                            
+
                             pred_onsets_s = pred_times[pred_exists > 0.5]
-                            tgt_onsets_s = tgt_times[tgt_exists > 0.5] 
-                            
+                            tgt_onsets_s = tgt_times[tgt_exists > 0.5]
+
                             try:
                                 p, r, f1 = compute_onset_precision_recall(pred_onsets_s, tgt_onsets_s)
                                 metrics["precision"].append(p)
@@ -290,17 +295,18 @@ def run_evaluation(mode, args):
                         sf.write(target_path / f"{idx:03d}.wav", t_wav, 16000)
                     sf.write(pred_path / f"{idx:03d}.wav", p_wav, 16000)
                     idx += 1
-                    
+
         targets_saved = True
 
         all_results[tag] = {k: np.mean(v) for k, v in metrics.items() if len(v) > 0}
-        
+
         if mode == "nsynth":
             kad_score = compute_kad(torch.cat(all_clap_tgt, dim=0), torch.cat(all_clap_pred, dim=0))
             all_results[tag]["CLAP_KAD"] = kad_score
 
     pd.DataFrame(all_results).T.to_csv(Path(args.out_dir) / f"{mode}_results.csv")
     print(f"\n✅ Done! Results saved to {args.out_dir}/{mode}_results.csv")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
