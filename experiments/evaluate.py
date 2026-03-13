@@ -32,6 +32,7 @@ from src.metrics import (
     compute_onset_precision_recall
 )
 
+
 def compute_kad(real_features: torch.Tensor, fake_features: torch.Tensor) -> float:
     with tqdm(total=4, desc="  ↳ Computing KAD", position=1, leave=False,
               bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}]") as pbar:
@@ -193,8 +194,8 @@ def run_evaluation(mode, args):
 
         metrics = {"mss": [], "sot": [], "wmfcc": [], "rms": []}
         if mode == "nsynth":
-            metrics["encodec_mse"] = []
             all_clap_tgt, all_clap_pred = [], []
+            all_encodec_tgt, all_encodec_pred = [], []
         else:
             metrics.update({"precision": [], "recall": [], "f1": [], "cents_dist": [], "param_loss": []})
 
@@ -228,9 +229,13 @@ def run_evaluation(mode, args):
                 if mode == "nsynth":
                     t24 = torchaudio.functional.resample(tgt_audio, 16000, 24000).unsqueeze(1)
                     p24 = torchaudio.functional.resample(pred_audio, 16000, 24000).unsqueeze(1)
-                    e_tgt = encodec.encode(t24).audio_codes.float()
-                    e_pred = encodec.encode(p24).audio_codes.float()
-                    metrics["encodec_mse"].append(torch.nn.functional.mse_loss(e_pred, e_tgt).item())
+
+                    # Continuous encoder embeddings for EnCodec KAD
+                    with torch.no_grad():
+                        enc_tgt = encodec.encoder(t24).flatten(1)  # (B, C*T)
+                        enc_pred = encodec.encoder(p24).flatten(1)
+                    all_encodec_tgt.append(enc_tgt)
+                    all_encodec_pred.append(enc_pred)
 
                     t48 = torchaudio.functional.resample(tgt_audio, 16000, 48000).cpu().numpy()
                     p48 = torchaudio.functional.resample(pred_audio, 16000, 48000).cpu().numpy()
@@ -301,8 +306,10 @@ def run_evaluation(mode, args):
         all_results[tag] = {k: np.mean(v) for k, v in metrics.items() if len(v) > 0}
 
         if mode == "nsynth":
-            kad_score = compute_kad(torch.cat(all_clap_tgt, dim=0), torch.cat(all_clap_pred, dim=0))
-            all_results[tag]["CLAP_KAD"] = kad_score
+            clap_kad = compute_kad(torch.cat(all_clap_tgt, dim=0), torch.cat(all_clap_pred, dim=0))
+            all_results[tag]["CLAP_KAD"] = clap_kad
+            encodec_kad = compute_kad(torch.cat(all_encodec_tgt, dim=0), torch.cat(all_encodec_pred, dim=0))
+            all_results[tag]["EnCodec_KAD"] = encodec_kad
 
     pd.DataFrame(all_results).T.to_csv(Path(args.out_dir) / f"{mode}_results.csv")
     print(f"\n✅ Done! Results saved to {args.out_dir}/{mode}_results.csv")
