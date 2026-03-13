@@ -5,7 +5,7 @@ synthetic:
   random_seed: 42
   max_events_per_sample: 10
   min_events_per_sample: 1
-  detector_batch_size: 64
+  detector_batch_size: 32
 nsynth:
   root: ${oc.env:PROJECT_ROOT,.}/src/data/nsynth
   split_train: training
