@@ -265,36 +265,45 @@ def run_evaluation(mode, args):
                     metrics["wmfcc"].append(compute_wmfcc(t_wav, p_wav, sample_rate=16000))
                     metrics["rms"].append(compute_rms(t_wav, p_wav, sample_rate=16000))
 
-                    if mode == "synthetic":
-                        pred_exists = torch.sigmoid(raw["exists"][b]).squeeze(-1).detach().cpu().numpy()
+                    if mode == "synthetic" and "events" in batch:
                         tgt_exists = batch["events"]["exists"][b].detach().cpu().numpy()
+                        duration_s = tgt_audio.shape[-1] / 16000.0
 
-                        if "events" in batch and "f0" in batch["events"]:
-                            p_f0 = raw["f0_hz"][b].squeeze(-1).detach().cpu().numpy()
-                            t_f0 = batch["events"]["f0"][b].detach().cpu().numpy()
+                        if model.decoder.use_external_detectors:
+                            # Det models: exists/time/f0 come from activated params (detector-derived)
+                            pred_exists = params["exists"][b].detach().cpu().numpy()
+                            pred_times_s = params["time"][b].detach().cpu().numpy() * duration_s
+                            pred_f0 = params["f0"][b].detach().cpu().numpy()
+                        else:
+                            # Free models: exists/time from raw logits, f0 from encoder head
+                            pred_exists = torch.sigmoid(raw["exists"][b]).squeeze(-1).detach().cpu().numpy()
+                            pred_times_s = torch.sigmoid(raw["time"][b]).squeeze(-1).detach().cpu().numpy() * duration_s
+                            pred_f0 = raw["f0_hz"][b].squeeze(-1).detach().cpu().numpy()
 
-                            valid_p_f0 = p_f0[pred_exists > 0.5]
-                            valid_t_f0 = t_f0[tgt_exists > 0.5]
+                        tgt_times_s = batch["events"]["time"][b].detach().cpu().numpy() * duration_s
+                        tgt_f0 = batch["events"]["f0"][b].detach().cpu().numpy()
 
-                            if len(valid_p_f0) > 0 and len(valid_t_f0) > 0:
-                                metrics["cents_dist"].append(compute_mean_cents_distance(valid_p_f0, valid_t_f0[0]))
+                        pred_mask = pred_exists > 0.5
+                        tgt_mask = tgt_exists > 0.5
 
-                        if "events" in batch and "time" in batch["events"]:
-                            pred_times = torch.sigmoid(raw["time"][b]).squeeze(-1).detach().cpu().numpy()
-                            tgt_times = batch["events"]["time"][b].detach().cpu().numpy()
+                        # Onset precision / recall / F1
+                        pred_onsets_s = pred_times_s[pred_mask]
+                        tgt_onsets_s = tgt_times_s[tgt_mask]
+                        try:
+                            p, r, f1 = compute_onset_precision_recall(pred_onsets_s, tgt_onsets_s)
+                            metrics["precision"].append(p)
+                            metrics["recall"].append(r)
+                            metrics["f1"].append(f1)
+                        except Exception:
+                            metrics["precision"].append(0.0)
+                            metrics["recall"].append(0.0)
+                            metrics["f1"].append(0.0)
 
-                            pred_onsets_s = pred_times[pred_exists > 0.5]
-                            tgt_onsets_s = tgt_times[tgt_exists > 0.5]
-
-                            try:
-                                p, r, f1 = compute_onset_precision_recall(pred_onsets_s, tgt_onsets_s)
-                                metrics["precision"].append(p)
-                                metrics["recall"].append(r)
-                                metrics["f1"].append(f1)
-                            except Exception:
-                                metrics["precision"].append(0.0)
-                                metrics["recall"].append(0.0)
-                                metrics["f1"].append(0.0)
+                        # Cents distance (f0)
+                        valid_p_f0 = pred_f0[pred_mask]
+                        valid_t_f0 = tgt_f0[tgt_mask]
+                        if len(valid_p_f0) > 0 and len(valid_t_f0) > 0:
+                            metrics["cents_dist"].append(compute_mean_cents_distance(valid_p_f0, valid_t_f0[0]))
 
                     if not targets_saved:
                         sf.write(target_path / f"{idx:03d}.wav", t_wav, 16000)
