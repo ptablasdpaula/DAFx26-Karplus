@@ -9,7 +9,6 @@ import wandb
 
 from src.model import SoundMatchingModel
 from src.losses import EventSetLoss, MultiScaleSpectralLoss, SOT2048Loss
-from src.metrics import compute_rms
 from src.detectors import run_detectors_on_batch
 
 
@@ -68,7 +67,7 @@ class SoundMatchingExperiment(pl.LightningModule):
         device = pred_audio.device
         info: dict[str, Any] = {}
         total = torch.tensor(0.0, device=device)
-        
+
         obj = self.hparams.objective
 
         if obj in ["spectral_only", "combined"]:
@@ -209,8 +208,7 @@ class SoundMatchingExperiment(pl.LightningModule):
     @torch.no_grad()
     def _log_audio_metrics(self, pred_audio, target_audio, tag):
         B = pred_audio.shape[0]
-        fs = self.hparams.fs
-        msss, sots, rmss = [], [], []
+        msss, sots = [], []
 
         for b in range(B):
             p_batch = pred_audio[b:b + 1].detach()
@@ -219,14 +217,8 @@ class SoundMatchingExperiment(pl.LightningModule):
             msss.append(self.mss(p_batch, t_batch).item())
             sots.append(self.sot(p_batch, t_batch).item())
 
-            p = pred_audio[b].detach().cpu().numpy()
-            t = target_audio[b].detach().cpu().numpy()
-
-            rmss.append(compute_rms(t[np.newaxis, :], p[np.newaxis, :], sample_rate=fs))
-
         self.log(f"{tag}/mss_metric", np.mean(msss), add_dataloader_idx=False)
         self.log(f"{tag}/sot_metric", np.mean(sots), add_dataloader_idx=False)
-        self.log(f"{tag}/rms_cos", np.mean(rmss), add_dataloader_idx=False)
 
     # ── Optimiser ────────────────────────────────────────────────────────
 
