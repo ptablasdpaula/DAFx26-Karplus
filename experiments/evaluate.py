@@ -156,7 +156,7 @@ def run_evaluation(mode, args):
                 "Synth_Free_Freq_Super", # No OOD training
                 "Synth_Free_Time_Super"] # No OOD training
     else:
-        ds = SyntheticDataset(num_samples_per_epoch=250, fs=16000, random_seed=77777)
+        ds = SyntheticDataset(num_samples_per_epoch=290, fs=16000, random_seed=77777)
         tags = ["Synth_Free_Freq_Super",
                 "Synth_Free_Freq_Comb",
                 "Synth_Free_Time_Super",
