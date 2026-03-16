@@ -8,7 +8,7 @@ import pytorch_lightning as pl
 import wandb
 
 from src.model import SoundMatchingModel
-from src.losses import EventSetLoss, MultiScaleSpectralLoss, SOT2048Loss
+from src.losses import EventSetLoss, MultiScaleSpectralLoss, SOT2048Loss, TemporalOptimalTransportLoss
 from src.detectors import run_detectors_on_batch
 
 
@@ -30,6 +30,7 @@ class SoundMatchingExperiment(pl.LightningModule):
             objective: str = "combined",
             w_mss: float = 1.0,
             w_sot: float = 1.0,
+            w_tot: float = 0.0,
             w_param: float = 1.0,
             event_loss_weights: dict[str, float] | None = None,
             eval_synthetic_metrics: bool = True,
@@ -51,6 +52,7 @@ class SoundMatchingExperiment(pl.LightningModule):
 
         self.mss = MultiScaleSpectralLoss()
         self.sot = SOT2048Loss(sample_rate=fs)
+        self.tot = TemporalOptimalTransportLoss()
 
         self._val_audio_examples = {"val_synth": [], "val_ood": []}
 
@@ -77,6 +79,11 @@ class SoundMatchingExperiment(pl.LightningModule):
             total = total + self.hparams.w_sot * sot_loss
             info["mss"] = mss_loss.detach()
             info["sot"] = sot_loss.detach()
+
+            if obj != "spectral_only" and self.hparams.w_tot > 0.0:
+                tot_loss = self.tot(pred_audio, target_audio)
+                total = total + self.hparams.w_tot * tot_loss
+                info["tot"] = tot_loss.detach()
 
         if is_synthetic and obj in ["param_only", "combined"]:
             p_total, p_breakdown = self.event_loss(pred_raw, target_params)
@@ -208,7 +215,7 @@ class SoundMatchingExperiment(pl.LightningModule):
     @torch.no_grad()
     def _log_audio_metrics(self, pred_audio, target_audio, tag):
         B = pred_audio.shape[0]
-        msss, sots = [], []
+        msss, sots, tots = [], [], []
 
         for b in range(B):
             p_batch = pred_audio[b:b + 1].detach()
@@ -216,9 +223,11 @@ class SoundMatchingExperiment(pl.LightningModule):
 
             msss.append(self.mss(p_batch, t_batch).item())
             sots.append(self.sot(p_batch, t_batch).item())
+            tots.append(self.tot(p_batch, t_batch).item())
 
         self.log(f"{tag}/mss_metric", np.mean(msss), add_dataloader_idx=False)
         self.log(f"{tag}/sot_metric", np.mean(sots), add_dataloader_idx=False)
+        self.log(f"{tag}/tot_metric", np.mean(tots), add_dataloader_idx=False)
 
     # ── Optimiser ────────────────────────────────────────────────────────
 

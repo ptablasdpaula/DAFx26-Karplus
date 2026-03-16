@@ -2,6 +2,7 @@ objective: param_only
 w_param: 1.0
 w_mss: 0.0
 w_sot: 0.0
+w_tot: 0.0
 
 event_loss_weights:
   w_exists: 100.0

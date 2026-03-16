@@ -116,6 +116,7 @@ def _build_experiment(cfg: DictConfig, model: SoundMatchingModel) -> SoundMatchi
         objective=cfg.training.objective,
         w_mss=cfg.training.w_mss,
         w_sot=cfg.training.w_sot,
+        w_tot=cfg.training.w_tot,
         w_param=cfg.training.w_param,
         event_loss_weights=OmegaConf.to_container(cfg.training.event_loss_weights, resolve=True),
         eval_synthetic_metrics=cfg.experiment.eval_synthetic_metrics,
