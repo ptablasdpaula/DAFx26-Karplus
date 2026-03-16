@@ -1,0 +1,30 @@
+decoder: harmonics_noise
+implementation: null   # not applicable to H+N
+
+n_harmonics: 100
+n_noise_bands: 65
+
+# ── DDSP Architecture Params ──
+z_dim: 16
+hidden_dim: 512
+
+encoder:
+  type: enhanced
+  fs: ${fs}
+  d_model: 64
+  num_blocks: 7
+  kernel_size: 3
+  dilation_base: 2
+  dropout: 0.1
+  mel_kwargs:
+    fs: ${fs}
+    n_fft: 1024
+    hop_length: 256
+    n_mels: 128
+    f_min: 32.0
+    f_max: 8000.0
+  frontend_kwargs: {}
+
+synth:
+  lagrange_order: 5
+  n_fft: 2048

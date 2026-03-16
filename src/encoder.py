@@ -321,3 +321,54 @@ class HpNEncoder(nn.Module):
         x, _ = self.gru(x)
         z = self.head(x) # [B, T_frames, num_outputs]
         return z.permute(0, 2, 1) # [B, num_outputs, T_frames]
+
+class HpN_Enhanced_Encoder(nn.Module):
+    """
+    Enhanced DDSP z-encoder using the same frontends as the KSEventEncoder.
+    Matches the TCN processing power while maintaining frame-based H+N outputs.
+    """
+    def __init__(
+            self,
+            num_outputs: int = 16, # z_dim for H+N decoder
+            fs: int = 16000,
+            mel_kwargs: dict | None = None,
+            frontend_kwargs: dict | None = None,
+            d_model: int = 64,
+            num_blocks: int = 7,
+            kernel_size: int = 3,
+            dilation_base: int = 2,
+            dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.num_outputs = num_outputs
+
+        self.mel = MelSpectrogramFrontend(**(mel_kwargs or {}))
+        self.learnable = LearnableFrontend(**(frontend_kwargs or {}))
+
+        in_ch = self.mel.out_channels + self.learnable.out_channels
+
+        self.proj_in = nn.Conv1d(in_ch, d_model, kernel_size=1)
+        self.tcn = _build_tcn(
+            in_ch=d_model,
+            tcn_channels=d_model,
+            num_blocks=num_blocks,
+            kernel_size=kernel_size,
+            dilation_base=dilation_base,
+            dropout=dropout,
+            causal=False
+        )
+
+        self.head = nn.Linear(d_model, num_outputs)
+
+    def forward(self, wav: torch.Tensor) -> torch.Tensor:
+        mel_feat = self.mel(wav)  # [B, C_mel, T]
+        lrn_feat = self.learnable(wav)  # [B, C_lrn, T]
+
+        T = min(mel_feat.shape[-1], lrn_feat.shape[-1])
+        x = torch.cat([mel_feat[..., :T], lrn_feat[..., :T]], dim=1)
+
+        x = self.proj_in(x)
+        x = self.tcn(x)
+
+        z = self.head(x.permute(0, 2, 1))
+        return z.permute(0, 2, 1) # [B, num_outputs, T]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from src.encoder import KSEventEncoder, HpNEncoder
+from src.encoder import KSEventEncoder, HpNEncoder, HpN_Enhanced_Encoder
 from src.decoder import Decoder, KSDecoder, HarmonicsNoiseDecoder
 from src.synths.synth import SynthOutput
 
@@ -38,7 +38,12 @@ class SoundMatchingModel(nn.Module):
             self.encoder = KSEventEncoder(**enc_kw)
         elif isinstance(decoder, HarmonicsNoiseDecoder):
             enc_kw["num_outputs"] = getattr(decoder, "z_dim", 16)
-            self.encoder = HpNEncoder(**enc_kw)
+            enc_type = enc_kw.pop("type", "baseline")
+
+            if enc_type == "enhanced":
+                self.encoder = HpN_Enhanced_Encoder(**enc_kw)
+            else:
+                self.encoder = HpNEncoder(**enc_kw)
         else:
             raise ValueError(f"Unknown decoder type: {type(decoder)}")
 

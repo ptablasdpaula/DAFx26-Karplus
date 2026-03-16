@@ -140,7 +140,8 @@ def _checkpoint_tag(cfg: DictConfig) -> str:
     elif impl == "frequency_sampling":
         impl_tag = "Freq"
     else:
-        impl_tag = "HpN"
+        enc_type = cfg.model.get("encoder", {}).get("type", "baseline")
+        impl_tag = "HpNEnh" if enc_type == "enhanced" else "HpN"
 
     obj = cfg.training.objective
     obj_tag = {"param_only": "Super", "spectral_only": "Spec", "combined": "Comb"}[obj]
