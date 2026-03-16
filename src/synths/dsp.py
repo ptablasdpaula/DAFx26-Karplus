@@ -168,16 +168,19 @@ def pluck_position_filter(
 @njit
 def compute_dynamics_R(
         f0: float,
-        bw: float,
+        dynamic_level: float,
         fs: int = FS_MIN
 ) -> float:
     """
     Compute dynamics filter coefficient R for a given pitch and dynamic level.
     """
-    bw *= (fs / 2.0)
-    fm = np.sqrt(F0_MIN * (fs / 2.0))
+    min_bw = F0_MIN
+    max_bw = fs / 2.0
+    bw_hz = min_bw * (max_bw / min_bw) ** dynamic_level
+
+    fm = np.sqrt(min_bw * max_bw)
     Ts = 1.0 / fs
-    R_L = np.exp(-bw * np.pi * Ts)
+    R_L = np.exp(-bw_hz * np.pi * Ts)
     G_L = (1 - R_L) / np.abs(1 - R_L * np.exp(-1j * 2 * np.pi * fm * Ts))
     left_side_num = 1 - G_L ** 2 * np.cos(2 * np.pi * f0 * Ts)
     left_side_den = 1 - G_L ** 2

@@ -87,7 +87,7 @@ class SyntheticDataset(IterableDataset):
             "burst_gain":    dict(mean=0.5, conc=3, lo_db=-40.0, hi_db=0.0),
             "pluck_position": dict(mean=0.25, conc=5,
                                    lo=PLUCK_POSITION_MIN, hi=PLUCK_POSITION_MAX),
-            "dynamic_level": dict(mean=0.5, conc=3, lo_db=-40.0, hi_db=0.0),
+            "dynamic_level": dict(mean=0.5, conc=3, lo=0.0, hi=1.0),
             "a1":            dict(mean=0.3, conc=5, lo=DAMPING_MIN, hi=DAMPING_MAX),
             "decay":         dict(mean=0.95, conc=5, lo=DECAY_MIN, hi=DECAY_MAX),
         }
@@ -212,7 +212,7 @@ class SyntheticDataset(IterableDataset):
 
             else:
                 # Standard Pluck
-                events["dynamic_level"][i] = self._sample_db(rng, p["dynamic_level"])
+                events["dynamic_level"][i] = self._sample_linear(rng, p["dynamic_level"])
                 events["decay"][i] = self._sample_linear(rng, p["decay"])
                 events["a1"][i] = self._sample_linear(
                     rng, {**p["a1"], "hi": min(p["a1"]["hi"], a1_max)}

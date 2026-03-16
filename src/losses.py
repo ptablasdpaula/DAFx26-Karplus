@@ -420,7 +420,7 @@ class EventSetLoss(nn.Module):
 
         gain_loss = F.l1_loss(amplitude_to_db(p_bg), amplitude_to_db(t_bg))
         pluck_loss = F.l1_loss(p_pluck, t_pluck)
-        dyn_loss = F.l1_loss(amplitude_to_db(p_dyn), amplitude_to_db(t_dyn))
+        dyn_loss = F.l1_loss(p_dyn, t_dyn)
 
         total_loss = (
                 self.w_exists * exists_loss +

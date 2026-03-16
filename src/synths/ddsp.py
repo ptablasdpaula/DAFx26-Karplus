@@ -260,22 +260,25 @@ def pluck_position_filter(
 
 def compute_dynamics_R(
         f0: T,
-        bw: T,
+        dynamic_level: T,
         fs: int = FS_MIN
 ) -> T:
     """
     Compute dynamics filter coefficient R for a given pitch and dynamic level.
 
     :param f0: Fundamental frequency in Hz [B, N]
-    :param bw: Bandwidth (dynamic level) [B, N]
+    :param dynamic_level: Bandwidth [B, N]
     :param fs: Sample rate in Hz
     :return: Filter coefficient R [B, N]
     """
-    bw_scaled = bw * (fs / 2.0)
-    fm = torch.sqrt(torch.tensor(F0_MIN * (fs / 2.0), device=f0.device, dtype=f0.dtype))
+    min_bw = F0_MIN
+    max_bw = fs / 2.0
+
+    bw_hz = min_bw * (max_bw / min_bw) ** dynamic_level
+    fm = torch.sqrt(torch.tensor(min_bw * max_bw, device=f0.device, dtype=f0.dtype))
     Ts = 1.0 / fs
 
-    R_L = torch.exp(-bw_scaled * torch.pi * Ts)
+    R_L = torch.exp(-bw_hz * torch.pi * Ts)
 
     # Compute G_L = (1 - R_L) / |1 - R_L * exp(-j * 2π * fm * Ts)|
     exp_term = torch.exp(-1j * 2 * torch.pi * fm * Ts)
