@@ -152,6 +152,7 @@ def run_evaluation(mode, args):
                 "Nsynth_Det_Freq_Spec",
                 "Nsynth_Det_Time_Spec",
                 "Nsynth_Det_HpN_Spec",
+                "Nsynth_Det_HpNEnh_Spec",
                 "Synth_Free_Freq_Super", # No OOD training
                 "Synth_Free_Time_Super"] # No OOD training
     else:
