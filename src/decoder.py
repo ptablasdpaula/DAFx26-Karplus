@@ -90,7 +90,7 @@ class KSDecoder(Decoder):
         use_external_detectors: If True, overrides predicted exists/f0 with external signals.
     """
 
-    _PARAM_IDX = {"burst_gain": 0, "decay": 1, "a1": 2, "pluck_position": 3, "dynamic_level": 4}
+    _PARAM_IDX = {"decay": 0, "a1": 1, "pluck_position": 2, "dynamic_level": 3}
 
     def __init__(
             self,
@@ -178,19 +178,22 @@ class KSDecoder(Decoder):
                 time_val = new_time
                 f0_val = new_f0.clamp(F0_MIN_HZ, F0_MAX_HZ)
 
-        # ── 3. Package Events ───────────────────────────────────────────────
-        return {
-            "exists": exists_prob,
-            "time": time_val,
-            "f0": f0_val,
-            "burst_gain": _sigmoid_range(raw["params"][..., pi["burst_gain"]], 0.0, BURST_GAIN_MAX),
-            "decay": _sigmoid_range(raw["params"][..., pi["decay"]], DECAY_MIN, DECAY_MAX),
-            "a1": _sigmoid_range(raw["params"][..., pi["a1"]], DAMPING_MIN, DAMPING_MAX),
-            "pluck_position": _sigmoid_range(raw["params"][..., pi["pluck_position"]], PLUCK_POSITION_MIN,
-                                             PLUCK_POSITION_MAX),
-            "dynamic_level": _sigmoid_range(raw["params"][..., pi["dynamic_level"]], DYNAMIC_LEVEL_MIN,
-                                            DYNAMIC_LEVEL_MAX),
-        }
+            g_gain = _sigmoid_range(raw["global_gain"], 0.0, BURST_GAIN_MAX)
+            g_gain_expanded = g_gain.expand(B, max_events)
+
+            # ── 3. Package Events ───────────────────────────────────────────────
+            return {
+                "exists": exists_prob,
+                "time": time_val,
+                "f0": f0_val,
+                "burst_gain": g_gain_expanded,
+                "decay": _sigmoid_range(raw["params"][..., pi["decay"]], DECAY_MIN, DECAY_MAX),
+                "a1": _sigmoid_range(raw["params"][..., pi["a1"]], DAMPING_MIN, DAMPING_MAX),
+                "pluck_position": _sigmoid_range(raw["params"][..., pi["pluck_position"]], PLUCK_POSITION_MIN,
+                                                 PLUCK_POSITION_MAX),
+                "dynamic_level": _sigmoid_range(raw["params"][..., pi["dynamic_level"]], DYNAMIC_LEVEL_MIN,
+                                                DYNAMIC_LEVEL_MAX),
+            }
 
     def _events_to_samples(self, events: dict[str, Tensor], B: int, num_samples: int) -> dict[str, Tensor]:
         device = events["exists"].device

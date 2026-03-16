@@ -296,10 +296,8 @@ class EventSetLoss(nn.Module):
 
         p_exists = torch.sigmoid(pred["exists"]).squeeze(-1)  # [B, N]
         p_time = torch.sigmoid(pred["time"]).squeeze(-1)  # [B, N]
-        p_gain = torch.sigmoid(pred["params"][..., 0])  # [B, N]
 
         t_time = tgt["time"]
-        t_gain = tgt["burst_gain"]
         t_exists = tgt["exists"]
 
         indices = []
@@ -307,7 +305,6 @@ class EventSetLoss(nn.Module):
             tgt_idx = torch.nonzero(t_exists[b]).squeeze(-1)
 
             if len(tgt_idx) == 0:
-                # <-- THE FIX: Put the dummy indices on the device
                 indices.append((
                     torch.arange(num_queries, device=device), 
                     torch.arange(num_queries, device=device)
@@ -315,11 +312,9 @@ class EventSetLoss(nn.Module):
                 continue
 
             tgt_t = t_time[b, tgt_idx]
-            tgt_g = t_gain[b, tgt_idx]
 
             out_exists = p_exists[b]  
             out_t = p_time[b]
-            out_g = p_gain[b]
 
             # Cost Time
             cost_time = torch.cdist(out_t.unsqueeze(-1), tgt_t.unsqueeze(-1), p=1)
@@ -393,16 +388,13 @@ class EventSetLoss(nn.Module):
         p_f0_probs = pred_raw["f0_probs"][real_mask]
         p_params = pred_raw["params"][real_mask]
 
-        #TODO why sigmoid before loss?
-        p_bg = _sigmoid_range(p_params[..., 0], 0.0, BURST_GAIN_MAX)
-        p_decay = _sigmoid_range(p_params[..., 1], DECAY_MIN, DECAY_MAX)
-        p_a1 = _sigmoid_range(p_params[..., 2], DAMPING_MIN, DAMPING_MAX)
-        p_pluck = _sigmoid_range(p_params[..., 3], PLUCK_POSITION_MIN, PLUCK_POSITION_MAX)
-        p_dyn = _sigmoid_range(p_params[..., 4], DYNAMIC_LEVEL_MIN, DYNAMIC_LEVEL_MAX)
+        p_decay = _sigmoid_range(p_params[..., 0], DECAY_MIN, DECAY_MAX)
+        p_a1 = _sigmoid_range(p_params[..., 1], DAMPING_MIN, DAMPING_MAX)
+        p_pluck = _sigmoid_range(p_params[..., 2], PLUCK_POSITION_MIN, PLUCK_POSITION_MAX)
+        p_dyn = _sigmoid_range(p_params[..., 3], DYNAMIC_LEVEL_MIN, DYNAMIC_LEVEL_MAX)
 
         t_time = tgt_reordered["time"][real_mask]
         t_f0 = tgt_reordered["f0"][real_mask]
-        t_bg = tgt_reordered["burst_gain"][real_mask]
         t_decay = tgt_reordered["decay"][real_mask]
         t_a1 = tgt_reordered["a1"][real_mask]
         t_pluck = tgt_reordered["pluck_position"][real_mask]
@@ -418,9 +410,13 @@ class EventSetLoss(nn.Module):
         t_rt60 = compute_harmonic_rt60(t_f0, t_a1, t_decay, fs=self.fs, n_harmonics=10)
         rt60_loss = F.l1_loss(torch.log1p(p_rt60), torch.log1p(t_rt60))
 
-        gain_loss = F.l1_loss(amplitude_to_db(p_bg), amplitude_to_db(t_bg))
         pluck_loss = F.l1_loss(p_pluck, t_pluck)
         dyn_loss = F.l1_loss(p_dyn, t_dyn)
+
+        # Calculate Global Gain Loss separately (1 per batch element)
+        p_bg = _sigmoid_range(pred_raw["global_gain"], 0.0, BURST_GAIN_MAX).squeeze(-1)  # [B]
+        t_bg = tgt["burst_gain"].max(dim=1)[0]  # [B]
+        gain_loss = F.l1_loss(p_bg, t_bg)
 
         total_loss = (
                 self.w_exists * exists_loss +
@@ -437,10 +433,10 @@ class EventSetLoss(nn.Module):
             "exists": exists_loss.item(),
             "time": time_loss.item(),
             "f0_ce": f0_loss.item(),
-            "gain_db": gain_loss.item(),
+            "gain": gain_loss.item(),
             "rt60": rt60_loss.item(),
             "pluck": pluck_loss.item(),
-            "dyn_db": dyn_loss.item(),
+            "dyn": dyn_loss.item(),
         }
 
         return total_loss, breakdown
@@ -459,7 +455,8 @@ if __name__ == "__main__":
         "time": torch.randn(B, num_queries, 1),
         "f0_probs": F.softmax(torch.randn(B, num_queries, 128), dim=-1),
         "f0_hz": torch.rand(B, num_queries, 1) * 1000 + 100,
-        "params": torch.randn(B, num_queries, 5)
+        "params": torch.randn(B, num_queries, 4),  # <-- CHANGED: Now 4 parameters (decay, a1, pluck, dyn)
+        "global_gain": torch.randn(B, 1)           # <-- ADDED: Single global gain prediction
     }
 
     tgt = {k: torch.zeros(B, num_queries) for k in EVENT_PARAM_NAMES}
@@ -467,17 +464,17 @@ if __name__ == "__main__":
     tgt["exists"][0, 0] = 1.0
     tgt["time"][0, 0] = 0.5
     tgt["f0"][0, 0] = 440.0
-    tgt["burst_gain"][0, 0] = 0.8
+    tgt["burst_gain"][0, :] = 0.8
     tgt["decay"][0, 0] = 0.99
 
     tgt["exists"][1, 0:2] = 1.0
     tgt["time"][1, 0] = 0.2
     tgt["f0"][1, 0] = 220.0
-    tgt["burst_gain"][1, 0] = 0.5
+    tgt["burst_gain"][1, :] = 0.5
 
     tgt["time"][1, 1] = 0.8
     tgt["f0"][1, 1] = 880.0
-    tgt["burst_gain"][1, 1] = 0.9
+    tgt["decay"][1, 1] = 0.95
 
     print("Testing EventSetLoss...")
     loss_fn = EventSetLoss()

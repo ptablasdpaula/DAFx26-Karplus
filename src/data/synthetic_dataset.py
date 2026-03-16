@@ -84,7 +84,7 @@ class SyntheticDataset(IterableDataset):
             "mute_a1_increase": dict(lo=0.05, hi=0.30),
             "mute_dyn_reduction": dict(lo=0.20, hi=0.95),
             # Synth params
-            "burst_gain":    dict(mean=0.5, conc=3, lo_db=-40.0, hi_db=0.0),
+            "burst_gain": dict(mean=0.95, conc=10, lo=0.8, hi=1.0),
             "pluck_position": dict(mean=0.25, conc=5,
                                    lo=PLUCK_POSITION_MIN, hi=PLUCK_POSITION_MAX),
             "dynamic_level": dict(mean=0.5, conc=3, lo=0.0, hi=1.0),
@@ -147,7 +147,7 @@ class SyntheticDataset(IterableDataset):
         midi = rng.uniform(MIDI_D1, MIDI_D6)
         f0_hz = float(midi_to_hz(midi))
         a1_max = self._a1_max(midi)
-        global_burst_gain = self._sample_db(rng, p["burst_gain"])
+        global_burst_gain = self._sample_linear(rng, p["burst_gain"])
 
         # ── Determine number of events ──────────────────────────────────
         n_events = rng.integers(self.min_events_per_sample,

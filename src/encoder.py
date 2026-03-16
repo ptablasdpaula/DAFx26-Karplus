@@ -235,7 +235,8 @@ class KSEventEncoder(nn.Module):
                 ** (torch.arange(n_f0_bins, dtype=torch.float32) / (n_f0_bins - 1))
         )
         self.register_buffer("f0_bin_centres", bin_centres)
-        self.head_params = nn.Linear(d_model, 5)
+        self.head_params = nn.Linear(d_model, 4)  # decay, a1, pluck, dyn
+        self.head_global_gain = nn.Linear(d_model, 1)  # gain
 
     def forward(self, wav: torch.Tensor) -> dict[str, torch.Tensor]:
         B = wav.shape[0]
@@ -253,6 +254,8 @@ class KSEventEncoder(nn.Module):
         memory = x.permute(0, 2, 1)  
         memory = self.pos_encoder(memory)
         memory = self.memory_norm(memory)
+
+        global_gain_logits = self.head_global_gain(memory.mean(dim=1))
 
         queries = self.query_embed.expand(B, -1, -1)
 
@@ -275,7 +278,8 @@ class KSEventEncoder(nn.Module):
             "time": time_logits,
             "f0_probs": f0_probs,
             "f0_hz": f0_hz,
-            "params": param_logits
+            "params": param_logits,
+            "global_gain": global_gain_logits,
         }
 
 class HpNEncoder(nn.Module):
