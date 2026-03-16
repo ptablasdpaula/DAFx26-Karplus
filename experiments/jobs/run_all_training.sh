@@ -37,5 +37,6 @@ sbatch $JOB_SCRIPT experiment=ood_eval data=nsynth_only detector=external traini
 
 # ── The Ultimate Baseline: DDSP Harmonics + Noise ──
 sbatch $JOB_SCRIPT experiment=ood_eval data=nsynth_only detector=external training=spectral_only model=harmonics_noise
+sbatch $JOB_SCRIPT experiment=ood_eval data=nsynth_only detector=external training=spectral_only model=harmonics_noise_enhanced
 
-echo "✅ All 11 jobs successfully submitted to SLURM!"
+echo "✅ All 12 jobs successfully submitted to SLURM!"
