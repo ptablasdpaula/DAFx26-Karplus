@@ -210,19 +210,22 @@ class Synth(nn.Module):
 
         for b in range(batch_size):
             device = params['f0'].device
-            bg_dense = torch.zeros(self.num_samples, device=device)
+            triggers = torch.zeros(self.num_samples, device=device)
             v_exists = params['exists'][b] > 0.5
+            global_gain = 0.0
             if v_exists.any():
                 v_time = params['time'][b, v_exists]
-                v_bg = params['burst_gain'][b, v_exists]
 
                 # Discrete placement for the NumPy model
                 indices = (v_time * (self.num_samples - 1)).long()
-                bg_dense.scatter_(0, indices, v_bg)
+                triggers.scatter_(0, indices, torch.ones_like(v_time))
+
+                global_gain = params['burst_gain'][b, v_exists][0].item()
 
             y = oracle_physical_model(
                 f0=dense_params['f0'][b].cpu().numpy(),
-                burst_gain=bg_dense.cpu().numpy(),  # Now dense!
+                triggers=triggers.cpu().numpy(),
+                global_gain=global_gain,
                 decay=dense_params['decay'][b].cpu().numpy(),
                 a1=dense_params['a1'][b].cpu().numpy(),
                 pluck_position=dense_params['pluck_position'][b].cpu().numpy(),

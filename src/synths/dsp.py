@@ -361,7 +361,8 @@ def compute_ksa_rt60(
 def oracle_physical_model(
         f0: npt.NDArray,  # [num_samples]
         pluck_position: npt.NDArray,  # [num_samples]
-        burst_gain: npt.NDArray,  # [num_samples]
+        triggers: npt.NDArray,  # [num_samples]
+        global_gain: float,
         dynamic_level: npt.NDArray,  # [num_samples]
         a1: npt.NDArray,  # [num_samples]
         decay: npt.NDArray,  # [num_samples]
@@ -372,7 +373,7 @@ def oracle_physical_model(
 ) -> npt.NDArray:
     x = noise_burst_excitation(
         num_samples=num_samples,
-        triggers=burst_gain,
+        triggers=triggers,
         f0=f0,
         fs=fs,
         seed=random_seed
@@ -386,7 +387,7 @@ def oracle_physical_model(
         fs=fs, lagrange_order=lagrange_order
     )
 
-    return y * burst_gain
+    return y * global_gain
 
 
 def events_to_samples_np(
@@ -400,6 +401,7 @@ def events_to_samples_np(
     """
     param_names = ["f0", "burst_gain", "decay", "a1", "pluck_position", "dynamic_level"]
     dense = {k: np.zeros(num_samples) for k in param_names}
+    dense["triggers"] = np.zeros(num_samples)
 
     valid_mask = events["exists"] > exist_threshold
 
@@ -426,11 +428,10 @@ def events_to_samples_np(
             end_sample = int(v_time[i + 1] * num_samples)
             end_sample = max(start_sample, min(end_sample, num_samples))
 
+        dense["triggers"][start_sample] = 1.0
+
         for k in param_names:
-            if k == "burst_gain":
-                dense[k][start_sample] = v_params[k][i]  # Impulse
-            else:
-                dense[k][start_sample:end_sample] = v_params[k][i]  # Step function
+            dense[k][start_sample:end_sample] = v_params[k][i]
 
     return dense
 
@@ -443,7 +444,6 @@ if __name__ == "__main__":
     defaults = {
         'f0': 220.0,
         'pluck_position': 0.5,
-        'burst_gain': 0.5,
         'dynamic_level': 0.5,
         'a1': 0.5,
         'decay': 0.995,
@@ -452,10 +452,10 @@ if __name__ == "__main__":
     sweeps = {
         'f0': (55.0, 3520.0),
         'pluck_position': (0.01, 0.5),
-        'burst_gain': (0.0, 1.0),
         'dynamic_level': (0.0, 1.0),
         'a1': (0.0, 1.0),
         'decay': (0.0, 1.0),
+        'global_gain': (0.0, 1.0),
     }
 
     all_passed = True
@@ -473,19 +473,24 @@ if __name__ == "__main__":
         # Test individual parameter sweeps
         for param_name, (min_val, max_val) in sweeps.items():
             params = {k: np.full(num_frames, v) for k, v in defaults.items()}
-            params[param_name] = np.linspace(min_val, max_val, num_frames)
 
-            # Set burst_gain to trigger at onset frames
-            params['burst_gain'] = np.zeros(num_frames)
-            params['burst_gain'][[0, 25, 50, 75]] = defaults['burst_gain']
-            if param_name == 'burst_gain':
-                params['burst_gain'][[0, 25, 50, 75]] = max_val
+            triggers = np.zeros(num_frames)
+            triggers[[0, 25, 50, 75]] = 1.0
+
+            if param_name == 'global_gain':
+                global_gain = max_val
+            else:
+                params[param_name] = np.linspace(min_val, max_val, num_frames)
+                global_gain = 0.5
 
             sample_params = upsample_frames_to_samples(signal_length, **params)
+            sample_triggers = upsample_frames_to_samples(signal_length, triggers=triggers)['triggers']
 
             y = oracle_physical_model(
                 num_samples=signal_length,
                 fs=fs,
+                triggers=sample_triggers,
+                global_gain=global_gain,
                 **sample_params
             )
 
@@ -497,17 +502,19 @@ if __name__ == "__main__":
             test_count += 1
 
         # Test all parameters sweeping simultaneously
-        params = {k: np.linspace(*v, num_frames) for k, v in sweeps.items()}
-        params['burst_gain'] = np.zeros(num_frames)
-        params['burst_gain'][[0, 25, 50, 75]] = 0.5
+        params = {k: np.linspace(*v, num_frames) for k, v in sweeps.items() if k != 'global_gain'}
+        triggers = np.zeros(num_frames)
+        triggers[[0, 25, 50, 75]] = 1.0
 
         start = time.time()
-
         sample_params = upsample_frames_to_samples(signal_length, **params)
+        sample_triggers = upsample_frames_to_samples(signal_length, triggers=triggers)['triggers']
 
         y = oracle_physical_model(
             num_samples=signal_length,
             fs=fs,
+            triggers=sample_triggers,
+            global_gain=0.5,
             **sample_params
         )
 
