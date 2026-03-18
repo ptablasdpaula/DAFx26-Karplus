@@ -42,6 +42,10 @@ def lin_resample_many(
         upsampled[key] = lin_resample(tensor, signal_length)
     return upsampled
 
+# =============================================================================
+#                           EXCITATION
+# =============================================================================
+
 def no_dc_burst(
         burst_length: int,
         seed: int = RND_SEED,
@@ -60,20 +64,16 @@ def no_dc_burst(
     burst_torch = torch.from_numpy(burst).to(device)
     return ((burst_torch / burst_torch.max()) - 0.5) * 2
 
-
-def spectral_excitation(
-        times: T,  # [B, max_events] continuous [0, 1]
-        gains: T,  # [B, max_events]
-        exists: T,  # [B, max_events]
-        f0: T,  # [B, max_events]
+def _freq_excitation(
+        times: T,
+        gains: T,
+        exists: T,
+        f0: T,
         signal_length: int,
-        fs: int = 16000,
-        noise_seed: int = 42,
+        fs: int = FS_MIN,
+        noise_seed: int = RND_SEED,
 ) -> T:
-    """
-    Generates a differentiable excitation signal using phase-rotation.
-    Returns the time-domain excitation [B, signal_length].
-    """
+    """Generates excitation using frequency-domain phase rotation."""
     batch_size, max_events = times.shape
     device = times.device
 
@@ -93,17 +93,89 @@ def spectral_excitation(
         noise_padded = F.pad(noise, (0, n_fft - burst_len))
         X_noise = torch.fft.rfft(noise_padded)  # [n_bins]
 
-        # Apply Differentiable Phase Shift
         t_samples = times[:, i:i + 1] * (signal_length - 1)
         phase_shift = torch.exp(-1j * omega.unsqueeze(0) * t_samples)
 
         exists_gate = (exists[:, i:i + 1] > 0.5).float().detach()
 
-        # Scale and accumulate
         event_X = X_noise.unsqueeze(0) * phase_shift * gains[:, i:i + 1] * exists_gate
         total_X += event_X
 
     return torch.fft.irfft(total_X, n=n_fft)
+
+
+def _time_excitation(
+        times: T,
+        gains: T,
+        exists: T,
+        f0: T,
+        signal_length: int,
+        lagrange_order: int = LAGRANGE_ORDER,
+        fs: int = FS_MIN,
+        noise_seed: int = RND_SEED,
+) -> T:
+    """Generates excitation using time-domain Lagrange fractional delay."""
+    batch_size, max_events = times.shape
+    device = times.device
+
+    total_x = torch.zeros((batch_size, signal_length), device=device)
+
+    for i in range(max_events):
+        f0_hz = f0[:, i].mean().item()
+        burst_len = int(fs / f0_hz)
+        noise = no_dc_burst(burst_len, seed=noise_seed + i, device=device)
+
+        t_samples = times[:, i] * (signal_length - 1)
+
+        L_int, h = lagrange_fractional_delay(t_samples.unsqueeze(1), lagrange_order)
+        L_int = L_int.squeeze(1)  # [B]
+        h = h.squeeze(1)          # [B, N+1]
+
+        x_int = torch.zeros((batch_size, signal_length), device=device)
+        for b in range(batch_size):
+            shift = int(L_int[b].item())
+            if shift >= signal_length:
+                continue
+
+            start_x = max(0, shift)
+            start_noise = max(0, -shift)
+
+            valid_len = min(burst_len - start_noise, signal_length - start_x)
+            if valid_len > 0:
+                x_int[b, start_x : start_x + valid_len] = noise[start_noise : start_noise + valid_len]
+
+        h_exp = h.unsqueeze(1).expand(batch_size, signal_length, lagrange_order + 1)
+        x_frac = fir(h_exp, x_int)
+
+        exists_gate = (exists[:, i] > 0.5).float().detach()
+        gain = gains[:, i] * exists_gate
+
+        total_x += x_frac * gain.unsqueeze(1)
+
+    return total_x
+
+
+def excitation(
+        times: T,
+        gains: T,
+        exists: T,
+        f0: T,
+        signal_length: int,
+        implementation: Implementation = Implementation.TIME_DOMAIN,
+        lagrange_order: int = LAGRANGE_ORDER,
+        fs: int = FS_MIN,
+        noise_seed: int = RND_SEED,
+) -> T:
+    if implementation == Implementation.TIME_DOMAIN:
+        return _time_excitation(
+            times, gains, exists, f0, signal_length, lagrange_order, fs, noise_seed
+        )
+    elif implementation == Implementation.FREQUENCY_SAMPLING:
+        return _freq_excitation(
+            times, gains, exists, f0, signal_length, fs, noise_seed
+        )
+    else:
+        raise NotImplementedError
 
 
 # =============================================================================

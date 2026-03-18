@@ -15,7 +15,7 @@ from src.synths.param_registry import PARAM_NAMES, validate_param_dict
 from src.synths.dsp import oracle_physical_model
 from src.synths.ddsp import (
     lin_resample_many,
-    spectral_excitation,
+    excitation,
     dynamics_filter,
     Implementation,
     pluck_position_filter,
@@ -61,12 +61,14 @@ class Synth(nn.Module):
         self.register_buffer('window', window_tensor.to(self.device))
 
     def forward(self, params: dict[str, T]) -> SynthOutput:
-        x_time = spectral_excitation(
+        x_time = excitation(
             times=params['time'],
             gains=params['burst_gain'],
             exists=params['exists'],
             f0=params['f0'],
-            signal_length=self.num_samples,  # Dictates the shift range
+            signal_length=self.num_samples,
+            implementation=self.implementation,
+            lagrange_order=self.lagrange_order,
             fs=self.fs,
             noise_seed=self.random_seed,
         )
