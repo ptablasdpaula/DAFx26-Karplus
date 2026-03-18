@@ -12,8 +12,7 @@ echo "🚀 Submitting all Sound Matching Training Experiments to SLURM..."
 # 1. SYNTHETIC EVAL BASELINES (Synthetic Only Data)
 # ═════════════════════════════════════════════════════════════════════════════
 
-sbatch $JOB_SCRIPT experiment=synth_eval data=synthetic_only detector=none training=param_only model=ks_freqsampling
-sbatch $JOB_SCRIPT experiment=synth_eval data=synthetic_only detector=none training=param_only model=ks_timedomain
+sbatch $JOB_SCRIPT experiment=synth_eval data=synthetic_only detector=none training=param_only model=ks_oracle
 
 sbatch $JOB_SCRIPT experiment=synth_eval data=synthetic_only detector=none training=combined model=ks_freqsampling
 sbatch $JOB_SCRIPT experiment=synth_eval data=synthetic_only detector=none training=combined model=ks_timedomain
@@ -39,4 +38,4 @@ sbatch $JOB_SCRIPT experiment=ood_eval data=nsynth_only detector=external traini
 sbatch $JOB_SCRIPT experiment=ood_eval data=nsynth_only detector=external training=spectral_only model=harmonics_noise
 sbatch $JOB_SCRIPT experiment=ood_eval data=nsynth_only detector=external training=spectral_only model=harmonics_noise_enhanced
 
-echo "✅ All 12 jobs successfully submitted to SLURM!"
+echo "✅ All 11 jobs successfully submitted to SLURM!"

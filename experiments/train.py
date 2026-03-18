@@ -42,6 +42,7 @@ import torch
 IMPL_MAP = {
     "time_domain": Implementation.TIME_DOMAIN,
     "frequency_sampling": Implementation.FREQUENCY_SAMPLING,
+    "oracle": Implementation.TIME_DOMAIN,
 }
 
 
@@ -131,12 +132,19 @@ def _build_experiment(cfg: DictConfig, model: SoundMatchingModel) -> SoundMatchi
         num_val_audio_examples=cfg.experiment.num_val_audio_examples,
     )
 
+
 def _checkpoint_tag(cfg: DictConfig) -> str:
     data_tag = "Nsynth" if cfg.data.has_ood else "Synth"
     det_tag = "Det" if cfg.detector.use_external_detectors else "Free"
 
+    obj = cfg.training.objective
+    obj_tag = {"param_only": "Super", "spectral_only": "Spec", "combined": "Comb"}[obj]
+
     impl = cfg.model.get("implementation", None)
-    if impl == "time_domain":
+
+    if obj == "param_only":
+        impl_tag = "Oracle"
+    elif impl == "time_domain":
         impl_tag = "Time"
     elif impl == "frequency_sampling":
         impl_tag = "Freq"
@@ -144,11 +152,7 @@ def _checkpoint_tag(cfg: DictConfig) -> str:
         enc_type = cfg.model.get("encoder", {}).get("type", "baseline")
         impl_tag = "HpNEnh" if enc_type == "enhanced" else "HpN"
 
-    obj = cfg.training.objective
-    obj_tag = {"param_only": "Super", "spectral_only": "Spec", "combined": "Comb"}[obj]
-
     return f"{data_tag}_{det_tag}_{impl_tag}_{obj_tag}"
-
 
 class SyntheticEpochCallback(Callback):
     def on_train_epoch_start(self, trainer, pl_module) -> None:
@@ -190,6 +194,9 @@ def main(cfg: DictConfig) -> None:
                     "training=combined OR training=param_only (End-to-End detection "
                     "requires EventSetLoss to learn discrete event existence/timing)"
                 )
+
+            if cfg.model.implementation == "oracle" and cfg.training.objective != "param_only":
+                errors.append("model=ks_oracle (Oracle implementation strictly requires training=param_only)")
 
     if errors:
         raise ValueError(

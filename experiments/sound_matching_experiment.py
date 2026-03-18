@@ -116,7 +116,7 @@ class SoundMatchingExperiment(pl.LightningModule):
         pred_raw = self.model.encoder(target_audio)
         pred_params = self.model.decoder.activate(pred_raw, detected)
 
-        if self.training:
+        if self.training and self.hparams.objective != "param_only":
             pred_audio, _ = self.model.decoder.synthesise(pred_params)
         else:
             pred_audio, _ = self.model.decoder.oracle_synth(pred_params)

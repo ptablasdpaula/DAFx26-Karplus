@@ -70,8 +70,11 @@ def compute_kad(real_features: torch.Tensor, fake_features: torch.Tensor) -> flo
 
 
 # ── MODEL LOADING HELPERS ──────────────────────────────────────────────────
-IMPL_MAP = {"time_domain": Implementation.TIME_DOMAIN, "frequency_sampling": Implementation.FREQUENCY_SAMPLING}
-
+IMPL_MAP = {
+    "time_domain": Implementation.TIME_DOMAIN,
+    "frequency_sampling": Implementation.FREQUENCY_SAMPLING,
+    "oracle": Implementation.TIME_DOMAIN
+}
 
 def _build_model_from_cfg(cfg) -> SoundMatchingModel:
     if cfg.model.decoder == "ks":
@@ -153,13 +156,12 @@ def run_evaluation(mode, args):
                 "Nsynth_Det_Time_Spec",
                 "Nsynth_Det_HpN_Spec",
                 "Nsynth_Det_HpNEnh_Spec",
-                "Synth_Free_Freq_Super", # No OOD training
-                "Synth_Free_Time_Super"] # No OOD training
+                "Synth_Free_Oracle_Super"]
+
     else:
         ds = SyntheticDataset(num_samples_per_epoch=290, fs=16000, random_seed=77777)
-        tags = ["Synth_Free_Freq_Super",
+        tags = ["Synth_Free_Oracle_Super",
                 "Synth_Free_Freq_Comb",
-                "Synth_Free_Time_Super",
                 "Synth_Free_Time_Comb",
                 "Synth_Det_Freq_Spec",
                 "Synth_Det_Time_Spec"]
