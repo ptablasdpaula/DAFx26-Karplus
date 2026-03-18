@@ -30,7 +30,7 @@ def upsample_frames_to_samples(
     return upsampled
 
 @njit
-def no_dc_burst(burst_length: int, seed: int=RND_SEED) -> npt.NDArray:
+def no_dc_burst(burst_length: int, seed: int = RND_SEED) -> npt.NDArray:
     np.random.seed(seed)
     burst = np.random.random(burst_length)
     burst = burst / np.max(burst)
@@ -39,25 +39,25 @@ def no_dc_burst(burst_length: int, seed: int=RND_SEED) -> npt.NDArray:
 @njit
 def noise_burst_excitation(
         num_samples: int,
-        burst_gain: npt.NDArray,  # [num_samples]
+        triggers: npt.NDArray,  # [num_samples]
         f0: npt.NDArray,  # [num_samples]
         fs: int,
         seed: int = RND_SEED
 ) -> npt.NDArray:
     excitation = np.zeros(num_samples)
 
-    assert burst_gain.shape == f0.shape
-    assert burst_gain.shape[0] == num_samples
+    assert triggers.shape == f0.shape
+    assert triggers.shape[0] == num_samples
 
     for n in range(num_samples):
-        if burst_gain[n] <= 0:
+        if triggers[n] <= 0:
             continue
 
         f0_at_trigger = f0[n]
         burst_length = int(fs / f0_at_trigger)
         end_sample = min(n + burst_length, num_samples)
         actual_length = end_sample - n
-        excitation[n:end_sample] += burst_gain[n] * no_dc_burst(burst_length, seed=seed)[:actual_length]
+        excitation[n:end_sample] += no_dc_burst(burst_length, seed=seed)[:actual_length]
 
     return excitation
 
@@ -359,12 +359,12 @@ def compute_ksa_rt60(
     return -60 / (20 * np.log10(pole_r)) / fs
 
 def oracle_physical_model(
-        f0: npt.NDArray,                # [num_samples]
-        pluck_position: npt.NDArray,    # [num_samples]
-        burst_gain: npt.NDArray,        # [num_samples]
-        dynamic_level: npt.NDArray,     # [num_samples]
-        a1: npt.NDArray,                # [num_samples]
-        decay: npt.NDArray,             # [num_samples]
+        f0: npt.NDArray,  # [num_samples]
+        pluck_position: npt.NDArray,  # [num_samples]
+        burst_gain: npt.NDArray,  # [num_samples]
+        dynamic_level: npt.NDArray,  # [num_samples]
+        a1: npt.NDArray,  # [num_samples]
+        decay: npt.NDArray,  # [num_samples]
         num_samples: int,
         fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER,
@@ -372,7 +372,7 @@ def oracle_physical_model(
 ) -> npt.NDArray:
     x = noise_burst_excitation(
         num_samples=num_samples,
-        burst_gain=burst_gain,
+        triggers=burst_gain,
         f0=f0,
         fs=fs,
         seed=random_seed
@@ -381,10 +381,12 @@ def oracle_physical_model(
     x = pluck_position_filter(x=x, f0=f0, position=pluck_position, fs=fs)
     x = dynamics_filter(x=x, f0=f0, dynamic_level=dynamic_level, fs=fs)
 
-    return karplus_strong(
+    y = karplus_strong(
         x=x, f0=f0, a1=a1, g=decay,
         fs=fs, lagrange_order=lagrange_order
     )
+
+    return y * burst_gain
 
 
 def events_to_samples_np(
@@ -432,6 +434,7 @@ def events_to_samples_np(
 
     return dense
 
+
 if __name__ == "__main__":
     duration = 1.0
     sample_rates = [16000, 32000, 44100]
@@ -476,7 +479,7 @@ if __name__ == "__main__":
             params['burst_gain'] = np.zeros(num_frames)
             params['burst_gain'][[0, 25, 50, 75]] = defaults['burst_gain']
             if param_name == 'burst_gain':
-                params['burst_gain'][[0, 25, 50, 75]] = np.linspace(min_val + 0.01, max_val, 4)
+                params['burst_gain'][[0, 25, 50, 75]] = max_val
 
             sample_params = upsample_frames_to_samples(signal_length, **params)
 
@@ -517,7 +520,7 @@ if __name__ == "__main__":
             print(f"  PASS: all parameters sweeping")
         test_count += 1
 
-        print (f"Generation elapsed {elapsed:.6f} seconds")
+        print(f"Generation elapsed {elapsed:.6f} seconds")
 
     print(f"\n{'=' * 60}")
     if all_passed:

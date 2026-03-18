@@ -66,7 +66,6 @@ def no_dc_burst(
 
 def _freq_excitation(
         times: T,
-        gains: T,
         exists: T,
         f0: T,
         signal_length: int,
@@ -98,7 +97,7 @@ def _freq_excitation(
 
         exists_gate = (exists[:, i:i + 1] > 0.5).float().detach()
 
-        event_X = X_noise.unsqueeze(0) * phase_shift * gains[:, i:i + 1] * exists_gate
+        event_X = X_noise.unsqueeze(0) * phase_shift * exists_gate
         total_X += event_X
 
     return torch.fft.irfft(total_X, n=n_fft)
@@ -106,7 +105,6 @@ def _freq_excitation(
 
 def _time_excitation(
         times: T,
-        gains: T,
         exists: T,
         f0: T,
         signal_length: int,
@@ -148,16 +146,13 @@ def _time_excitation(
         x_frac = fir(h_exp, x_int)
 
         exists_gate = (exists[:, i] > 0.5).float().detach()
-        gain = gains[:, i] * exists_gate
-
-        total_x += x_frac * gain.unsqueeze(1)
+        total_x += x_frac * exists_gate.unsqueeze(1)
 
     return total_x
 
 
 def excitation(
         times: T,
-        gains: T,
         exists: T,
         f0: T,
         signal_length: int,
@@ -168,11 +163,11 @@ def excitation(
 ) -> T:
     if implementation == Implementation.TIME_DOMAIN:
         return _time_excitation(
-            times, gains, exists, f0, signal_length, lagrange_order, fs, noise_seed
+            times, exists, f0, signal_length, lagrange_order, fs, noise_seed
         )
     elif implementation == Implementation.FREQUENCY_SAMPLING:
         return _freq_excitation(
-            times, gains, exists, f0, signal_length, fs, noise_seed
+            times, exists, f0, signal_length, fs, noise_seed
         )
     else:
         raise NotImplementedError

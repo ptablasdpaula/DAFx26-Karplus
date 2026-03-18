@@ -63,7 +63,6 @@ class Synth(nn.Module):
     def forward(self, params: dict[str, T]) -> SynthOutput:
         x_time = excitation(
             times=params['time'],
-            gains=params['burst_gain'],
             exists=params['exists'],
             f0=params['f0'],
             signal_length=self.num_samples,
@@ -79,6 +78,8 @@ class Synth(nn.Module):
             x = self._forward_frequency_domain(x_time)
         else:
             x = self._forward_time_domain(x_time)
+
+        x = x * params['burst_gain'][:, 0:1]
 
         return x, params
 
@@ -217,7 +218,7 @@ class Synth(nn.Module):
 
                 # Discrete placement for the NumPy model
                 indices = (v_time * (self.num_samples - 1)).long()
-                bg_dense.scatter_add_(0, indices, v_bg)
+                bg_dense.scatter_(0, indices, v_bg)
 
             y = oracle_physical_model(
                 f0=dense_params['f0'][b].cpu().numpy(),
@@ -334,7 +335,7 @@ if __name__ == "__main__":
                 'exists': torch.ones(1, 4),
                 'time': torch.tensor([[0.0, 0.25, 0.5, 0.75]]),  # 4 plucks evenly spaced
                 'f0': torch.tensor([[220.0, 330.0, 440.0, 550.0]]),
-                'burst_gain': torch.tensor([[0.5, 0.6, 0.7, 0.8]]),
+                'burst_gain': torch.tensor([[0.8, 0.8, 0.8, 0.8]]),
                 'pluck_position': torch.full((1, 4), 0.5),
                 'dynamic_level': torch.full((1, 4), 0.5),
                 'a1': torch.full((1, 4), 0.5),
