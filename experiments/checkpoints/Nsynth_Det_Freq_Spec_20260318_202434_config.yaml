@@ -1,0 +1,63 @@
+model:
+  decoder: ks
+  implementation: frequency_sampling
+  encoder:
+    max_events: 10
+    d_model: 64
+    num_blocks: 7
+    kernel_size: 3
+    dilation_base: 2
+    dropout: 0.1
+    cross_attn_heads: 8
+    cross_attn_layers: 3
+    n_f0_bins: 128
+    f0_min_hz: 32.0
+    f0_max_hz: 2000.0
+    mel_kwargs:
+      fs: ${fs}
+      n_fft: 1024
+      hop_length: 256
+      n_mels: 128
+      f_min: 32.0
+      f_max: 8000.0
+    frontend_kwargs: {}
+  synth:
+    lagrange_order: 5
+    n_fft: 2048
+detector:
+  use_external_detectors: true
+training:
+  objective: spectral_only
+  w_param: 0.0
+  w_mss: 1.0
+  w_sot: 1.0
+  w_tot: 0.0
+  event_loss_weights: {}
+data:
+  has_synthetic: false
+  has_ood: true
+  nsynth:
+    root: ${oc.env:PROJECT_ROOT,.}/src/data/nsynth
+    split_train: training
+    split_val: validation
+experiment:
+  eval_synthetic_metrics: false
+  eval_ood_metrics: true
+  max_epochs: 10000
+  gradient_clip_val: 1.0
+  batch_size: 32
+  num_workers: 4
+  val_check_interval: 1.0
+  log_val_audio: true
+  num_val_audio_examples: 4
+  patience: 50
+  min_delta: 0.0001
+  scheduler_patience: 15
+  scheduler_factor: 0.5
+  min_lr: 1.0e-06
+lr: 0.001
+seed: 42
+fs: 16000
+num_audio_samples: 64000
+num_frames: 250
+duration_s: 4.0
