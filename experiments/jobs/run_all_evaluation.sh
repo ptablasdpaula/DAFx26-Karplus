@@ -7,7 +7,7 @@ JOB_SCRIPT="experiments/jobs/run_evaluation.sh"
 
 echo "🔬 Submitting Evaluation Jobs to SLURM..."
 
-sbatch $JOB_SCRIPT --mode synthetic
-sbatch $JOB_SCRIPT --mode nsynth
+sbatch "$@" $JOB_SCRIPT --mode synthetic
+sbatch "$@" $JOB_SCRIPT --mode nsynth
 
 echo "✅ Both evaluation jobs submitted!"
