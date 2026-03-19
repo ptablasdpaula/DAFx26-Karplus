@@ -38,6 +38,7 @@ class SynthConfig:
     random_seed: int = DEFAULT_RND_SEED
     implementation: Implementation = Implementation.TIME_DOMAIN
     use_lti: bool = False
+    lti_pad_factor: int = 2
 
 
 class Synth(nn.Module):
@@ -56,6 +57,7 @@ class Synth(nn.Module):
         self.random_seed = config.random_seed
         self.implementation = config.implementation
         self.use_lti = config.use_lti
+        self.lti_n_fft = config.num_samples * config.lti_pad_factor
 
         window_tensor = torch.ones(self.n_fft)
         self.register_buffer('window', window_tensor.to(self.device))
@@ -153,7 +155,7 @@ class Synth(nn.Module):
         if self.use_lti:
             X = self._to_lti_freq_domain(x)
             p = self._params
-            n_fft = self.num_samples
+            n_fft = self.lti_n_fft
         else:
             X, num_frames = self._to_stft_domain(x)
             p = self._get_stft_params(num_frames)
@@ -266,10 +268,11 @@ class Synth(nn.Module):
         return self.p_stft
 
     def _to_lti_freq_domain(self, x: T) -> T:
-        return torch.fft.rfft(x, n=self.num_samples).unsqueeze(1)
+        return torch.fft.rfft(x, n=self.lti_n_fft).unsqueeze(1)
 
     def _from_lti_freq_domain(self, X: T) -> T:
-        return torch.fft.irfft(X.squeeze(1), n=self.num_samples)
+        y = torch.fft.irfft(X.squeeze(1), n=self.lti_n_fft)
+        return y[..., :self.num_samples]
 
     def _to_stft_domain(self, x: T) -> tuple[T, int]:
         X = torch.stft(x, n_fft=self.n_fft, hop_length=self.hop_length,
