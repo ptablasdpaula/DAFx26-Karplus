@@ -1,8 +1,7 @@
 import torch
 from torch import Tensor as T
 import torch.nn.functional as F
-from philtorch.lpv import fir, allpole
-from torchlpc import sample_wise_lpc
+from philtorch.lpv import fir, allpole, lfilter
 from enum import Enum
 import numpy as np
 
@@ -11,7 +10,6 @@ from src.synths.constants import (
     DEFAULT_LAGRANGE_ORDER as LAGRANGE_ORDER,
     DEFAULT_FS as FS_MIN,
     DEFAULT_RND_SEED as RND_SEED,
-    DEFAULT_IIR_TRUNCATION as IIR_TRUNCATION,
     DEFAULT_N_FFT as N_FFT,
 )
 
@@ -463,51 +461,31 @@ def one_pole_phase_delay(f0: T, a1: T, fs: int) -> T:
     return phase_delay
 
 def _time_karplus_strong(
-        x: T, L: T, a1: T, g: T, lagrange_order: int, iir_truncation: int
+        x: T, L: T, a1: T, g: T, lagrange_order: int,
 ) -> T:
     B, N = x.shape
-    K = iir_truncation
+    b0 = g * (1.0 - a1)  # [B, N]
 
-    b0 = g * (1.0 - a1)
+    L_int, h = lagrange_fractional_delay(L, lagrange_order)
 
-    L_int, weights = lagrange_fractional_delay(L, lagrange_order)
+    max_L = int(L_int.max().item())
+    max_order = max_L + lagrange_order
 
-    a1_padded = F.pad(a1, (K - 1, 0), value=1.0)
-    b0_padded = F.pad(b0, (K - 1, 0), value=0.0)
-
-    a1_windows = a1_padded.unfold(1, K, 1).flip(-1)
-    b0_windows = b0_padded.unfold(1, K, 1).flip(-1)
-
-    cumprods = torch.cumprod(a1_windows, dim=-1)
-    cumprods_shifted = torch.cat([
-        torch.ones(B, N, 1, device=x.device, dtype=x.dtype),
-        cumprods[:, :, :-1]
-    ], dim=-1)
-
-    iir_coeffs = b0_windows * cumprods_shifted
-
-    L_len = lagrange_order + 1
-    total_len = L_len + K - 1
-
-    weights_expanded = weights.unsqueeze(-1)
-    iir_coeffs_expanded = iir_coeffs.unsqueeze(2)
-    conv_product = weights_expanded * iir_coeffs_expanded
-
-    iir_expanded = torch.zeros(B, N, total_len, device=x.device, dtype=x.dtype)
-    for i in range(L_len):
-        iir_expanded[:, :, i:i + K] += conv_product[:, :, i, :]
-
-    max_delay = int(L_int.max().item()) + total_len
-    A = torch.zeros(B, N, max_delay, device=x.device, dtype=x.dtype)
+    # --- Denominator: a[k] coefficients [B, N, max_order] ---
+    a_coeffs = torch.zeros(B, N, max_order, device=x.device, dtype=x.dtype)
+    a_coeffs[:, :, 0] = -a1  # tap at delay 1
 
     batch_idx = torch.arange(B, device=x.device)[:, None].expand(B, N)
-    time_idx = torch.arange(N, device=x.device)[None, :].expand(B, N)
+    time_idx  = torch.arange(N, device=x.device)[None, :].expand(B, N)
 
-    for k in range(total_len):
-        delay_idx = (L_int + k - 1).clamp(0, max_delay - 1)
-        A[batch_idx, time_idx, delay_idx] -= iir_expanded[..., k]
+    for n in range(lagrange_order + 1):
+        idx = (L_int + n - 1).clamp(0, max_order - 1)
+        a_coeffs[batch_idx, time_idx, idx] += -b0 * h[..., n]
 
-    return sample_wise_lpc(x, A)
+    # --- Numerator: [1, -a1] ---
+    b_coeffs = torch.stack([torch.ones_like(a1), -a1], dim=-1)  # [B, N, 2]
+
+    return lfilter(b_coeffs, a_coeffs, x, form='df2', backend='torchlpc')
 
 
 def _freq_karplus_strong(
@@ -556,7 +534,6 @@ def karplus_strong(
         implementation: Implementation = Implementation.TIME_DOMAIN,
         fs: int = FS_MIN,
         lagrange_order: int = LAGRANGE_ORDER,
-        iir_truncation: int = IIR_TRUNCATION,
         n_fft: int = N_FFT,
 ) -> T:
     """
@@ -586,7 +563,7 @@ def karplus_strong(
     L_corrected = L + phase_delay
 
     if implementation == Implementation.TIME_DOMAIN:
-        return _time_karplus_strong(x, L_corrected, a1, g, lagrange_order, iir_truncation)
+        return _time_karplus_strong(x, L_corrected, a1, g, lagrange_order)
     elif implementation == Implementation.FREQUENCY_SAMPLING:
         eps = 1e-7
         a1_stable = torch.clamp(a1, 0.0, 1.0 - eps)

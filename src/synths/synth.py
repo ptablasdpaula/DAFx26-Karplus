@@ -8,7 +8,6 @@ from src.synths.constants import (
     DEFAULT_FS,
     DEFAULT_N_FFT,
     DEFAULT_LAGRANGE_ORDER,
-    DEFAULT_IIR_TRUNCATION,
     DEFAULT_RND_SEED,
 )
 from src.synths.param_registry import PARAM_NAMES, validate_param_dict
@@ -34,7 +33,6 @@ class SynthConfig:
     n_fft: int = DEFAULT_N_FFT
     hop_length: int | None = None
     lagrange_order: int = DEFAULT_LAGRANGE_ORDER
-    iir_truncation: int = DEFAULT_IIR_TRUNCATION
     random_seed: int = DEFAULT_RND_SEED
     implementation: Implementation = Implementation.TIME_DOMAIN
     use_lti: bool = False
