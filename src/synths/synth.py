@@ -51,7 +51,6 @@ class Synth(nn.Module):
         self.n_fft = config.n_fft
         self.hop_length = config.hop_length if config.hop_length is not None else config.n_fft // 4
         self.lagrange_order = config.lagrange_order
-        self.iir_truncation = config.iir_truncation
         self.random_seed = config.random_seed
         self.implementation = config.implementation
         self.use_lti = config.use_lti
@@ -143,7 +142,6 @@ class Synth(nn.Module):
             g=p['decay'],
             fs=self.fs,
             lagrange_order=self.lagrange_order,
-            iir_truncation=self.iir_truncation,
         )
 
         return x
