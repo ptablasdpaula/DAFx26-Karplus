@@ -14,7 +14,7 @@ from src.synths.param_registry import PARAM_NAMES, validate_param_dict
 from src.synths.dsp import oracle_physical_model
 from src.synths.ddsp import (
     lin_resample_many,
-    excitation,
+    differentiable_excitation,
     dynamics_filter,
     Implementation,
     pluck_position_filter,
@@ -34,7 +34,7 @@ class SynthConfig:
     hop_length: int | None = None
     lagrange_order: int = DEFAULT_LAGRANGE_ORDER
     random_seed: int = DEFAULT_RND_SEED
-    implementation: Implementation = Implementation.TIME_DOMAIN
+    implementation: Implementation = Implementation.FREQUENCY_SAMPLING
     use_lti: bool = False
     lti_pad_factor: int = 2
 
@@ -60,13 +60,11 @@ class Synth(nn.Module):
         self.register_buffer('window', window_tensor.to(self.device))
 
     def forward(self, params: dict[str, T]) -> SynthOutput:
-        x_time = excitation(
+        x_time = differentiable_excitation(
             times=params['time'],
             exists=params['exists'],
             f0=params['f0'],
             signal_length=self.num_samples,
-            implementation=self.implementation,
-            lagrange_order=self.lagrange_order,
             fs=self.fs,
             noise_seed=self.random_seed,
         )

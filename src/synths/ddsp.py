@@ -101,74 +101,22 @@ def _freq_excitation(
     return torch.fft.irfft(total_X, n=n_fft)
 
 
-def _time_excitation(
+def differentiable_excitation(
         times: T,
         exists: T,
         f0: T,
         signal_length: int,
-        lagrange_order: int = LAGRANGE_ORDER,
         fs: int = FS_MIN,
         noise_seed: int = RND_SEED,
 ) -> T:
-    """Generates excitation using time-domain Lagrange fractional delay."""
-    batch_size, max_events = times.shape
-    device = times.device
-
-    total_x = torch.zeros((batch_size, signal_length), device=device)
-
-    for i in range(max_events):
-        f0_hz = f0[:, i].mean().item()
-        burst_len = int(fs / f0_hz)
-        noise = no_dc_burst(burst_len, seed=noise_seed + i, device=device)
-
-        t_samples = times[:, i] * (signal_length - 1)
-
-        L_int, h = lagrange_fractional_delay(t_samples.unsqueeze(1), lagrange_order)
-        L_int = L_int.squeeze(1)  # [B]
-        h = h.squeeze(1)          # [B, N+1]
-
-        x_int = torch.zeros((batch_size, signal_length), device=device)
-        for b in range(batch_size):
-            shift = int(L_int[b].item())
-            if shift >= signal_length:
-                continue
-
-            start_x = max(0, shift)
-            start_noise = max(0, -shift)
-
-            valid_len = min(burst_len - start_noise, signal_length - start_x)
-            if valid_len > 0:
-                x_int[b, start_x : start_x + valid_len] = noise[start_noise : start_noise + valid_len]
-
-        h_exp = h.unsqueeze(1).expand(batch_size, signal_length, lagrange_order + 1)
-        x_frac = fir(h_exp, x_int)
-
-        exists_gate = (exists[:, i] > 0.5).float().detach()
-        total_x += x_frac * exists_gate.unsqueeze(1)
-
-    return total_x
-
-
-def excitation(
-        times: T,
-        exists: T,
-        f0: T,
-        signal_length: int,
-        implementation: Implementation = Implementation.TIME_DOMAIN,
-        lagrange_order: int = LAGRANGE_ORDER,
-        fs: int = FS_MIN,
-        noise_seed: int = RND_SEED,
-) -> T:
-    if implementation == Implementation.TIME_DOMAIN:
-        return _time_excitation(
-            times, exists, f0, signal_length, lagrange_order, fs, noise_seed
-        )
-    elif implementation == Implementation.FREQUENCY_SAMPLING:
-        return _freq_excitation(
-            times, exists, f0, signal_length, fs, noise_seed
-        )
-    else:
-        raise NotImplementedError
+    """
+    STE excitation: integer placement in the forward pass (no fractional
+    pre-echo), frequency-sampling phase-rotation gradient in the backward pass.
+    """
+    t_samples = times * signal_length
+    t_int = torch.round(t_samples)
+    times_ste = (t_int - t_samples.detach() + t_samples) / signal_length
+    return _freq_excitation(times_ste, exists, f0, signal_length, fs, noise_seed)
 
 
 # =============================================================================
