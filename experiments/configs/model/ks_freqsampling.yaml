@@ -22,4 +22,5 @@ encoder:
   frontend_kwargs: {}
 synth:
   lagrange_order: 5
-  n_fft: 2048
+  n_fft: 16384
+  hop_length: 256

@@ -81,7 +81,9 @@ def _build_model_from_cfg(cfg) -> SoundMatchingModel:
         synth = Synth(SynthConfig(
             num_samples=cfg.num_audio_samples, fs=cfg.fs,
             implementation=IMPL_MAP[cfg.model.implementation],
-            lagrange_order=cfg.model.synth.lagrange_order, n_fft=cfg.model.synth.n_fft
+            lagrange_order=cfg.model.synth.lagrange_order,
+            n_fft=cfg.model.synth.n_fft,
+            hop_length=cfg.model.synth.hop_length
         ))
         decoder = KSDecoder(synth=synth, use_external_detectors=cfg.detector.use_external_detectors)
     elif cfg.model.decoder == "harmonics_noise":

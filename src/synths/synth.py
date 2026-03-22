@@ -56,7 +56,7 @@ class Synth(nn.Module):
         self.use_lti = config.use_lti
         self.lti_n_fft = config.num_samples * config.lti_pad_factor
 
-        window_tensor = torch.ones(self.n_fft)
+        window_tensor = torch.hann_window(self.n_fft)
         self.register_buffer('window', window_tensor.to(self.device))
 
     def forward(self, params: dict[str, T]) -> SynthOutput:

@@ -54,6 +54,7 @@ def _build_decoder(cfg: DictConfig):
             implementation=IMPL_MAP[cfg.model.implementation],
             lagrange_order=cfg.model.synth.lagrange_order,
             n_fft=cfg.model.synth.n_fft,
+            hop_length=cfg.model.synth.hop_length,
         ))
         return KSDecoder(
             synth=synth,
