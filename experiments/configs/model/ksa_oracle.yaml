@@ -1,0 +1,5 @@
+defaults:
+  - ksa_base
+  - _self_
+
+implementation: oracle

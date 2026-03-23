@@ -102,8 +102,8 @@ def _build_datamodule(cfg: DictConfig) -> SoundMatchingDataModule:
         fs=cfg.fs,
         num_audio_samples=cfg.num_audio_samples,
         duration_s=cfg.duration_s,
-        batch_size=cfg.experiment.batch_size,
-        num_workers=cfg.experiment.num_workers,
+        batch_size=cfg.batch_size,          # Flattended!
+        num_workers=cfg.num_workers,        # Flattended!
         synthetic_cfg=syn_cfg,
         nsynth_root=nsynth_root,
         nsynth_split_train=nsynth_split_train,
@@ -120,39 +120,46 @@ def _build_experiment(cfg: DictConfig, model: SoundMatchingModel) -> SoundMatchi
         w_sot=cfg.training.w_sot,
         w_param=cfg.training.w_param,
         event_loss_weights=OmegaConf.to_container(cfg.training.event_loss_weights, resolve=True),
-        eval_synthetic_metrics=cfg.experiment.eval_synthetic_metrics,
-        eval_ood_metrics=cfg.experiment.eval_ood_metrics,
+        eval_synthetic_metrics=cfg.data.eval_synthetic_metrics,  # Moved to cfg.data
+        eval_ood_metrics=cfg.data.eval_ood_metrics,              # Moved to cfg.data
         lr=cfg.lr,
-        scheduler_patience=cfg.experiment.scheduler_patience,
-        scheduler_factor=cfg.experiment.scheduler_factor,
-        min_lr=cfg.experiment.min_lr,
+        scheduler_patience=cfg.scheduler_patience,               # Flattended!
+        scheduler_factor=cfg.scheduler_factor,                   # Flattended!
+        min_lr=cfg.min_lr,                                       # Flattended!
         fs=cfg.fs,
         duration_s=cfg.duration_s,
-        log_val_audio=cfg.experiment.log_val_audio,
-        num_val_audio_examples=cfg.experiment.num_val_audio_examples,
+        log_val_audio=cfg.log_val_audio,                         # Flattended!
+        num_val_audio_examples=cfg.num_val_audio_examples,       # Flattended!
     )
 
 
 def _checkpoint_tag(cfg: DictConfig) -> str:
-    data_tag = "Nsynth" if cfg.data.has_ood else "Synth"
-    det_tag = "Det" if cfg.detector.use_external_detectors else "Free"
-
-    obj = cfg.training.objective
-    obj_tag = {"param_only": "Super", "spectral_only": "Spec", "combined": "Comb"}[obj]
-
+    # 1. Engine
+    decoder = cfg.model.decoder
     impl = cfg.model.get("implementation", None)
+    enc_type = cfg.model.get("encoder", {}).get("type", "baseline")
 
-    if obj == "param_only":
-        impl_tag = "Oracle"
-    elif impl == "time_domain":
-        impl_tag = "Time"
-    elif impl == "frequency_sampling":
-        impl_tag = "Freq"
+    if decoder == "ks":
+        if impl == "oracle": engine = "oKSA"
+        elif impl == "time_domain": engine = "tKSA"
+        elif impl == "frequency_sampling": engine = "fKSA"
+    elif decoder == "harmonics_noise":
+        engine = "HNtcn" if enc_type == "enhanced" else "HN"
+
+    # 2. Detection
+    det = "xDet" if cfg.detector.use_external_detectors else "E2E"
+
+    # 3. Data
+    if cfg.data.has_synthetic and not cfg.data.has_ood:
+        data = "synth"
+    elif cfg.data.has_synthetic and cfg.data.has_ood:
+        data = "mix"
+    elif not cfg.data.has_synthetic and cfg.data.has_ood:
+        data = "real"
     else:
-        enc_type = cfg.model.get("encoder", {}).get("type", "baseline")
-        impl_tag = "HpNEnh" if enc_type == "enhanced" else "HpN"
+        data = "unknown"
 
-    return f"{data_tag}_{det_tag}_{impl_tag}_{obj_tag}"
+    return f"{engine}_{det}_{data}"
 
 class SyntheticEpochCallback(Callback):
     def on_train_epoch_start(self, trainer, pl_module) -> None:
@@ -174,11 +181,11 @@ def main(cfg: DictConfig) -> None:
         if cfg.training.objective != "spectral_only":
             errors.append("training=spectral_only (H+N has no ground-truth params)")
         if cfg.data.has_synthetic:
-            errors.append("data=nsynth_only (H+N cannot use synthetic KS data)")
+            errors.append("data=real (H+N cannot use synthetic KS data)")
         if not cfg.data.has_ood:
-            errors.append("data=nsynth_only (H+N requires NSynth OOD data)")
-        if cfg.experiment.eval_synthetic_metrics:
-            errors.append("experiment=ood_eval (H+N has no param-level metrics)")
+            errors.append("data=real (H+N requires NSynth OOD data)")
+        if cfg.data.eval_synthetic_metrics:
+            errors.append("Evaluate OOD metrics only (H+N has no param-level metrics)")
 
     # 2. Karplus-Strong Constraints
     elif cfg.model.decoder == "ks":
@@ -196,7 +203,7 @@ def main(cfg: DictConfig) -> None:
                 )
 
             if cfg.model.implementation == "oracle" and cfg.training.objective != "param_only":
-                errors.append("model=ks_oracle (Oracle implementation strictly requires training=param_only)")
+                errors.append("model=ksa_oracle (Oracle implementation strictly requires training=param_only)")
 
     if errors:
         raise ValueError(
@@ -236,7 +243,7 @@ def main(cfg: DictConfig) -> None:
 
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
 
-    monitor = "val_synth/loss" if cfg.experiment.eval_synthetic_metrics else "val_ood/loss"
+    monitor = "val_synth/loss" if cfg.data.eval_synthetic_metrics else "val_ood/loss"
 
     ckpt_dir = EXPERIMENTS_DIR / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -262,18 +269,18 @@ def main(cfg: DictConfig) -> None:
 
     early_stop = EarlyStopping(
         monitor=monitor,
-        patience=cfg.experiment.patience,
-        min_delta=cfg.experiment.min_delta,
+        patience=cfg.patience,
+        min_delta=cfg.min_delta,
         mode="min",
         verbose=True,
     )
 
     trainer = pl.Trainer(
-        max_epochs=cfg.experiment.max_epochs,
-        gradient_clip_val=cfg.experiment.gradient_clip_val,
+        max_epochs=cfg.max_epochs,
+        gradient_clip_val=cfg.gradient_clip_val,
         logger=logger,
         accelerator=accelerator,
-        val_check_interval=cfg.experiment.val_check_interval,
+        val_check_interval=cfg.val_check_interval,
         callbacks=[ckpt_best, ckpt_last, early_stop, SyntheticEpochCallback()],
         enable_progress_bar=True,
     )

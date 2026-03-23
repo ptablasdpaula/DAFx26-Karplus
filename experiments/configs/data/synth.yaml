@@ -1,0 +1,10 @@
+defaults:
+  - base
+  - _self_
+
+has_synthetic: true
+has_ood: false
+
+# Validation is on Synthetic data
+eval_synthetic_metrics: true
+eval_ood_metrics: false

@@ -12,30 +12,26 @@ echo "🚀 Submitting all Sound Matching Training Experiments to SLURM..."
 # 1. SYNTHETIC EVAL BASELINES (Synthetic Only Data)
 # ═════════════════════════════════════════════════════════════════════════════
 
-sbatch $JOB_SCRIPT experiment=synth_eval data=synthetic_only detector=none training=param_only model=ks_oracle
+sbatch $JOB_SCRIPT data=synth detector=end_to_end training=param_only model=ksa_oracle
 
-sbatch $JOB_SCRIPT experiment=synth_eval data=synthetic_only detector=none training=combined model=ks_freqsampling
-sbatch $JOB_SCRIPT experiment=synth_eval data=synthetic_only detector=none training=combined model=ks_timedomain
+sbatch $JOB_SCRIPT data=synth detector=end_to_end training=combined model=ksa_freq
+sbatch $JOB_SCRIPT data=synth detector=end_to_end training=combined model=ksa_time
 
-sbatch $JOB_SCRIPT experiment=synth_eval data=synthetic_only detector=external training=spectral_only model=ks_freqsampling
-sbatch $JOB_SCRIPT experiment=synth_eval data=synthetic_only detector=external training=spectral_only model=ks_timedomain
+sbatch $JOB_SCRIPT data=synth detector=external training=spectral_only model=ksa_freq
+sbatch $JOB_SCRIPT data=synth detector=external training=spectral_only model=ksa_time
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 2. NSYNTH OOD BASELINES
 # ═════════════════════════════════════════════════════════════════════════════
 
-# param_only OOD jobs removed: no spectral loss means val_ood/loss is
-# meaningless and early stopping kills them prematurely. Instead, evaluate.py
-# tests the Synth_Free_*_Super checkpoints (trained in section 1) on NSynth.
+sbatch $JOB_SCRIPT data=mix detector=end_to_end training=combined model=ksa_freq
+sbatch $JOB_SCRIPT data=mix detector=end_to_end training=combined model=ksa_time
 
-sbatch $JOB_SCRIPT experiment=ood_eval data=synthetic_and_nsynth detector=none training=combined model=ks_freqsampling
-sbatch $JOB_SCRIPT experiment=ood_eval data=synthetic_and_nsynth detector=none training=combined model=ks_timedomain
-
-sbatch $JOB_SCRIPT experiment=ood_eval data=nsynth_only detector=external training=spectral_only model=ks_freqsampling
-sbatch $JOB_SCRIPT experiment=ood_eval data=nsynth_only detector=external training=spectral_only model=ks_timedomain
+sbatch $JOB_SCRIPT data=real detector=external training=spectral_only model=ksa_freq
+sbatch $JOB_SCRIPT data=real detector=external training=spectral_only model=ksa_time
 
 # ── The Ultimate Baseline: DDSP Harmonics + Noise ──
-sbatch $JOB_SCRIPT experiment=ood_eval data=nsynth_only detector=external training=spectral_only model=harmonics_noise
-sbatch $JOB_SCRIPT experiment=ood_eval data=nsynth_only detector=external training=spectral_only model=harmonics_noise_enhanced
+sbatch $JOB_SCRIPT data=real detector=external training=spectral_only model=hn
+sbatch $JOB_SCRIPT data=real detector=external training=spectral_only model=hn_tcn
 
 echo "✅ All 11 jobs successfully submitted to SLURM!"

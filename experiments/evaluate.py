@@ -133,7 +133,7 @@ def _load_model(config_path: Path, ckpt_path: Path, device: torch.device):
 
 
 def _tag_to_rel_path(tag: str) -> str:
-    return "/".join(tag.lower().split("_")[1:])
+    return "/".join(tag.lower().split("_"))
 
 
 # ── MAIN EVALUATION LOOP ────────────────────────────────────────────────────
@@ -152,21 +152,25 @@ def run_evaluation(mode, args):
     # 2. Setup Data and Domain-Specific Metric Functions
     if mode == "nsynth":
         ds = NsynthGuitarDataset(nsynth_root="src/data/nsynth", split="test")
-        tags = ["Nsynth_Free_Freq_Comb",
-                "Nsynth_Free_Time_Comb",
-                "Nsynth_Det_Freq_Spec",
-                "Nsynth_Det_Time_Spec",
-                "Nsynth_Det_HpN_Spec",
-                "Nsynth_Det_HpNEnh_Spec",
-                "Synth_Free_Oracle_Super"]
+        tags = [
+            "fKSA_E2E_mix",
+            "tKSA_E2E_mix",
+            "fKSA_xDet_real",
+            "tKSA_xDet_real",
+            "HN_xDet_real",
+            "HNtcn_xDet_real",
+            "oKSA_E2E_synth"
+        ]
 
     else:
         ds = SyntheticDataset(num_samples_per_epoch=290, fs=16000, random_seed=77777)
-        tags = ["Synth_Free_Oracle_Super",
-                "Synth_Free_Freq_Comb",
-                "Synth_Free_Time_Comb",
-                "Synth_Det_Freq_Spec",
-                "Synth_Det_Time_Spec"]
+        tags = [
+            "oKSA_E2E_synth",
+            "fKSA_E2E_synth",
+            "tKSA_E2E_synth",
+            "fKSA_xDet_synth",
+            "tKSA_xDet_synth"
+        ]
         event_loss_fn = EventSetLoss(fs=16000).to(device)
 
     loader = DataLoader(ds, batch_size=16, shuffle=False)
