@@ -23,7 +23,7 @@ from src.data.nsynth.nsynth_guitar_dataset import NsynthGuitarDataset
 from src.data.synthetic_dataset import SyntheticDataset
 from src.detectors import run_detectors_on_batch
 
-from src.losses import MultiScaleSpectralLoss, SOT2048Loss, EventSetLoss, TemporalOptimalTransportLoss
+from src.losses import MultiScaleSpectralLoss, SOT2048Loss, EventSetLoss
 from src.metrics import (
     compute_wmfcc,
     compute_rms,
@@ -172,7 +172,6 @@ def run_evaluation(mode, args):
     loader = DataLoader(ds, batch_size=16, shuffle=False)
     mss_fn = MultiScaleSpectralLoss().to(device)
     sot_fn = SOT2048Loss(sample_rate=16000).to(device)
-    tot_fn = TemporalOptimalTransportLoss().to(device)
 
     target_path = audio_root / "target"
     target_path.mkdir(parents=True, exist_ok=True)
@@ -197,7 +196,7 @@ def run_evaluation(mode, args):
         pred_path = audio_root / "pred" / _tag_to_rel_path(tag)
         pred_path.mkdir(parents=True, exist_ok=True)
 
-        metrics = {"mss": [], "sot": [], "tot": [], "wmfcc": [], "rms": []}
+        metrics = {"mss": [], "sot": [], "wmfcc": [], "rms": []}
 
         if mode == "nsynth":
             all_clap_tgt, all_clap_pred = [], []
@@ -231,7 +230,6 @@ def run_evaluation(mode, args):
 
                 metrics["mss"].append(mss_fn(pred_audio, tgt_audio).item())
                 metrics["sot"].append(sot_fn(pred_audio, tgt_audio).item())
-                metrics["tot"].append(tot_fn(pred_audio, tgt_audio).item())
 
                 if mode == "nsynth":
                     t24 = torchaudio.functional.resample(tgt_audio, 16000, 24000).unsqueeze(1)

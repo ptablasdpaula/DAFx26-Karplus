@@ -2,7 +2,6 @@ objective: combined
 w_param: 0.5
 w_mss: 0.001
 w_sot: 0.01
-w_tot: 0.0
 
 event_loss_weights:
   w_exists: 100.0

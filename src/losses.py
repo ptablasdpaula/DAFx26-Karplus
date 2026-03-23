@@ -190,7 +190,6 @@ class MultiScaleSpectralLoss(nn.Module):
             return torch.ones(n)
         raise ValueError(f"Unknown window type: {window}")
 
-
 class SOT2048Loss(nn.Module):
     """
     SOT-2048-style wrapper using the bernardo-torres/spectral-optimal-transport repo.
@@ -239,44 +238,6 @@ class SOT2048Loss(nn.Module):
             self._build(x.device)
 
         return self.loss_fn(x, x_target)
-
-
-class TemporalOptimalTransportLoss(nn.Module):
-    """
-    Computes the 1D Wasserstein distance (Optimal Transport) on the
-    time-domain energy envelope of audio signals.
-    """
-
-    def __init__(self, p: int = 1, use_energy: bool = True):
-        super().__init__()
-        self.p = p
-        self.use_energy = use_energy
-
-    def forward(self, x: torch.Tensor, x_target: torch.Tensor) -> torch.Tensor:
-        # Prevent division by zero
-        EPS = 1e-8
-
-        if self.use_energy:
-            env_x = x ** 2
-            env_target = x_target ** 2
-        else:
-            env_x = x.abs()
-            env_target = x_target.abs()
-
-        env_x = env_x / (env_x.sum(dim=-1, keepdim=True) + EPS)
-        env_target = env_target / (env_target.sum(dim=-1, keepdim=True) + EPS)
-
-        cdf_x = torch.cumsum(env_x, dim=-1)
-        cdf_target = torch.cumsum(env_target, dim=-1)
-
-        if self.p == 1:
-            loss = torch.nn.functional.l1_loss(cdf_x, cdf_target)
-        elif self.p == 2:
-            loss = torch.nn.functional.mse_loss(cdf_x, cdf_target)
-        else:
-            raise ValueError(f"p must be 1 or 2, got {self.p}")
-
-        return loss
 
 class EventSetLoss(nn.Module):
     """
