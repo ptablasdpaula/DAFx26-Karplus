@@ -279,14 +279,5 @@ def main(cfg: DictConfig) -> None:
     )
     trainer.fit(experiment, datamodule=datamodule)
 
-    for suffix in ["best.ckpt", "last.ckpt", "config.yaml"]:
-        src = ckpt_dir / f"{run_name}_{suffix}"
-        dst = ckpt_dir / f"{tag}_{suffix}"
-        if src.exists():
-            dst.unlink(missing_ok=True)
-            dst.symlink_to(src.name)
-            print(f"  {dst.name} → {src.name}")
-
-
 if __name__ == "__main__":
     main()
