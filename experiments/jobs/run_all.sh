@@ -36,7 +36,7 @@ submit_training() {
         jid=$(sbatch --parsable "$TRAIN_SCRIPT" $overrides)
         echo "  [$jid] $overrides" >&2
         echo "$jid"   # stdout — captured by mapfile
-        ((count++))
+        ((++count))
     done < <(read_experiments)
     echo "✅ ${count} training jobs submitted." >&2
 }
