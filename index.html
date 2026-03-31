@@ -22,31 +22,23 @@
     h1{color:#2c3e50;margin-bottom:2rem}
     h2{color:#34495e;margin-top:3rem;margin-bottom:2rem}
     .abstract{background:#f8f9fa;padding:2rem;border-radius:8px;margin:2rem 0;text-align:justify}
-
     .table-wrapper { overflow-x: auto; margin: 2rem 0; box-shadow:0 2px 8px rgba(0,0,0,.1); border-radius:8px; }
     table{border-collapse:collapse;width:100%;min-width:1100px;}
     th,td{border:1px solid #e1e5e9;padding:10px;text-align:center; vertical-align:middle;}
     th{background:#f0f0f0;font-weight:600; font-size: 0.9rem;}
-
     td:first-child { font-weight: bold; background-color: #fafafa; width: 200px; text-align: left; padding-left: 15px;}
-
     .play-btn,.ctrl-btn{cursor:pointer;padding:6px 14px;background:#007BFF;color:#fff;border:none;border-radius:6px;font-size:15px;transition:.3s;box-shadow:0 2px 4px rgba(0,0,0,.1)}
     .play-btn:hover,.ctrl-btn:hover{transform:translateY(-1px);box-shadow:0 4px 8px rgba(0,0,0,.15)}
     .waveform,.spectrogram{height:60px;background:#e8e8e8;margin:6px 0;border-radius:4px;border:1px solid #ddd}
     .controls{display:flex;justify-content:center;gap:6px;margin-bottom:10px}
-
     .hero{margin:2rem 0}
     .button{display:inline-block;padding:10px 18px;text-decoration:none;border-radius:6px;transition:.3s; font-weight: 700;}
     .is-dark{background:#2c3e50;color:#fff}
     .is-dark:hover{background:#34495e;transform:translateY(-1px)}
-
     .repo-link-container { text-align: center; margin-top: 25px; }
   </style>
   <script>
-    window.MathJax = {
-      tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] },
-      svg: { fontCache: 'global' }
-    };
+    window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] }, svg: { fontCache: 'global' } };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 </head>
@@ -60,12 +52,11 @@
         <span>Rodrigo Díaz, </span>
         <span>Irán Román, </span>
         <span>Emmanouil Benetos, </span>
-        <span><a href="https://www.eecs.qmul.ac.uk/~josh/" target="_blank">Joshua D. Reiss</a></span><br>
-        <span style="display:block; margin-top: 8px;">Centre For Digital Music (C4DM), Queen Mary University Of London</span>
+        <span><a href="https://www.eecs.qmul.ac.uk/~josh/" target="_blank">Joshua D Reiss</a></span><br>
+        <span style="display:block; margin-top: 8px;">Centre For Digital Music C4DM, Queen Mary University Of London</span>
       </div>
-
       <div class="repo-link-container">
-        <a href="https://anonymous.4open.science/r/DAFx26-Karplus-177D/README.md" class="button is-dark" target="_blank">
+        <a href="https://anonymous.4open.science/r/DAFx26-Karplus-B8D2/" class="button is-dark" target="_blank">
           <span class="icon" style="margin-right: 8px;"><i class="fas fa-code"></i></span>
           Code Repository
         </a>
@@ -83,7 +74,6 @@
   <section class="container">
     <h2>Synthetic Parameter Recovery</h2>
     <button class="button is-dark" id="shuffle-synth" style="display:block; margin:0 auto">&#128256; Shuffle Synthetic Examples</button>
-
     <div class="table-wrapper">
       <table id="table-synth">
         <thead></thead>
@@ -95,7 +85,6 @@
   <section class="container">
     <h2>NSynth / Real Audio Recovery</h2>
     <button class="button is-dark" id="shuffle-nsynth" style="display:block; margin:0 auto">&#128256; Shuffle NSynth Examples</button>
-
     <div class="table-wrapper">
       <table id="table-nsynth">
         <thead></thead>
@@ -115,8 +104,6 @@
     const AUDIO_EXT = '.wav';
     const EXAMPLES_TO_SHOW = 5;
     const MAX_FILES = 290;
-
-    // Base path updated based on your 'ls' output
     const BASE_PATH = 'experiments/evaluation/audio';
 
     const allFileIDs = Array.from({length: MAX_FILES}, (_, i) => String(i + 1).padStart(3, '0'));
@@ -163,66 +150,40 @@
     function renderTable(tableSelector, modelsArray, ids) {
       const thead = document.querySelector(`${tableSelector} thead`);
       const tbody = document.querySelector(`${tableSelector} tbody`);
-
       let headerHTML = '<tr><th>Model</th>';
       ids.forEach((id, index) => {
         headerHTML += `<th>Example ${index + 1} <br><small style="font-weight:normal; color:#666;">(${id}.wav)</small></th>`;
       });
       headerHTML += '</tr>';
       thead.innerHTML = headerHTML;
-
       tbody.innerHTML = '';
-
       modelsArray.forEach(model => {
         const row = document.createElement('tr');
         const labelCell = document.createElement('td');
         labelCell.textContent = model.label;
         row.appendChild(labelCell);
-
         ids.forEach(id => {
           const td = document.createElement('td');
-          td.innerHTML = `
-            <div class="controls">
-              <button class="play-btn"><i class="fas fa-play"></i></button>
-              <button class="ctrl-btn" data-act="stop"><i class="fas fa-stop"></i></button>
-            </div>
-            <div class="waveform"></div>
-            <div class="spectrogram"></div>`;
-
+          td.innerHTML = `<div class="controls"><button class="play-btn"><i class="fas fa-play"></i></button><button class="ctrl-btn" data-act="stop"><i class="fas fa-stop"></i></button></div><div class="waveform"></div><div class="spectrogram"></div>`;
           const url = `${model.path}/${id}${AUDIO_EXT}`;
           const ws = makePlayer(td, url);
           const playBtn = td.querySelector('.play-btn');
           const stopBtn = td.querySelector('[data-act="stop"]');
-
           playBtn.onclick = () => {
-            players.forEach((other, btn) => {
-              if (other.isPlaying() && other !== ws) { other.pause(); icon(btn, false); }
-            });
+            players.forEach((other, btn) => { if (other.isPlaying() && other !== ws) { other.pause(); icon(btn, false); } });
             if (ws.isPlaying()) { ws.pause(); icon(playBtn, false); }
             else { ws.play(); icon(playBtn, true); }
           };
-
           stopBtn.onclick = () => { ws.pause(); ws.seekTo(0); icon(playBtn, false); };
-
           players.set(playBtn, ws);
           row.appendChild(td);
         });
         tbody.appendChild(row);
       });
-
-      if (window.MathJax && window.MathJax.typeset) {
-        window.MathJax.typeset();
-      }
+      if (window.MathJax && window.MathJax.typeset) { window.MathJax.typeset(); }
     }
-
-    document.getElementById('shuffle-synth').onclick = () => {
-      renderTable('#table-synth', SYNTH_MODELS, rand(allFileIDs, EXAMPLES_TO_SHOW));
-    };
-
-    document.getElementById('shuffle-nsynth').onclick = () => {
-      renderTable('#table-nsynth', NSYNTH_MODELS, rand(allFileIDs, EXAMPLES_TO_SHOW));
-    };
-
+    document.getElementById('shuffle-synth').onclick = () => { renderTable('#table-synth', SYNTH_MODELS, rand(allFileIDs, EXAMPLES_TO_SHOW)); };
+    document.getElementById('shuffle-nsynth').onclick = () => { renderTable('#table-nsynth', NSYNTH_MODELS, rand(allFileIDs, EXAMPLES_TO_SHOW)); };
     document.getElementById('shuffle-synth').click();
     document.getElementById('shuffle-nsynth').click();
   </script>
