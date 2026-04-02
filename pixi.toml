@@ -1,5 +1,5 @@
 [workspace]
-authors = ["Pablo Tablas <YOUR_USERNAME@qmul.ac.uk>"]
+authors = ["<YOUR_USERNAME@qmul.ac.uk>"]
 channels = ["conda-forge"]
 name = "DAFx26-Karplus"
 platforms = ["osx-arm64", "linux-64"]
