@@ -44,7 +44,9 @@ PLUCK_POSITION_MAX = 0.5
 DYNAMIC_LEVEL_MIN = 0.1
 DYNAMIC_LEVEL_MAX = 1.0
 DECAY_MIN = 0.9
-DECAY_MAX = 1.0
+DECAY_MAX = 0.99999  # strictly < 1: keeps the KSA feedback loop stable so the
+                     # recursive synthesis cannot diverge to inf/NaN in float32
+                     # (audio-loss training on real data otherwise drives decay->1)
 DAMPING_MIN = 0.0
 DAMPING_LOG_MIN = 1e-4
 DAMPING_MAX = 0.75

@@ -202,7 +202,7 @@ def compute_loudness_stats(splits=("test", "validation", "training")):
 
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    from src.data.nsynth.nsynth_guitar_dataset import NsynthGuitarDataset
+    from data.nsynth.nsynth_guitar_dataset import NsynthGuitarDataset
 
     preprocess_nsynth_guitar_acoustic(splits=("test", "validation", "training"))
     compute_loudness_stats()

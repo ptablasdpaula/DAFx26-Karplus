@@ -159,7 +159,10 @@ def pluck_position_filter(
     :return: Filtered excitation signal [num_samples]
     """
     assert len(x) == len(f0) == len(position)
-    assert np.all((position >= 0.01) & (position <= 0.5))
+    # The model bounds pluck_position to [0.01, 0.5] via a sigmoid, but float32
+    # rounding can nudge it a hair past an edge. Clamp (rather than assert) so the
+    # oracle render used for validation metrics never crashes mid-training.
+    position = np.minimum(np.maximum(position, 0.01), 0.5)
 
     L = fs / f0
     comb_L = L * position

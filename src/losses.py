@@ -239,6 +239,8 @@ class SOT2048Loss(nn.Module):
 
         return self.loss_fn(x, x_target)
 
+
+
 class EventSetLoss(nn.Module):
     """
     Bipartite matching loss for DETR-style Event Packets.

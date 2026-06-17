@@ -29,7 +29,7 @@ nvidia-smi || true
 
 export WANDB_API_KEY="***REDACTED_WANDB_KEY***"
 
-pixi run -e cuda python src/data/nsynth/preprocess_subset.py "$@"
+pixi run -e cuda python data/nsynth/preprocess_subset.py "$@"
 
 echo ""
 echo "=== Done: $(date) ==="

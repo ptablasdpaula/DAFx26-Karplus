@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 
-from src.data.synthetic_dataset import SyntheticDataset
+from data.synthetic_dataset import SyntheticDataset
 
 class SoundMatchingDataModule(pl.LightningDataModule):
     """
@@ -43,7 +43,7 @@ class SoundMatchingDataModule(pl.LightningDataModule):
 
         # ── NSynth ───────────────────────────────────────────────────────
         if hp.has_ood:
-            from src.data.nsynth.nsynth_guitar_dataset import NsynthGuitarDataset
+            from data.nsynth.nsynth_guitar_dataset import NsynthGuitarDataset
 
             assert hp.nsynth_root is not None, "has_ood=True but nsynth_root not set."
             self.train_nsynth = NsynthGuitarDataset(
