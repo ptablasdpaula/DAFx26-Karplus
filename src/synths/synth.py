@@ -14,9 +14,10 @@ from src.synths.param_registry import PARAM_NAMES, validate_param_dict
 from src.synths.dsp import oracle_physical_model
 from src.synths.ddsp import (
     lin_resample_many,
-    differentiable_excitation,
+    excitation,
     dynamics_filter,
     Implementation,
+    ExcitationMode,
     pluck_position_filter,
     karplus_strong,
 )
@@ -35,6 +36,7 @@ class SynthConfig:
     lagrange_order: int = DEFAULT_LAGRANGE_ORDER
     random_seed: int = DEFAULT_RND_SEED
     implementation: Implementation = Implementation.FREQUENCY_SAMPLING
+    excitation_mode: ExcitationMode = ExcitationMode.STE
     use_lti: bool = False
     lti_pad_factor: int = 2
 
@@ -53,6 +55,7 @@ class Synth(nn.Module):
         self.lagrange_order = config.lagrange_order
         self.random_seed = config.random_seed
         self.implementation = config.implementation
+        self.excitation_mode = config.excitation_mode
         self.use_lti = config.use_lti
         self.lti_n_fft = config.num_samples * config.lti_pad_factor
 
@@ -60,13 +63,15 @@ class Synth(nn.Module):
         self.register_buffer('window', window_tensor.to(self.device))
 
     def forward(self, params: dict[str, T]) -> SynthOutput:
-        x_time = differentiable_excitation(
+        x_time = excitation(
+            self.excitation_mode,
             times=params['time'],
             exists=params['exists'],
             f0=params['f0'],
             signal_length=self.num_samples,
             fs=self.fs,
             noise_seed=self.random_seed,
+            lagrange_order=self.lagrange_order,
         )
 
         self._expand_sparse_events_to_dense(params)

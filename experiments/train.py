@@ -31,7 +31,7 @@ from src.synths.synth import Synth, SynthConfig
 from src.synths.ddsp import Implementation
 from src.decoder import KSDecoder
 from src.model import SoundMatchingModel
-from src.data.data_module import SoundMatchingDataModule
+from data.data_module import SoundMatchingDataModule
 from experiments.sound_matching_experiment import SoundMatchingExperiment
 
 from paths import EXPERIMENTS_DIR
@@ -130,6 +130,7 @@ def _build_experiment(cfg: DictConfig, model: SoundMatchingModel) -> SoundMatchi
         duration_s=cfg.duration_s,
         log_val_audio=cfg.log_val_audio,                         # Flattended!
         num_val_audio_examples=cfg.num_val_audio_examples,       # Flattended!
+        stopgrad=cfg.get("stopgrad", ""),
     )
 
 
@@ -159,7 +160,21 @@ def _checkpoint_tag(cfg: DictConfig) -> str:
     else:
         data = "unknown"
 
-    return f"{engine}_{det}_{data}"
+    tag = f"{engine}_{det}_{data}"
+
+    # 4. Ablation suffix: keep these checkpoints distinct from the joint pilots so
+    # evaluate.py's per-tag latest-checkpoint selection does not shadow them.
+    sg = str(cfg.get("stopgrad", "") or "").lower()
+    has_onset = ("onset" in sg) or ("time" in sg) or ("both" in sg)
+    has_f0 = ("f0" in sg) or ("both" in sg)
+    if has_onset and has_f0:
+        tag = f"{tag}_sgBoth"
+    elif has_onset:
+        tag = f"{tag}_sgOnset"
+    elif has_f0:
+        tag = f"{tag}_sgF0"
+
+    return tag
 
 class SyntheticEpochCallback(Callback):
     def on_train_epoch_start(self, trainer, pl_module) -> None:
@@ -170,6 +185,12 @@ class SyntheticEpochCallback(Callback):
 @hydra.main(version_base="1.3", config_path="configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
+
+    # torchlpc's numba CUDA scan path (used by the time-domain KS synth) logs an
+    # INFO line per GPU dealloc; under hydra/lightning's INFO root logger this
+    # floods the run log and adds per-step overhead. Quiet it to WARNING.
+    import logging as _logging
+    _logging.getLogger("numba").setLevel(_logging.WARNING)
 
     # ── Enforce Baseline Constraints ──
     errors = []
@@ -215,6 +236,7 @@ def main(cfg: DictConfig) -> None:
     pl.seed_everything(cfg.seed, workers=True)
 
     model = _build_model(cfg)
+
     experiment = _build_experiment(cfg, model)
     datamodule = _build_datamodule(cfg)
 
