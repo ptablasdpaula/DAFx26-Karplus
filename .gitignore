@@ -12,12 +12,52 @@ __pycache__/
 experiments/outputs/*
 experiments/logs/*
 experiments/wandb/*
-experiments/checkpoints/*
 logs/*
 
 
-src/data/nsynth/test/*
-src/data/nsynth/validation/*
-src/data/nsynth/training/*
-src/data/nsynth/loudness_stats.json
+data/nsynth/test/*
+data/nsynth/validation/*
+data/nsynth/training/*
+data/nsynth/loudness_stats.json
 
+
+.DS_Store
+
+# nsynth split dirs/symlinks (data lives on /gpfs/scratch)
+data/nsynth/test
+data/nsynth/validation
+data/nsynth/training
+
+# local scratch job-id markers
+.pilot_jobids
+.envbuild_main_jid
+.envbuild_jid
+.verify_jid
+
+# Paper lives on Overleaf (synced to the draft repo), not in this code repo
+Latex/
+PAPER_EDITS_PLAN.md
+
+# temporary back-compat symlink (src/data -> ../data) while live jobs run
+/src/data
+.ablate_jids
+.ablate_verify_jid
+.finalize_jid
+.ft_jids
+.ft_verify_jid
+.pilot_runs
+.preprocess_jid
+
+# regenerated figure artifacts (paper copies live in Latex/figures, synced to Overleaf)
+figures/*.pdf
+.overnight_jids
+OVERNIGHT_RUN.md
+SURPRISES_AND_REFLECTION.md
+
+# eval job-id markers and intermediate chunk/backup CSVs (regenerable)
+.evalchunk_jids*
+.feval_jid
+.hn_retrain_jids
+experiments/evaluation/*_part[0-9].csv
+experiments/evaluation/*_part[A-Z].csv
+experiments/evaluation/*.ACCEPTED.csv

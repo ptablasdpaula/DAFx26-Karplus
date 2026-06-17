@@ -6,6 +6,6 @@ synthetic:
   detector_batch_size: 32
 
 nsynth:
-  root: ${oc.env:PROJECT_ROOT,.}/src/data/nsynth
+  root: ${oc.env:PROJECT_ROOT,.}/data/nsynth
   split_train: training
   split_val: validation
