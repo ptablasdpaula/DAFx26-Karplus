@@ -92,26 +92,7 @@
   <section class="container">
     <h2>Abstract</h2>
     <div class="abstract">
-      <p>We present an event-based sound matching model using a differentiable extended Karplus-Strong algorithm. To avoid relying on external onset and fundamental frequency detectors, we explore training methodologies combining parameter losses on synthetic data with audio losses. We demonstrate that time-domain fractional delay interpolation provides gradient accuracy comparable to frequency-sampling while avoiding time-aliasing in highly resonant time-varying scenarios. Through systematic gradient analysis, we reveal that standard spectral losses provide no meaningful directional gradients for onset times, heavily degrading joint training. Training exclusively with parameter losses on synthetic data effectively learns fundamental frequency, timbral parameters, and onset times, but struggles to generalise to monophonic studio recordings of plucked guitar due to domain shifts in transient features. External detectors combined with audio losses generalise best, isolating the model to timbre optimisation. While our Karplus-Strong decoder recovers interpretable parameters and naturally captures the transient characteristics of plucked guitar, Harmonics plus Noise baselines yield higher reconstruction fidelity.</p>
-    </div>
-  </section>
-
-  <!-- ===================== AUDIO EXAMPLES (on top) ===================== -->
-  <section class="container">
-    <h2>Audio Examples &mdash; Synthetic</h2>
-    <p style="text-align:center;color:#666;font-size:0.9rem;margin-top:-1rem">The <b>Target</b> row is always shown; click any other row to load its waveforms &amp; spectrograms.</p>
-    <button class="button is-dark" id="shuffle-synth" style="display:block; margin:0 auto">&#128256; Shuffle Synthetic Examples</button>
-    <div class="table-wrapper">
-      <table class="audio-table" id="table-synth"><thead></thead><tbody></tbody></table>
-    </div>
-  </section>
-
-  <section class="container">
-    <h2>Audio Examples &mdash; NSynth</h2>
-    <p style="text-align:center;color:#666;font-size:0.9rem;margin-top:-1rem">The <b>Target</b> row is always shown; click any other row to load its waveforms &amp; spectrograms.</p>
-    <button class="button is-dark" id="shuffle-nsynth" style="display:block; margin:0 auto">&#128256; Shuffle NSynth Examples</button>
-    <div class="table-wrapper">
-      <table class="audio-table" id="table-nsynth"><thead></thead><tbody></tbody></table>
+      <p>We present a self-supervised, event-based sound matching model using a differentiable extended Karplus-Strong algorithm. To avoid relying on external onset and fundamental frequency detectors, we explore training methodologies combining parameter losses on synthetic data with audio losses. We demonstrate that time-domain fractional delay interpolation provides gradient accuracy comparable to frequency-sampling while avoiding time-aliasing in highly resonant time-varying scenarios. Through systematic gradient analysis, we reveal that standard spectral losses provide no meaningful directional gradients for onset times, heavily degrading joint training. Training exclusively with parameter losses on synthetic data effectively learns fundamental frequency, timbral parameters, and onset times, but struggles to generalise to monophonic studio recordings of plucked guitar due to domain shifts in transient features. External detectors combined with audio losses generalise best, isolating the model to timbre optimisation. While our Karplus-Strong decoder recovers interpretable parameters and naturally captures the transient characteristics of plucked guitar, Harmonics plus Noise baselines yield higher reconstruction fidelity.</p>
     </div>
   </section>
 
@@ -142,6 +123,13 @@
     </div>
     <p class="results-caption">Synthetic parameter recovery. All models are trained and evaluated on synthetic data. $\mathcal{P}$-Only uses tKSA with $\mathcal{P}_{\text{Loss}}$ supervision; $\mathcal{P}$+Audio models use differentiable decoders trained end-to-end with both $\mathcal{P}_{\text{Loss}}$ and audio losses (MSS, SOT); Audio-Only models use differentiable decoders with audio losses and external detectors for onsets and $f_0$. Rows beneath each $\mathcal{P}$+Audio model are stop-gradient ablations that detach the audio-loss gradient from the named head ($f_0$, onset, or both), leaving it supervised only by $\mathcal{P}_{\text{Loss}}$. Per column, the best, second-best, and third-best values are shown in <b>bold</b>, <u>underline</u>, and <i>italic</i> respectively.</p>
 
+    <h3 style="margin-top:2.5rem">Audio Examples &mdash; Synthetic</h3>
+    <p style="text-align:center;color:#666;font-size:0.9rem;margin-top:-1rem">The <b>Target</b> row is always shown; click any other row to load its waveforms &amp; spectrograms.</p>
+    <button class="button is-dark" id="shuffle-synth" style="display:block; margin:0 auto">&#128256; Shuffle Synthetic Examples</button>
+    <div class="table-wrapper">
+      <table class="audio-table" id="table-synth"><thead></thead><tbody></tbody></table>
+    </div>
+
     <h3 style="margin-top:2.5rem">Real-World Instrument Modelling</h3>
     <div class="results-scroll">
       <table class="results-table">
@@ -166,6 +154,13 @@
       </table>
     </div>
     <p class="results-caption">Real-world instrument modeling results evaluated on the NSynth acoustic guitar test set. $\mathcal{P}$-Only uses tKSA trained on synthetic data with $\mathcal{P}_{\text{Loss}}$ only; $\mathcal{P}$+Audio models are trained on mixed Synth+Real data with both $\mathcal{P}_{\text{Loss}}$ and audio losses; Audio-Only models are trained on Real data with audio losses and external detectors. HpN and HpN+ are Harmonics-plus-Noise baselines using the original DDSP encoder and our TCN encoder respectively. KAD is reported in CLAP and EnCodec embedding spaces. Rows beneath each $\mathcal{P}$+Audio model are stop-gradient ablations that detach the audio-loss gradient from the named head. Per column, the best, second-best, and third-best values are shown in <b>bold</b>, <u>underline</u>, and <i>italic</i> respectively.</p>
+
+    <h3 style="margin-top:2.5rem">Audio Examples &mdash; NSynth</h3>
+    <p style="text-align:center;color:#666;font-size:0.9rem;margin-top:-1rem">The <b>Target</b> row is always shown; click any other row to load its waveforms &amp; spectrograms.</p>
+    <button class="button is-dark" id="shuffle-nsynth" style="display:block; margin:0 auto">&#128256; Shuffle NSynth Examples</button>
+    <div class="table-wrapper">
+      <table class="audio-table" id="table-nsynth"><thead></thead><tbody></tbody></table>
+    </div>
 
     <h3 style="margin-top:2.5rem">Single-Event Gradient Accuracy</h3>
     <div class="results-scroll">
@@ -304,10 +299,14 @@
           };
           cells.push(cell);
           playBtn.onclick = () => {
-            reveal();                       // opening this row closes the others
+            if (labelCell.classList.contains('collapsed')) reveal();  // only a closed row opens + closes the others (so Target/open rows stay open)
             const w = cell.init();
             pauseOthers(w);
-            if (w.isPlaying()) { w.pause(); icon(playBtn, false); } else { w.play(); icon(playBtn, true); }
+            if (w.isPlaying()) { w.pause(); icon(playBtn, false); }
+            else {
+              const doPlay = () => { w.play(); icon(playBtn, true); };
+              if (w.getDuration() > 0) doPlay(); else w.once('ready', doPlay);  // first click: wait for decode before playing
+            }
           };
           stopBtn.onclick = () => { if (ws) { ws.pause(); ws.seekTo(0); icon(playBtn, false); } };
           row.appendChild(td);
