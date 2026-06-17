@@ -81,6 +81,10 @@
           <span class="icon" style="margin-right: 8px;"><i class="fas fa-code"></i></span>
           Code Repository
         </a>
+        <a href="https://arxiv.org/abs/XXXX.XXXXX" class="button is-dark" target="_blank" style="margin-left: 12px;">
+          <span class="icon" style="margin-right: 8px;"><i class="fas fa-file-lines"></i></span>
+          Paper
+        </a>
       </div>
     </div>
   </section>
@@ -211,7 +215,7 @@
     import WaveSurfer from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/wavesurfer.esm.js';
     import Spectrogram from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/plugins/spectrogram.js';
 
-    const AUDIO_EXT = '.wav';
+    const AUDIO_EXT = '.ogg';
     const EXAMPLES_TO_SHOW = 5;
     const MAX_FILES = 290;
     const BASE_PATH = 'experiments/evaluation/audio';
@@ -226,7 +230,13 @@
       { label: 'Audio-Only (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/xdet/synth` },
       { label: 'Audio-Only (time)', path: `${BASE_PATH}/synthetic/pred/tksa/xdet/synth` },
       { label: '$\\mathcal{P}$+Audio (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/e2e/synth` },
-      { label: '$\\mathcal{P}$+Audio (time)', path: `${BASE_PATH}/synthetic/pred/tksa/e2e/synth` }
+      { label: '↪ detach $f_0$ (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/e2e/synth/sgf0` },
+      { label: '↪ detach onset (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/e2e/synth/sgonset` },
+      { label: '↪ detach both (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/e2e/synth/sgboth` },
+      { label: '$\\mathcal{P}$+Audio (time)', path: `${BASE_PATH}/synthetic/pred/tksa/e2e/synth` },
+      { label: '↪ detach $f_0$ (time)', path: `${BASE_PATH}/synthetic/pred/tksa/e2e/synth/sgf0` },
+      { label: '↪ detach onset (time)', path: `${BASE_PATH}/synthetic/pred/tksa/e2e/synth/sgonset` },
+      { label: '↪ detach both (time)', path: `${BASE_PATH}/synthetic/pred/tksa/e2e/synth/sgboth` }
     ];
 
     const NSYNTH_MODELS = [
@@ -237,7 +247,13 @@
       { label: 'Audio-Only (freq.)', path: `${BASE_PATH}/nsynth/pred/fksa/xdet/real` },
       { label: 'Audio-Only (time)', path: `${BASE_PATH}/nsynth/pred/tksa/xdet/real` },
       { label: '$\\mathcal{P}$+Audio (freq.)', path: `${BASE_PATH}/nsynth/pred/fksa/e2e/mix` },
-      { label: '$\\mathcal{P}$+Audio (time)', path: `${BASE_PATH}/nsynth/pred/tksa/e2e/mix` }
+      { label: '↪ detach $f_0$ (freq.)', path: `${BASE_PATH}/nsynth/pred/fksa/e2e/mix/sgf0` },
+      { label: '↪ detach onset (freq.)', path: `${BASE_PATH}/nsynth/pred/fksa/e2e/mix/sgonset` },
+      { label: '↪ detach both (freq.)', path: `${BASE_PATH}/nsynth/pred/fksa/e2e/mix/sgboth` },
+      { label: '$\\mathcal{P}$+Audio (time)', path: `${BASE_PATH}/nsynth/pred/tksa/e2e/mix` },
+      { label: '↪ detach $f_0$ (time)', path: `${BASE_PATH}/nsynth/pred/tksa/e2e/mix/sgf0` },
+      { label: '↪ detach onset (time)', path: `${BASE_PATH}/nsynth/pred/tksa/e2e/mix/sgonset` },
+      { label: '↪ detach both (time)', path: `${BASE_PATH}/nsynth/pred/tksa/e2e/mix/sgboth` }
     ];
 
     const players = new Map();
@@ -258,7 +274,7 @@
       const tbody = document.querySelector(`${tableSelector} tbody`);
       let headerHTML = '<tr><th>Model</th>';
       ids.forEach((id, index) => {
-        headerHTML += `<th>Example ${index + 1} <br><small style="font-weight:normal; color:#666;">(${id}.wav)</small></th>`;
+        headerHTML += `<th>Example ${index + 1} <br><small style="font-weight:normal; color:#666;">(${id}.ogg)</small></th>`;
       });
       thead.innerHTML = headerHTML + '</tr>';
       tbody.innerHTML = '';

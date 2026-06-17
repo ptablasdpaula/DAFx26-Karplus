@@ -61,3 +61,6 @@ SURPRISES_AND_REFLECTION.md
 experiments/evaluation/*_part[0-9].csv
 experiments/evaluation/*_part[A-Z].csv
 experiments/evaluation/*.ACCEPTED.csv
+
+# render job-id markers
+.render_*jid

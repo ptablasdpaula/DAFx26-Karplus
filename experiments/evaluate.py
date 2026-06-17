@@ -150,7 +150,7 @@ def run_evaluation(mode, args):
     audio_root = Path(args.out_dir) / "audio" / mode
 
     # 1. Conditionally Load Perceptual Models
-    if mode == "nsynth":
+    if mode == "nsynth" and not getattr(args, "render_only", False):
         print(f"\n--- Loading Perceptual Models to {device.type.upper()} ---")
         encodec = EncodecModel.from_pretrained("facebook/encodec_24khz").to(device).eval()
         clap_processor = ClapProcessor.from_pretrained("laion/clap-htsat-unfused")
@@ -250,7 +250,7 @@ def run_evaluation(mode, args):
                 metrics["mss"].append(mss_fn(pred_audio, tgt_audio).item())
                 metrics["sot"].append(sot_fn(pred_audio, tgt_audio).item())
 
-                if mode == "nsynth":
+                if mode == "nsynth" and not getattr(args, "render_only", False):
                     t24 = torchaudio.functional.resample(tgt_audio, 16000, 24000).unsqueeze(1)
                     p24 = torchaudio.functional.resample(pred_audio, 16000, 24000).unsqueeze(1)
 
@@ -277,7 +277,7 @@ def run_evaluation(mode, args):
                     all_clap_tgt.append(c_tgt)
                     all_clap_pred.append(c_pred)
 
-                else:
+                elif mode == "synthetic":
                     batch_events_dev = {k: v.to(device) for k, v in batch["events"].items()}
                     param_loss, _ = event_loss_fn(raw, batch_events_dev)
                     metrics["param_loss"].append(param_loss.item())
@@ -339,7 +339,7 @@ def run_evaluation(mode, args):
 
         all_results[tag] = {k: np.mean(v) for k, v in metrics.items() if len(v) > 0}
 
-        if mode == "nsynth":
+        if mode == "nsynth" and not getattr(args, "render_only", False):
             clap_kad = compute_kad(torch.cat(all_clap_tgt, dim=0), torch.cat(all_clap_pred, dim=0))
             all_results[tag]["CLAP_KAD"] = clap_kad
             encodec_kad = compute_kad(torch.cat(all_encodec_tgt, dim=0), torch.cat(all_encodec_pred, dim=0))
@@ -358,6 +358,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--tags", type=str, default=None, help="comma-separated subset of tags to evaluate (for chunked eval)")
     parser.add_argument("--out_csv", type=str, default=None, help="explicit output CSV path (so chunks don't clobber each other)")
+    parser.add_argument("--render_only", action="store_true", help="render prediction audio only; skip the perceptual KAD models (CPU-friendly)")
     args = parser.parse_args()
 
     if args.mode == "all":
