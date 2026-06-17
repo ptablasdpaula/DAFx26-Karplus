@@ -41,7 +41,8 @@ class SoundMatchingExperiment(pl.LightningModule):
             fs: int = 16000,
             duration_s: float = 4.0,
             log_val_audio: bool = True,
-            num_val_audio_examples: int = 4
+            num_val_audio_examples: int = 4,
+            stopgrad: str = "",
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
@@ -108,6 +109,18 @@ class SoundMatchingExperiment(pl.LightningModule):
 
         pred_raw = self.model.encoder(target_audio)
         pred_params = self.model.decoder.activate(pred_raw, detected)
+
+        # Stop-gradient ablation: block the audio loss from updating the onset/f0
+        # heads (the P-loss still trains them, since it runs on pred_raw directly,
+        # not through the synth). Detaching pred_params cuts only the synth path.
+        if self.training:
+            sg = str(self.hparams.stopgrad or "").lower()
+            detach_onset = ("onset" in sg) or ("time" in sg) or ("both" in sg)
+            detach_f0 = ("f0" in sg) or ("both" in sg)
+            if detach_onset:
+                pred_params = {**pred_params, "time": pred_params["time"].detach()}
+            if detach_f0:
+                pred_params = {**pred_params, "f0": pred_params["f0"].detach()}
 
         if self.training and self.hparams.objective != "param_only":
             pred_audio, _ = self.model.decoder.synthesise(pred_params)
@@ -221,6 +234,14 @@ class SoundMatchingExperiment(pl.LightningModule):
         self.log(f"{tag}/sot_metric", np.mean(sots), add_dataloader_idx=False)
 
     # ── Optimiser ────────────────────────────────────────────────────────
+
+    def on_after_backward(self) -> None:
+        # Neutralize non-finite gradients so a single pathological batch (e.g. the
+        # high-Q KSA resonator when the audio loss trains f0) cannot NaN-corrupt
+        # the weights and crash training. Finite gradients are left untouched.
+        for p in self.parameters():
+            if p.grad is not None:
+                torch.nan_to_num_(p.grad, nan=0.0, posinf=0.0, neginf=0.0)
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(

@@ -19,8 +19,8 @@ from src.synths.synth import Synth, SynthConfig
 from src.synths.ddsp import Implementation
 from src.decoder import KSDecoder
 from src.model import SoundMatchingModel
-from src.data.nsynth.nsynth_guitar_dataset import NsynthGuitarDataset
-from src.data.synthetic_dataset import SyntheticDataset
+from data.nsynth.nsynth_guitar_dataset import NsynthGuitarDataset
+from data.synthetic_dataset import SyntheticDataset
 from src.detectors import run_detectors_on_batch
 
 from src.losses import MultiScaleSpectralLoss, SOT2048Loss, EventSetLoss
@@ -100,10 +100,17 @@ def _build_model_from_cfg(cfg) -> SoundMatchingModel:
 
 def _get_latest_run(tag: str, ckpt_dir: Path):
     """Finds the newest checkpoint and config file for a given tag based on the timestamp."""
+    import re
     valid_runs = []
+    # The tag must be followed *only* by the run timestamp, so a base tag like
+    # "tKSA_E2E_mix" does NOT also match sub-variants such as
+    # "tKSA_E2E_mix_sgOnset_..." (whose suffix starts with "_sg", not "_<digits>").
+    ts_suffix = re.compile(r"_\d{8}_\d{6}_best\.ckpt$")
 
     # Grab all checkpoints that start with our tag
     for ckpt_path in ckpt_dir.glob(f"{tag}*best.ckpt"):
+        if not ts_suffix.match(ckpt_path.name[len(tag):]):
+            continue
         # Predict what the matching config file should be named
         config_name = ckpt_path.name.replace("_best.ckpt", "_config.yaml")
         config_path = ckpt_dir / config_name
@@ -151,7 +158,7 @@ def run_evaluation(mode, args):
 
     # 2. Setup Data and Domain-Specific Metric Functions
     if mode == "nsynth":
-        ds = NsynthGuitarDataset(nsynth_root="src/data/nsynth", split="test")
+        ds = NsynthGuitarDataset(nsynth_root="data/nsynth", split="test")
         tags = [
             "fKSA_E2E_mix",
             "tKSA_E2E_mix",
@@ -159,7 +166,10 @@ def run_evaluation(mode, args):
             "tKSA_xDet_real",
             "HN_xDet_real",
             "HNtcn_xDet_real",
-            "oKSA_E2E_synth"
+            "oKSA_E2E_synth",
+            # P+Audio with audio-loss stop-gradient on onset/f0 (mix regime)
+            "tKSA_E2E_mix_sgOnset", "tKSA_E2E_mix_sgF0", "tKSA_E2E_mix_sgBoth",
+            "fKSA_E2E_mix_sgOnset", "fKSA_E2E_mix_sgF0", "fKSA_E2E_mix_sgBoth",
         ]
 
     else:
@@ -169,10 +179,15 @@ def run_evaluation(mode, args):
             "fKSA_E2E_synth",
             "tKSA_E2E_synth",
             "fKSA_xDet_synth",
-            "tKSA_xDet_synth"
+            "tKSA_xDet_synth",
+            # P+Audio with audio-loss stop-gradient on onset/f0 (synth regime)
+            "tKSA_E2E_synth_sgOnset", "tKSA_E2E_synth_sgF0", "tKSA_E2E_synth_sgBoth",
+            "fKSA_E2E_synth_sgOnset", "fKSA_E2E_synth_sgF0", "fKSA_E2E_synth_sgBoth",
         ]
         event_loss_fn = EventSetLoss(fs=16000).to(device)
 
+    if getattr(args, "tags", None):
+        tags = [t.strip() for t in args.tags.split(",") if t.strip()]
     loader = DataLoader(ds, batch_size=16, shuffle=False)
     mss_fn = MultiScaleSpectralLoss().to(device)
     sot_fn = SOT2048Loss(sample_rate=16000).to(device)
@@ -330,8 +345,9 @@ def run_evaluation(mode, args):
             encodec_kad = compute_kad(torch.cat(all_encodec_tgt, dim=0), torch.cat(all_encodec_pred, dim=0))
             all_results[tag]["EnCodec_KAD"] = encodec_kad
 
-    pd.DataFrame(all_results).T.to_csv(Path(args.out_dir) / f"{mode}_results.csv")
-    print(f"\n✅ Done! Results saved to {args.out_dir}/{mode}_results.csv")
+    out_csv = getattr(args, "out_csv", None) or (Path(args.out_dir) / f"{mode}_results.csv")
+    pd.DataFrame(all_results).T.to_csv(out_csv)
+    print(f"\n✅ Done! Results saved to {out_csv}")
 
 
 if __name__ == "__main__":
@@ -340,6 +356,8 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt_dir", type=str, default="experiments/checkpoints")
     parser.add_argument("--out_dir", type=str, default="experiments/evaluation")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--tags", type=str, default=None, help="comma-separated subset of tags to evaluate (for chunked eval)")
+    parser.add_argument("--out_csv", type=str, default=None, help="explicit output CSV path (so chunks don't clobber each other)")
     args = parser.parse_args()
 
     if args.mode == "all":
