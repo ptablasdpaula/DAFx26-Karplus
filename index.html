@@ -52,6 +52,10 @@
     .results-caption{max-width:1000px;margin:0.3rem auto 2.5rem;text-align:justify;font-size:0.85rem;color:#555}
     .results-scroll{overflow-x:auto;}
 
+    /* ---- BibTeX citation block ---- */
+    pre.bibtex{background:#f8f9fa;border:1px solid #e1e5e9;border-radius:8px;padding:1.25rem 1.5rem;overflow-x:auto;text-align:left;}
+    pre.bibtex code{font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;font-size:0.85rem;color:#2c3e50;white-space:pre;}
+
     .hero{margin:2rem 0}
     .button{display:inline-block;padding:10px 18px;text-decoration:none;border-radius:6px;transition:.3s; font-weight: 700;}
     .is-dark{background:#2c3e50;color:#fff}
@@ -74,7 +78,7 @@
         <span><a href="https://www.seresearch.qmul.ac.uk/cmai/people/iroman/" target="_blank">Irán Román</a>, </span>
         <span><a href="https://www.qmul.ac.uk/eecs/people/profiles/benetosemmanouil.html" target="_blank">Emmanouil Benetos</a>, </span>
         <span><a href="https://www.qmul.ac.uk/eecs/people/profiles/reissjosh.html" target="_blank">Joshua D Reiss</a></span><br>
-        <span style="display:block; margin-top: 8px;">Centre For Digital Music C4DM, Queen Mary University Of London</span>
+        <span style="display:block; margin-top: 8px;"><a href="https://c4dm.eecs.qmul.ac.uk" target="_blank">Centre For Digital Music (C4DM)</a>, Queen Mary University Of London</span>
       </div>
       <div class="repo-link-container">
         <a href="https://github.com/ptablasdpaula/DAFx26-Karplus" class="button is-dark" target="_blank">
@@ -162,44 +166,19 @@
       <table class="audio-table" id="table-nsynth"><thead></thead><tbody></tbody></table>
     </div>
 
-    <h3 style="margin-top:2.5rem">Single-Event Gradient Accuracy</h3>
-    <div class="results-scroll">
-      <table class="results-table">
-        <thead>
-          <tr><th rowspan="3">Parameter</th><th colspan="4">$\mathcal{L}_{\text{MSS}}$</th><th colspan="4">$\mathcal{L}_{\text{SOT}}$</th></tr>
-          <tr><th colspan="2">tKSA</th><th colspan="2">fKSA</th><th colspan="2">tKSA</th><th colspan="2">fKSA</th></tr>
-          <tr><th>CGA</th><th>FGA</th><th>CGA</th><th>FGA</th><th>CGA</th><th>FGA</th><th>CGA</th><th>FGA</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>$f_0$</td><td>68.0</td><td>58.4</td><td>69.6</td><td>63.6</td><td>54.8</td><td>50.8</td><td>50.0</td><td>50.0</td></tr>
-          <tr><td>$g$ (decay)</td><td>100.0</td><td>100.0</td><td>100.0</td><td>99.6</td><td>70.4</td><td>47.6</td><td>73.6</td><td>47.6</td></tr>
-          <tr><td>$a_1$ (damping)</td><td>100.0</td><td>100.0</td><td>99.2</td><td>94.8</td><td>40.0</td><td>50.0</td><td>34.4</td><td>50.0</td></tr>
-          <tr><td>Pluck position</td><td>66.8</td><td>89.2</td><td>67.6</td><td>90.0</td><td>49.6</td><td>48.0</td><td>47.6</td><td>46.0</td></tr>
-          <tr><td>Dynamic level</td><td>100.0</td><td>99.6</td><td>98.4</td><td>92.4</td><td>97.6</td><td>100.0</td><td>98.0</td><td>98.8</td></tr>
-          <tr><td>Distance gain</td><td>100.0</td><td>100.0</td><td>96.4</td><td>82.0</td><td>99.6</td><td>99.2</td><td>97.2</td><td>86.8</td></tr>
-          <tr><td>Onset time</td><td>51.2</td><td>55.2</td><td>52.0</td><td>56.0</td><td>42.4</td><td>14.4</td><td>62.4</td><td>88.8</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="results-caption">Single-event gradient accuracy (%) comparing $\mathcal{L}_{\text{MSS}}$ and $\mathcal{L}_{\text{SOT}}$ across tKSA and fKSA. CGA: Coarse Gradient Accuracy (initializations across the full range); FGA: Fine Gradient Accuracy (within $\pm10\%$ of target).</p>
+  </section>
 
-    <h3 style="margin-top:2.5rem">Multi-Event Onset Gradient Accuracy</h3>
-    <div class="results-scroll">
-      <table class="results-table">
-        <thead>
-          <tr><th rowspan="3">Events</th><th colspan="4">$\mathcal{L}_{\text{MSS}}$</th><th colspan="4">$\mathcal{L}_{\text{SOT}}$</th></tr>
-          <tr><th colspan="2">tKSA</th><th colspan="2">fKSA</th><th colspan="2">tKSA</th><th colspan="2">fKSA</th></tr>
-          <tr><th>Any</th><th>Joint</th><th>Any</th><th>Joint</th><th>Any</th><th>Joint</th><th>Any</th><th>Joint</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>2</td><td>73.4</td><td>22.7</td><td>77.1</td><td>23.0</td><td>64.1</td><td>12.1</td><td>77.5</td><td>28.5</td></tr>
-          <tr><td>3</td><td>83.3</td><td>7.4</td><td>82.7</td><td>13.9</td><td>79.9</td><td>5.6</td><td>84.9</td><td>11.6</td></tr>
-          <tr><td>4</td><td>71.6</td><td>1.6</td><td>72.8</td><td>4.7</td><td>70.7</td><td>1.2</td><td>77.6</td><td>6.6</td></tr>
-          <tr><td>5</td><td>65.9</td><td>0.4</td><td>65.3</td><td>3.3</td><td>66.9</td><td>1.2</td><td>68.6</td><td>4.1</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="results-caption">Multi-event onset time gradient accuracy (%) for $K$ equally spaced plucks. fKSA uses $N_{\text{FFT}}=16384$, hop=256. <em>Any</em>: at least one gradient points toward a target; <em>Joint</em>: all $K$ simultaneously toward their Hungarian-matched targets.</p>
+  <!-- ===================== CITATION ===================== -->
+  <section class="container">
+    <h2>Citation</h2>
+    <p>If you find this work useful, please cite our paper:</p>
+    <pre class="bibtex"><code>@inproceedings{tablasdepaula2026sound,
+  title     = {Sound Matching with a Differentiable Karplus-Strong Algorithm},
+  author    = {Tablas de Paula, Pablo and Marttila, David and D{\'\i}az, Rodrigo and
+               Rom{\'a}n, Ir{\'a}n and Benetos, Emmanouil and Reiss, Joshua D.},
+  booktitle = {In press.},
+  year      = {2026}
+}</code></pre>
   </section>
 
   <footer style="margin-top: 4rem; text-align:center; font-size:0.85rem; padding-bottom: 2rem;">
