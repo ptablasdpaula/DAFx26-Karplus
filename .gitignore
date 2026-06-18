@@ -64,3 +64,5 @@ experiments/evaluation/*.ACCEPTED.csv
 
 # render job-id markers
 .render_*jid
+experiments/evaluation/*_rerun.csv
+.eval_hn_jid
