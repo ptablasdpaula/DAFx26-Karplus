@@ -6,8 +6,7 @@ const FIRST_MIDI = 48;
 const LAST_MIDI = 60;
 const KNOB_FULL_SCALE_PIXELS = 320;
 const FINE_KNOB_FULL_SCALE_PIXELS = 1000;
-const MIN_NOTE_SECONDS = 0.8;
-const MAX_NOTE_SECONDS = 14;
+const PROCESS_BUFFER_SIZE = 1024;
 
 const KS_PARAMS = [
   { id: 'f0', label: 'Fundamental frequency', min: 110, max: 880, value: 440, decimals: 0, unit: ' Hz' },
@@ -42,9 +41,11 @@ const pattern = new Map(midiNotes.map(note => [note, new Set()]));
 ].forEach(([note, step]) => pattern.get(note)?.add(step));
 
 let audioContext = null;
+let synthNode = null;
+let synthOutputGain = null;
+let synthState = null;
 let sequenceTimer = null;
 let currentStep = 0;
-let activeSources = [];
 let draggingCable = null;
 let animationFrame = null;
 
@@ -380,93 +381,105 @@ function onePolePhaseDelay(f0, a1, fs) {
   return -Math.atan2(denomImag, denomReal) / omega;
 }
 
-function renderKsBuffer(ctx, freq, values, seconds) {
-  const fs = ctx.sampleRate;
-  const length = Math.max(1, Math.floor(seconds * fs));
-  const excitation = new Float32Array(length);
-  const burstLength = Math.min(length, Math.max(2, Math.floor(fs / freq)));
-  let maxBurst = 0;
-  for (let n = 0; n < burstLength; n += 1) {
-    excitation[n] = Math.random() * 2 - 1;
-    maxBurst = Math.max(maxBurst, Math.abs(excitation[n]));
-  }
-  for (let n = 0; n < burstLength; n += 1) excitation[n] /= Math.max(maxBurst, 1e-6);
-
-  const combed = new Float32Array(length);
-  const combDelay = clamp((fs / freq) * values.pluck, 1, fs / SAMPLE_F0_MIN);
-  for (let n = 0; n < length; n += 1) {
-    const read = n - combDelay;
-    let delayed = 0;
-    if (read >= 0) {
-      const i0 = Math.floor(read);
-      const frac = read - i0;
-      delayed = excitation[i0] * (1 - frac) + (excitation[i0 + 1] || 0) * frac;
-    }
-    combed[n] = excitation[n] - delayed;
-  }
-
-  const shaped = new Float32Array(length);
-  const r = clamp(computeDynamicsR(freq, values.dynamic, fs), -0.999, 0.999);
-  let dynState = 0;
-  for (let n = 0; n < length; n += 1) {
-    shaped[n] = (1 - r) * combed[n] + r * dynState;
-    dynState = shaped[n];
-  }
-
-  const output = new Float32Array(length);
-  const delayBuffer = new Float32Array(Math.ceil(fs / SAMPLE_F0_MIN) + 8);
-  let writeIdx = 0;
-  let filterState = 0;
-  let peak = 0;
-  for (let n = 0; n < length; n += 1) {
-    const delay = clamp(fs / freq + onePolePhaseDelay(freq, values.a1, fs), 2, delayBuffer.length - 4);
-    const read = writeIdx - delay;
-    const readWrapped = read < 0 ? read + delayBuffer.length : read;
-    const i0 = Math.floor(readWrapped) % delayBuffer.length;
-    const i1 = (i0 + 1) % delayBuffer.length;
-    const frac = readWrapped - Math.floor(readWrapped);
-    const delayed = delayBuffer[i0] * (1 - frac) + delayBuffer[i1] * frac;
-    const filtered = values.decay * (1 - values.a1) * delayed + values.a1 * filterState;
-    filterState = filtered;
-    const sample = shaped[n] + filtered;
-    delayBuffer[writeIdx] = sample;
-    writeIdx = (writeIdx + 1) % delayBuffer.length;
-    output[n] = sample;
-    peak = Math.max(peak, Math.abs(sample));
-  }
-
-  const buffer = ctx.createBuffer(1, length, fs);
-  const channel = buffer.getChannelData(0);
-  const gain = 0.42 / Math.max(peak, 1);
-  for (let n = 0; n < length; n += 1) {
-    const fade = Math.min(1, (length - n) / (0.02 * fs));
-    channel[n] = output[n] * gain * fade;
-  }
-  return buffer;
-}
-
-function estimateTailSeconds(freq, decay) {
-  const stableDecay = clamp(decay, 0.00001, 0.99999);
-  const periodsToMinus60Db = Math.log(0.001) / Math.log(stableDecay);
-  return clamp(periodsToMinus60Db / Math.max(freq, 1), MIN_NOTE_SECONDS, MAX_NOTE_SECONDS);
-}
-
-function playKsNote(midi, timeSeconds, noteSeconds) {
-  if (!audioContext) audioContext = new AudioContext();
-  const now = audioContext.currentTime;
-  const values = Object.fromEntries(KS_PARAMS.map(param => [param.id, lfoValueFor(param.id, timeSeconds)]));
-  const freq = clamp(midiToFreq(midi) * (values.f0 / 440), 40, 5000);
-  const renderSeconds = Math.max(noteSeconds * 2, estimateTailSeconds(freq, values.decay));
-  const buffer = renderKsBuffer(audioContext, freq, values, renderSeconds);
-  const source = audioContext.createBufferSource();
-  source.buffer = buffer;
-  source.connect(audioContext.destination);
-  source.start(now);
-  source.stop(now + buffer.duration);
-  activeSources.push(source);
-  source.onended = () => {
-    activeSources = activeSources.filter(item => item !== source);
+function initContinuousSynth() {
+  if (synthNode) return;
+  const fs = audioContext.sampleRate;
+  synthState = {
+    fs,
+    delayBuffer: new Float32Array(Math.ceil(fs / SAMPLE_F0_MIN) + 8),
+    excitationDelay: new Float32Array(Math.ceil(fs / SAMPLE_F0_MIN) + 8),
+    writeIdx: 0,
+    excitationWriteIdx: 0,
+    filterState: 0,
+    dynamicsState: 0,
+    pendingBursts: [],
+    activeBursts: [],
+    outputDc: 0,
+    noteCenterFreq: 440,
+    targetNoteCenterFreq: 440
   };
+  synthNode = audioContext.createScriptProcessor(PROCESS_BUFFER_SIZE, 0, 1);
+  synthOutputGain = audioContext.createGain();
+  synthOutputGain.gain.value = 0.42;
+  synthNode.onaudioprocess = processContinuousSynth;
+  synthNode.connect(synthOutputGain).connect(audioContext.destination);
+}
+
+function triggerKsNote(midi, triggerTimeSeconds) {
+  if (!synthState) return;
+  const values = Object.fromEntries(KS_PARAMS.map(param => [param.id, lfoValueFor(param.id, performance.now() / 1000)]));
+  const noteFreq = midiToFreq(midi);
+  const freq = clamp(noteFreq * (values.f0 / 440), 40, 5000);
+  const sampleTime = Math.max(0, Math.floor(triggerTimeSeconds * synthState.fs));
+  const burstLength = Math.max(2, Math.floor(synthState.fs / freq));
+  synthState.pendingBursts.push({ sampleTime, burstLength, index: 0, seed: Math.random() * 2 ** 31, noteFreq });
+}
+
+function processContinuousSynth(event) {
+  const out = event.outputBuffer.getChannelData(0);
+  if (!synthState) {
+    out.fill(0);
+    return;
+  }
+  const state = synthState;
+  const fs = state.fs;
+  const now = audioContext.currentTime;
+  for (let n = 0; n < out.length; n += 1) {
+    const absoluteSample = Math.floor((now + n / fs) * fs);
+    while (state.pendingBursts.length && state.pendingBursts[0].sampleTime <= absoluteSample) {
+      const burst = state.pendingBursts.shift();
+      state.targetNoteCenterFreq = burst.noteFreq;
+      state.activeBursts.push(burst);
+    }
+
+    const values = Object.fromEntries(KS_PARAMS.map(param => [param.id, lfoValueFor(param.id, (performance.now() / 1000) + n / fs)]));
+    state.noteCenterFreq += 0.0015 * (state.targetNoteCenterFreq - state.noteCenterFreq);
+    const freq = clamp(state.noteCenterFreq * (values.f0 / 440), 40, 5000);
+    let excitation = 0;
+    for (let i = state.activeBursts.length - 1; i >= 0; i -= 1) {
+      const burst = state.activeBursts[i];
+      if (burst.index >= burst.burstLength) {
+        state.activeBursts.splice(i, 1);
+        continue;
+      }
+      excitation += seededNoise(burst.seed + burst.index) * 0.85;
+      burst.index += 1;
+    }
+
+    const combDelay = clamp((fs / freq) * values.pluck, 1, state.excitationDelay.length - 2);
+    const combed = excitation - readDelay(state.excitationDelay, state.excitationWriteIdx, combDelay);
+    state.excitationDelay[state.excitationWriteIdx] = excitation;
+    state.excitationWriteIdx = (state.excitationWriteIdx + 1) % state.excitationDelay.length;
+
+    const r = clamp(computeDynamicsR(freq, values.dynamic, fs), -0.999, 0.999);
+    const shaped = (1 - r) * combed + r * state.dynamicsState;
+    state.dynamicsState = shaped;
+
+    const loopDelay = clamp(fs / freq + onePolePhaseDelay(freq, values.a1, fs), 2, state.delayBuffer.length - 4);
+    const delayed = readDelay(state.delayBuffer, state.writeIdx, loopDelay);
+    const filtered = values.decay * (1 - values.a1) * delayed + values.a1 * state.filterState;
+    state.filterState = filtered;
+
+    const sample = shaped + filtered;
+    state.delayBuffer[state.writeIdx] = sample;
+    state.writeIdx = (state.writeIdx + 1) % state.delayBuffer.length;
+    state.outputDc = 0.995 * state.outputDc + 0.005 * sample;
+    out[n] = Math.tanh((sample - state.outputDc) * 0.9);
+  }
+}
+
+function readDelay(buffer, writeIdx, delay) {
+  const read = writeIdx - delay;
+  const wrapped = read < 0 ? read + buffer.length : read;
+  const i0 = Math.floor(wrapped) % buffer.length;
+  const i1 = (i0 + 1) % buffer.length;
+  const frac = wrapped - Math.floor(wrapped);
+  return buffer[i0] * (1 - frac) + buffer[i1] * frac;
+}
+
+function seededNoise(seed) {
+  const x = Math.sin(seed * 12.9898) * 43758.5453;
+  return 2 * (x - Math.floor(x)) - 1;
 }
 
 function clearPlayhead() {
@@ -487,10 +500,17 @@ export function stopSequence() {
     clearInterval(sequenceTimer);
     sequenceTimer = null;
   }
-  activeSources.forEach(source => {
-    try { source.stop(); } catch (error) {}
-  });
-  activeSources = [];
+  if (synthState) {
+    synthState.pendingBursts = [];
+    synthState.activeBursts = [];
+    synthState.delayBuffer.fill(0);
+    synthState.excitationDelay.fill(0);
+    synthState.filterState = 0;
+    synthState.dynamicsState = 0;
+    synthState.outputDc = 0;
+    synthState.noteCenterFreq = 440;
+    synthState.targetNoteCenterFreq = 440;
+  }
   clearPlayhead();
   const playButton = document.getElementById('ks-play');
   if (playButton) playButton.innerHTML = '<i class="bi bi-play-fill"></i> Play';
@@ -500,6 +520,7 @@ async function startSequence() {
   pauseExamples();
   if (!audioContext) audioContext = new AudioContext();
   if (audioContext.state === 'suspended') await audioContext.resume();
+  initContinuousSynth();
   if (sequenceTimer) {
     stopSequence();
     return;
@@ -509,10 +530,9 @@ async function startSequence() {
   playButton.innerHTML = '<i class="bi bi-pause-fill"></i> Pause';
   const tick = () => {
     const bpm = clamp(Number(document.getElementById('ks-tempo').value) || 110, 60, 180);
-    const stepSeconds = 60 / bpm / 4;
     setPlayhead(currentStep);
     midiNotes.forEach(note => {
-      if (pattern.get(note).has(currentStep)) playKsNote(note, performance.now() / 1000, stepSeconds);
+      if (pattern.get(note).has(currentStep)) triggerKsNote(note, audioContext.currentTime + 0.005);
     });
     currentStep = (currentStep + 1) % STEPS;
   };
