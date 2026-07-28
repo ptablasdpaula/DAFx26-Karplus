@@ -40,15 +40,17 @@
     .audio-table th{background:#f0f0f0;font-weight:600; font-size: 0.9rem;}
     .audio-table td:first-child { background-color:#fafafa; width:210px; text-align:left; padding-left:15px;}
     .row-label{font-weight:bold;}
-    .row-label.collapsed{cursor:pointer;}
-    .row-label.collapsed:hover{background:#eef4ff;}
-    .row-label .hint{display:block;font-size:0.72rem;color:#007BFF;font-weight:normal;margin-top:2px}
     .play-btn,.ctrl-btn{cursor:pointer;padding:6px 14px;background:#007BFF;color:#fff;border:none;border-radius:6px;font-size:15px;transition:.3s;box-shadow:0 2px 4px rgba(0,0,0,.1)}
     .play-btn:hover,.ctrl-btn:hover{transform:translateY(-1px);box-shadow:0 4px 8px rgba(0,0,0,.15)}
     .waveform,.spectrogram{height:60px;margin:6px 0;border-radius:4px}
     .cell.loaded .waveform,.cell.loaded .spectrogram{background:#e8e8e8;border:1px solid #ddd}
     .cell:not(.loaded) .waveform,.cell:not(.loaded) .spectrogram{display:none}
     .controls{display:flex;justify-content:center;gap:6px;margin-bottom:10px}
+    .audio-options{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin:1rem auto 0}
+    .audio-toggle{display:inline-flex;border:1px solid #ced4da;border-radius:20px;overflow:hidden}
+    .audio-toggle button{border:0;border-right:1px solid #ced4da;background:#fff;color:#212529;padding:6px 14px;font-size:0.9rem}
+    .audio-toggle button:last-child{border-right:0}
+    .audio-toggle button.active{background:#007BFF;color:#fff}
 
     /* ---- Result tables: clean booktabs look + MathJax ---- */
     .results-table{border-collapse:collapse;margin:1rem auto 0.4rem;width:auto;min-width:0;font-variant-numeric:tabular-nums;}
@@ -140,7 +142,18 @@
     <p class="results-caption">Synthetic parameter recovery. All models are trained and evaluated on synthetic data. $\mathcal{P}$-Only uses tKSA with $\mathcal{P}_{\text{Loss}}$ supervision; $\mathcal{P}$+Audio models use differentiable decoders trained end-to-end with both $\mathcal{P}_{\text{Loss}}$ and audio losses (MSS, SOT); Audio-Only models use differentiable decoders with audio losses and external detectors for onsets and $f_0$. Rows beneath each $\mathcal{P}$+Audio model are stop-gradient ablations that detach the audio-loss gradient from the named head ($f_0$, onset, or both), leaving it supervised only by $\mathcal{P}_{\text{Loss}}$. Per column, the best, second-best, and third-best values are shown in <b>bold</b>, <u>underline</u>, and <i>italic</i> respectively.</p>
 
     <h3 style="margin-top:2.5rem">Audio Examples &mdash; Synthetic</h3>
-    <button class="btn btn-outline-dark" id="shuffle-synth" style="display:block; margin:0 auto; border-radius:20px">&#128256; Shuffle Synthetic Examples</button>
+    <div class="audio-options" aria-label="Audio example display options">
+      <div class="audio-toggle" role="group" aria-label="KSA implementation filter">
+        <button type="button" data-view="freq">Show freq.</button>
+        <button type="button" data-view="both" class="active">Show both</button>
+        <button type="button" data-view="time">Show time</button>
+      </div>
+      <div class="audio-toggle" role="group" aria-label="Ablation visibility">
+        <button type="button" data-ablation="off" class="active">Hide ablations</button>
+        <button type="button" data-ablation="on">Show ablations</button>
+      </div>
+    </div>
+    <button class="btn btn-outline-dark" id="shuffle-synth" style="display:block; margin:0.75rem auto 0; border-radius:20px">&#128256; Shuffle</button>
     <div class="table-wrapper">
       <table class="audio-table" id="table-synth"><thead></thead><tbody></tbody></table>
     </div>
@@ -152,8 +165,8 @@
           <tr><th>Model</th><th>MSS&nbsp;&darr;</th><th>SOT&nbsp;&darr;</th><th>wMFCC&nbsp;&darr;</th><th>RMS&nbsp;&uarr;</th><th>CLAP&nbsp;&darr;</th><th>EnCodec&nbsp;&darr;</th></tr>
         </thead>
         <tbody>
-          <tr><td>hpn</td><td><u>246.60</u></td><td><i>0.14</i></td><td><u>7.90</u></td><td><i>0.96</i></td><td>266.20</td><td><u>17.99</u></td></tr>
-          <tr><td>hpn_p</td><td><b>183.43</b></td><td><b>0.02</b></td><td><b>6.20</b></td><td><b>1.00</b></td><td><u>183.11</u></td><td><b>5.20</b></td></tr>
+          <tr><td>HpN</td><td><u>246.60</u></td><td><i>0.14</i></td><td><u>7.90</u></td><td><i>0.96</i></td><td>266.20</td><td><u>17.99</u></td></tr>
+          <tr><td>HpN+</td><td><b>183.43</b></td><td><b>0.02</b></td><td><b>6.20</b></td><td><b>1.00</b></td><td><u>183.11</u></td><td><b>5.20</b></td></tr>
           <tr class="grp"><td>$\mathcal{P}$-Only</td><td>311.86</td><td>0.20</td><td>13.18</td><td>0.95</td><td>193.78</td><td>64.40</td></tr>
           <tr class="grp"><td>Audio-Only (freq.)</td><td>299.47</td><td>0.30</td><td>14.08</td><td>0.93</td><td><i>191.50</i></td><td>71.91</td></tr>
           <tr><td>Audio-Only (time)</td><td><i>262.72</i></td><td>0.20</td><td><i>12.18</i></td><td><u>0.97</u></td><td><b>163.95</b></td><td><i>40.39</i></td></tr>
@@ -168,10 +181,10 @@
         </tbody>
       </table>
     </div>
-    <p class="results-caption">Real-world instrument modeling results evaluated on the NSynth acoustic guitar test set. $\mathcal{P}$-Only uses tKSA trained on synthetic data with $\mathcal{P}_{\text{Loss}}$ only; $\mathcal{P}$+Audio models are trained with both $\mathcal{P}_{\text{Loss}}$ and audio losses; Audio-Only models are trained with audio losses and external detectors. <code>hpn</code> and <code>hpn_p</code> are Harmonics-plus-Noise baselines using the original DDSP encoder and our TCN encoder respectively. KAD is reported in CLAP and EnCodec embedding spaces. Rows beneath each $\mathcal{P}$+Audio model are stop-gradient ablations that detach the audio-loss gradient from the named head. Per column, the best, second-best, and third-best values are shown in <b>bold</b>, <u>underline</u>, and <i>italic</i> respectively.</p>
+    <p class="results-caption">Real-world instrument modeling results evaluated on the NSynth acoustic guitar test set. $\mathcal{P}$-Only uses tKSA trained on synthetic data with $\mathcal{P}_{\text{Loss}}$ only; $\mathcal{P}$+Audio models are trained with both $\mathcal{P}_{\text{Loss}}$ and audio losses; Audio-Only models are trained with audio losses and external detectors. HpN and HpN+ are Harmonics-plus-Noise baselines using the original DDSP encoder and our TCN encoder respectively. KAD is reported in CLAP and EnCodec embedding spaces. Rows beneath each $\mathcal{P}$+Audio model are stop-gradient ablations that detach the audio-loss gradient from the named head. Per column, the best, second-best, and third-best values are shown in <b>bold</b>, <u>underline</u>, and <i>italic</i> respectively.</p>
 
     <h3 style="margin-top:2.5rem">Audio Examples &mdash; Real</h3>
-    <button class="btn btn-outline-dark" id="shuffle-nsynth" style="display:block; margin:0 auto; border-radius:20px">&#128256; Shuffle Real Examples</button>
+    <button class="btn btn-outline-dark" id="shuffle-nsynth" style="display:block; margin:0 auto; border-radius:20px">&#128256; Shuffle</button>
     <div class="table-wrapper">
       <table class="audio-table" id="table-nsynth"><thead></thead><tbody></tbody></table>
     </div>
@@ -213,39 +226,45 @@
     const icon = (btn, on) => { btn.innerHTML = on ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>'; };
 
     const SYNTH_MODELS = [
-      { label: 'Target', path: `${BASE_PATH}/synthetic/target` },
-      { label: '$\\mathcal{P}$-Only', path: `${BASE_PATH}/synthetic/pred/oksa/p_only` },
-      { label: 'Audio-Only (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/audio_only` },
-      { label: 'Audio-Only (time)', path: `${BASE_PATH}/synthetic/pred/tksa/audio_only` },
-      { label: '$\\mathcal{P}$+Audio (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio` },
-      { label: '↪ detach $f_0$ (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio/detach_f0` },
-      { label: '↪ detach onset (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio/detach_onset` },
-      { label: '↪ detach both (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio/detach_both` },
-      { label: '$\\mathcal{P}$+Audio (time)', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio` },
-      { label: '↪ detach $f_0$ (time)', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio/detach_f0` },
-      { label: '↪ detach onset (time)', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio/detach_onset` },
-      { label: '↪ detach both (time)', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio/detach_both` }
+      { label: 'Target', path: `${BASE_PATH}/synthetic/target`, domain: 'always' },
+      { label: '$\\mathcal{P}$-Only', path: `${BASE_PATH}/synthetic/pred/oksa/p_only`, domain: 'always' },
+      { label: 'Audio-Only (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/audio_only`, domain: 'freq' },
+      { label: 'Audio-Only (time)', path: `${BASE_PATH}/synthetic/pred/tksa/audio_only`, domain: 'time' },
+      { label: '$\\mathcal{P}$+Audio (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio`, domain: 'freq' },
+      { label: '↪ detach $f_0$ (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio/detach_f0`, domain: 'freq', ablation: true },
+      { label: '↪ detach onset (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio/detach_onset`, domain: 'freq', ablation: true },
+      { label: '↪ detach both (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio/detach_both`, domain: 'freq', ablation: true },
+      { label: '$\\mathcal{P}$+Audio (time)', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio`, domain: 'time' },
+      { label: '↪ detach $f_0$ (time)', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio/detach_f0`, domain: 'time', ablation: true },
+      { label: '↪ detach onset (time)', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio/detach_onset`, domain: 'time', ablation: true },
+      { label: '↪ detach both (time)', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio/detach_both`, domain: 'time', ablation: true }
     ];
 
     const NSYNTH_MODELS = [
-      { label: 'Target', path: `${BASE_PATH}/real/target` },
-      { label: 'hpn', path: `${BASE_PATH}/real/pred/hpn/audio_only` },
-      { label: 'hpn_p', path: `${BASE_PATH}/real/pred/hpn_p/audio_only` },
-      { label: '$\\mathcal{P}$-Only', path: `${BASE_PATH}/real/pred/oksa/p_only` },
-      { label: 'Audio-Only (freq.)', path: `${BASE_PATH}/real/pred/fksa/audio_only` },
-      { label: 'Audio-Only (time)', path: `${BASE_PATH}/real/pred/tksa/audio_only` },
-      { label: '$\\mathcal{P}$+Audio (freq.)', path: `${BASE_PATH}/real/pred/fksa/p_audio` },
-      { label: '↪ detach $f_0$ (freq.)', path: `${BASE_PATH}/real/pred/fksa/p_audio/detach_f0` },
-      { label: '↪ detach onset (freq.)', path: `${BASE_PATH}/real/pred/fksa/p_audio/detach_onset` },
-      { label: '↪ detach both (freq.)', path: `${BASE_PATH}/real/pred/fksa/p_audio/detach_both` },
-      { label: '$\\mathcal{P}$+Audio (time)', path: `${BASE_PATH}/real/pred/tksa/p_audio` },
-      { label: '↪ detach $f_0$ (time)', path: `${BASE_PATH}/real/pred/tksa/p_audio/detach_f0` },
-      { label: '↪ detach onset (time)', path: `${BASE_PATH}/real/pred/tksa/p_audio/detach_onset` },
-      { label: '↪ detach both (time)', path: `${BASE_PATH}/real/pred/tksa/p_audio/detach_both` }
+      { label: 'Target', path: `${BASE_PATH}/real/target`, domain: 'always' },
+      { label: 'HpN', path: `${BASE_PATH}/real/pred/hpn/audio_only`, domain: 'always' },
+      { label: 'HpN+', path: `${BASE_PATH}/real/pred/hpn_p/audio_only`, domain: 'always' },
+      { label: '$\\mathcal{P}$-Only', path: `${BASE_PATH}/real/pred/oksa/p_only`, domain: 'always' },
+      { label: 'Audio-Only (freq.)', path: `${BASE_PATH}/real/pred/fksa/audio_only`, domain: 'freq' },
+      { label: 'Audio-Only (time)', path: `${BASE_PATH}/real/pred/tksa/audio_only`, domain: 'time' },
+      { label: '$\\mathcal{P}$+Audio (freq.)', path: `${BASE_PATH}/real/pred/fksa/p_audio`, domain: 'freq' },
+      { label: '↪ detach $f_0$ (freq.)', path: `${BASE_PATH}/real/pred/fksa/p_audio/detach_f0`, domain: 'freq', ablation: true },
+      { label: '↪ detach onset (freq.)', path: `${BASE_PATH}/real/pred/fksa/p_audio/detach_onset`, domain: 'freq', ablation: true },
+      { label: '↪ detach both (freq.)', path: `${BASE_PATH}/real/pred/fksa/p_audio/detach_both`, domain: 'freq', ablation: true },
+      { label: '$\\mathcal{P}$+Audio (time)', path: `${BASE_PATH}/real/pred/tksa/p_audio`, domain: 'time' },
+      { label: '↪ detach $f_0$ (time)', path: `${BASE_PATH}/real/pred/tksa/p_audio/detach_f0`, domain: 'time', ablation: true },
+      { label: '↪ detach onset (time)', path: `${BASE_PATH}/real/pred/tksa/p_audio/detach_onset`, domain: 'time', ablation: true },
+      { label: '↪ detach both (time)', path: `${BASE_PATH}/real/pred/tksa/p_audio/detach_both`, domain: 'time', ablation: true }
     ];
 
     const players = new Map();
     const pauseOthers = (keep) => players.forEach((ws, btn) => { if (ws !== keep && ws.isPlaying()) { ws.pause(); icon(btn, false); } });
+    const state = {
+      view: 'both',
+      showAblations: false,
+      synthIds: rand(allFileIDs, EXAMPLES_TO_SHOW),
+      realIds: rand(allFileIDs, EXAMPLES_TO_SHOW)
+    };
 
     function makePlayer(td, url) {
       const ws = WaveSurfer.create({
@@ -257,27 +276,42 @@
       return ws;
     }
 
+    function visibleModels(modelsArray) {
+      return modelsArray.filter(model => {
+        const matchesView = model.domain === 'always' || state.view === 'both' || model.domain === state.view;
+        const matchesAblations = !model.ablation || state.showAblations;
+        return matchesView && matchesAblations;
+      });
+    }
+
+    function clearTablePlayers(tbody) {
+      players.forEach((ws, btn) => {
+        if (tbody.contains(btn)) {
+          try { ws.destroy(); } catch (e) {}
+          players.delete(btn);
+        }
+      });
+    }
+
     function renderTable(tableSelector, modelsArray, ids) {
       const thead = document.querySelector(`${tableSelector} thead`);
       const tbody = document.querySelector(`${tableSelector} tbody`);
       let headerHTML = '<tr><th>Model</th>';
-      ids.forEach((id, index) => {
-        headerHTML += `<th>Example ${index + 1} <br><small style="font-weight:normal; color:#666;">(${id}.ogg)</small></th>`;
+      ids.forEach(id => {
+        headerHTML += `<th>Example ${Number(id)} <br><small style="font-weight:normal; color:#666;">${id}.ogg</small></th>`;
       });
+      clearTablePlayers(tbody);
       thead.innerHTML = headerHTML + '</tr>';
       tbody.innerHTML = '';
-      const rowCtrls = [];
 
-      modelsArray.forEach(model => {
-        const isTarget = model.label === 'Target';
+      visibleModels(modelsArray).forEach(model => {
         const row = document.createElement('tr');
 
         const labelCell = document.createElement('td');
-        labelCell.className = 'row-label' + (isTarget ? '' : ' collapsed');
-        labelCell.innerHTML = model.label + (isTarget ? '' : '<span class="hint">▶ click to load</span>');
+        labelCell.className = 'row-label';
+        labelCell.innerHTML = model.label;
         row.appendChild(labelCell);
 
-        const cells = [];
         ids.forEach(id => {
           const td = document.createElement('td');
           td.className = 'cell';
@@ -290,9 +324,7 @@
             init() { if (!ws) { ws = makePlayer(td, url); players.set(playBtn, ws); td.classList.add('loaded'); } return ws; },
             destroy() { if (ws) { try { ws.destroy(); } catch (e) {} players.delete(playBtn); ws = null; td.classList.remove('loaded'); icon(playBtn, false); } },
           };
-          cells.push(cell);
           playBtn.onclick = () => {
-            if (labelCell.classList.contains('collapsed')) reveal();  // only a closed row opens + closes the others (so Target/open rows stay open)
             const w = cell.init();
             pauseOthers(w);
             if (w.isPlaying()) { w.pause(); icon(playBtn, false); }
@@ -302,35 +334,47 @@
             }
           };
           stopBtn.onclick = () => { if (ws) { ws.pause(); ws.seekTo(0); icon(playBtn, false); } };
+          cell.init();
           row.appendChild(td);
         });
-
-        const reveal = () => {
-          cells.forEach(c => c.init());
-          labelCell.classList.remove('collapsed');
-          const h = labelCell.querySelector('.hint'); if (h) h.remove();
-          rowCtrls.forEach(o => { if (o.reveal !== reveal && !o.isTarget) o.collapse(); });
-        };
-        const collapse = () => {
-          cells.forEach(c => c.destroy());
-          if (!isTarget) {
-            labelCell.classList.add('collapsed');
-            if (!labelCell.querySelector('.hint')) labelCell.insertAdjacentHTML('beforeend', '<span class="hint">▶ click to load</span>');
-          }
-        };
-
-        rowCtrls.push({ isTarget, reveal, collapse });
-        if (isTarget) reveal(); else labelCell.onclick = reveal;
 
         tbody.appendChild(row);
       });
       if (window.MathJax && window.MathJax.typesetPromise) window.MathJax.typesetPromise([thead.parentElement]);
     }
 
-    document.getElementById('shuffle-synth').onclick = () => { renderTable('#table-synth', SYNTH_MODELS, rand(allFileIDs, EXAMPLES_TO_SHOW)); };
-    document.getElementById('shuffle-nsynth').onclick = () => { renderTable('#table-nsynth', NSYNTH_MODELS, rand(allFileIDs, EXAMPLES_TO_SHOW)); };
-    document.getElementById('shuffle-synth').click();
-    document.getElementById('shuffle-nsynth').click();
+    function setActive(selector, activeButton) {
+      document.querySelectorAll(selector).forEach(button => button.classList.toggle('active', button === activeButton));
+    }
+
+    function renderAll() {
+      renderTable('#table-synth', SYNTH_MODELS, state.synthIds);
+      renderTable('#table-nsynth', NSYNTH_MODELS, state.realIds);
+    }
+
+    document.querySelectorAll('[data-view]').forEach(button => {
+      button.onclick = () => {
+        state.view = button.dataset.view;
+        setActive('[data-view]', button);
+        renderAll();
+      };
+    });
+    document.querySelectorAll('[data-ablation]').forEach(button => {
+      button.onclick = () => {
+        state.showAblations = button.dataset.ablation === 'on';
+        setActive('[data-ablation]', button);
+        renderAll();
+      };
+    });
+    document.getElementById('shuffle-synth').onclick = () => {
+      state.synthIds = rand(allFileIDs, EXAMPLES_TO_SHOW);
+      renderTable('#table-synth', SYNTH_MODELS, state.synthIds);
+    };
+    document.getElementById('shuffle-nsynth').onclick = () => {
+      state.realIds = rand(allFileIDs, EXAMPLES_TO_SHOW);
+      renderTable('#table-nsynth', NSYNTH_MODELS, state.realIds);
+    };
+    renderAll();
   </script>
 </body>
 </html>
