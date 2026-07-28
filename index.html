@@ -144,13 +144,13 @@
     <h3 style="margin-top:2.5rem">Audio Examples &mdash; Synthetic</h3>
     <div class="audio-options" aria-label="Audio example display options">
       <div class="audio-toggle" role="group" aria-label="KSA implementation filter">
-        <button type="button" data-view="freq">Show freq.</button>
-        <button type="button" data-view="both" class="active">Show both</button>
-        <button type="button" data-view="time">Show time</button>
+        <button type="button" data-section="synth" data-view="freq">Show freq.</button>
+        <button type="button" data-section="synth" data-view="both" class="active">Show both</button>
+        <button type="button" data-section="synth" data-view="time">Show time</button>
       </div>
       <div class="audio-toggle" role="group" aria-label="Ablation visibility">
-        <button type="button" data-ablation="off" class="active">Hide ablations</button>
-        <button type="button" data-ablation="on">Show ablations</button>
+        <button type="button" data-section="synth" data-ablation="off" class="active">Hide ablations</button>
+        <button type="button" data-section="synth" data-ablation="on">Show ablations</button>
       </div>
     </div>
     <button class="btn btn-outline-dark" id="shuffle-synth" style="display:block; margin:0.75rem auto 0; border-radius:20px">&#128256; Shuffle</button>
@@ -184,7 +184,22 @@
     <p class="results-caption">Real-world instrument modeling results evaluated on the NSynth acoustic guitar test set. $\mathcal{P}$-Only uses tKSA trained on synthetic data with $\mathcal{P}_{\text{Loss}}$ only; $\mathcal{P}$+Audio models are trained with both $\mathcal{P}_{\text{Loss}}$ and audio losses; Audio-Only models are trained with audio losses and external detectors. HpN and HpN+ are Harmonics-plus-Noise baselines using the original DDSP encoder and our TCN encoder respectively. KAD is reported in CLAP and EnCodec embedding spaces. Rows beneath each $\mathcal{P}$+Audio model are stop-gradient ablations that detach the audio-loss gradient from the named head. Per column, the best, second-best, and third-best values are shown in <b>bold</b>, <u>underline</u>, and <i>italic</i> respectively.</p>
 
     <h3 style="margin-top:2.5rem">Audio Examples &mdash; Real</h3>
-    <button class="btn btn-outline-dark" id="shuffle-nsynth" style="display:block; margin:0 auto; border-radius:20px">&#128256; Shuffle</button>
+    <div class="audio-options" aria-label="Real audio example display options">
+      <div class="audio-toggle" role="group" aria-label="KSA implementation filter">
+        <button type="button" data-section="real" data-view="freq">Show freq.</button>
+        <button type="button" data-section="real" data-view="both" class="active">Show both</button>
+        <button type="button" data-section="real" data-view="time">Show time</button>
+      </div>
+      <div class="audio-toggle" role="group" aria-label="Ablation visibility">
+        <button type="button" data-section="real" data-ablation="off" class="active">Hide ablations</button>
+        <button type="button" data-section="real" data-ablation="on">Show ablations</button>
+      </div>
+      <div class="audio-toggle" role="group" aria-label="Harmonics-plus-Noise visibility">
+        <button type="button" data-section="real" data-hpn="off" class="active">Hide Harmonics plus Noise</button>
+        <button type="button" data-section="real" data-hpn="on">Show Harmonics plus Noise</button>
+      </div>
+    </div>
+    <button class="btn btn-outline-dark" id="shuffle-nsynth" style="display:block; margin:0.75rem auto 0; border-radius:20px">&#128256; Shuffle</button>
     <div class="table-wrapper">
       <table class="audio-table" id="table-nsynth"><thead></thead><tbody></tbody></table>
     </div>
@@ -242,8 +257,8 @@
 
     const NSYNTH_MODELS = [
       { label: 'Target', path: `${BASE_PATH}/real/target`, domain: 'always' },
-      { label: 'HpN', path: `${BASE_PATH}/real/pred/hpn/audio_only`, domain: 'always' },
-      { label: 'HpN+', path: `${BASE_PATH}/real/pred/hpn_p/audio_only`, domain: 'always' },
+      { label: 'HpN', path: `${BASE_PATH}/real/pred/hpn/audio_only`, domain: 'always', hpn: true },
+      { label: 'HpN+', path: `${BASE_PATH}/real/pred/hpn_p/audio_only`, domain: 'always', hpn: true },
       { label: '$\\mathcal{P}$-Only', path: `${BASE_PATH}/real/pred/oksa/p_only`, domain: 'always' },
       { label: 'Audio-Only (freq.)', path: `${BASE_PATH}/real/pred/fksa/audio_only`, domain: 'freq' },
       { label: 'Audio-Only (time)', path: `${BASE_PATH}/real/pred/tksa/audio_only`, domain: 'time' },
@@ -260,10 +275,17 @@
     const players = new Map();
     const pauseOthers = (keep) => players.forEach((ws, btn) => { if (ws !== keep && ws.isPlaying()) { ws.pause(); icon(btn, false); } });
     const state = {
-      view: 'both',
-      showAblations: false,
-      synthIds: rand(allFileIDs, EXAMPLES_TO_SHOW),
-      realIds: rand(allFileIDs, EXAMPLES_TO_SHOW)
+      synth: {
+        view: 'both',
+        showAblations: false,
+        ids: rand(allFileIDs, EXAMPLES_TO_SHOW)
+      },
+      real: {
+        view: 'both',
+        showAblations: false,
+        showHpn: false,
+        ids: rand(allFileIDs, EXAMPLES_TO_SHOW)
+      }
     };
 
     function makePlayer(td, url) {
@@ -276,11 +298,12 @@
       return ws;
     }
 
-    function visibleModels(modelsArray) {
+    function visibleModels(modelsArray, sectionState) {
       return modelsArray.filter(model => {
-        const matchesView = model.domain === 'always' || state.view === 'both' || model.domain === state.view;
-        const matchesAblations = !model.ablation || state.showAblations;
-        return matchesView && matchesAblations;
+        const matchesView = model.domain === 'always' || sectionState.view === 'both' || model.domain === sectionState.view;
+        const matchesAblations = !model.ablation || sectionState.showAblations;
+        const matchesHpn = !model.hpn || sectionState.showHpn;
+        return matchesView && matchesAblations && matchesHpn;
       });
     }
 
@@ -293,10 +316,11 @@
       });
     }
 
-    function renderTable(tableSelector, modelsArray, ids) {
+    function renderTable(tableSelector, modelsArray, sectionState) {
       const thead = document.querySelector(`${tableSelector} thead`);
       const tbody = document.querySelector(`${tableSelector} tbody`);
       let headerHTML = '<tr><th>Model</th>';
+      const ids = sectionState.ids;
       ids.forEach(id => {
         headerHTML += `<th>Example ${Number(id)}</th>`;
       });
@@ -304,7 +328,7 @@
       thead.innerHTML = headerHTML + '</tr>';
       tbody.innerHTML = '';
 
-      visibleModels(modelsArray).forEach(model => {
+      visibleModels(modelsArray, sectionState).forEach(model => {
         const row = document.createElement('tr');
 
         const labelCell = document.createElement('td');
@@ -343,36 +367,48 @@
       if (window.MathJax && window.MathJax.typesetPromise) window.MathJax.typesetPromise([thead.parentElement]);
     }
 
-    function setActive(selector, activeButton) {
-      document.querySelectorAll(selector).forEach(button => button.classList.toggle('active', button === activeButton));
+    function setActive(kind, section, activeButton) {
+      document.querySelectorAll(`[data-section="${section}"][${kind}]`).forEach(button => {
+        button.classList.toggle('active', button === activeButton);
+      });
     }
 
     function renderAll() {
-      renderTable('#table-synth', SYNTH_MODELS, state.synthIds);
-      renderTable('#table-nsynth', NSYNTH_MODELS, state.realIds);
+      renderTable('#table-synth', SYNTH_MODELS, state.synth);
+      renderTable('#table-nsynth', NSYNTH_MODELS, state.real);
     }
 
     document.querySelectorAll('[data-view]').forEach(button => {
       button.onclick = () => {
-        state.view = button.dataset.view;
-        setActive('[data-view]', button);
-        renderAll();
+        const section = button.dataset.section;
+        state[section].view = button.dataset.view;
+        setActive('data-view', section, button);
+        renderTable(section === 'synth' ? '#table-synth' : '#table-nsynth', section === 'synth' ? SYNTH_MODELS : NSYNTH_MODELS, state[section]);
       };
     });
     document.querySelectorAll('[data-ablation]').forEach(button => {
       button.onclick = () => {
-        state.showAblations = button.dataset.ablation === 'on';
-        setActive('[data-ablation]', button);
-        renderAll();
+        const section = button.dataset.section;
+        state[section].showAblations = button.dataset.ablation === 'on';
+        setActive('data-ablation', section, button);
+        renderTable(section === 'synth' ? '#table-synth' : '#table-nsynth', section === 'synth' ? SYNTH_MODELS : NSYNTH_MODELS, state[section]);
+      };
+    });
+    document.querySelectorAll('[data-hpn]').forEach(button => {
+      button.onclick = () => {
+        const section = button.dataset.section;
+        state[section].showHpn = button.dataset.hpn === 'on';
+        setActive('data-hpn', section, button);
+        renderTable('#table-nsynth', NSYNTH_MODELS, state.real);
       };
     });
     document.getElementById('shuffle-synth').onclick = () => {
-      state.synthIds = rand(allFileIDs, EXAMPLES_TO_SHOW);
-      renderTable('#table-synth', SYNTH_MODELS, state.synthIds);
+      state.synth.ids = rand(allFileIDs, EXAMPLES_TO_SHOW);
+      renderTable('#table-synth', SYNTH_MODELS, state.synth);
     };
     document.getElementById('shuffle-nsynth').onclick = () => {
-      state.realIds = rand(allFileIDs, EXAMPLES_TO_SHOW);
-      renderTable('#table-nsynth', NSYNTH_MODELS, state.realIds);
+      state.real.ids = rand(allFileIDs, EXAMPLES_TO_SHOW);
+      renderTable('#table-nsynth', NSYNTH_MODELS, state.real);
     };
     renderAll();
   </script>
