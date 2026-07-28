@@ -2,19 +2,19 @@
 
 Usage
 -----
-# Synthetic-only, param losses, time-domain KS, no detectors
-python experiments/train.py model=ks_timedomain detector=none \\
-    training=param_only data=synthetic_only experiment=synth_eval
+# Synthetic P-Only baseline
+python experiments/train.py model=ksa_oracle detector=end_to_end \\
+    training=param_only data=synth
 
-# Synthetic + Nsynth, combined, freq-sampling, external detectors
-python experiments/train.py model=ks_freqsampling detector=external \\
-    training=combined data=synthetic_and_nsynth experiment=ood_eval
+# Real P+Audio frequency-sampling KS model
+python experiments/train.py model=ksa_freq detector=end_to_end \\
+    training=combined data=mix
 
 # Multirun sweep
 python experiments/train.py --multirun \\
-    model=ks_timedomain,ks_freqsampling \\
-    training=param_only,spectral_only,combined \\
-    data=synthetic_only experiment=synth_eval
+    model=ksa_time,ksa_freq \\
+    training=combined,spectral_only \\
+    data=synth,mix,real
 """
 from __future__ import annotations
 
@@ -145,22 +145,21 @@ def _checkpoint_tag(cfg: DictConfig) -> str:
         elif impl == "time_domain": engine = "tKSA"
         elif impl == "frequency_sampling": engine = "fKSA"
     elif decoder == "harmonics_noise":
-        engine = "HNtcn" if enc_type == "enhanced" else "HN"
+        engine = "hpn_p" if enc_type == "enhanced" else "hpn"
 
-    # 2. Detection
-    det = "xDet" if cfg.detector.use_external_detectors else "E2E"
-
-    # 3. Data
-    if cfg.data.has_synthetic and not cfg.data.has_ood:
-        data = "synth"
-    elif cfg.data.has_synthetic and cfg.data.has_ood:
-        data = "mix"
-    elif not cfg.data.has_synthetic and cfg.data.has_ood:
-        data = "real"
+    # 2. Training regime
+    objective = cfg.training.objective
+    if objective == "param_only":
+        regime = "p_only"
+    elif objective == "combined":
+        regime = "p_audio"
+    elif objective == "spectral_only":
+        regime = "audio_only"
     else:
-        data = "unknown"
+        regime = objective
 
-    tag = f"{engine}_{det}_{data}"
+    experiment = "real" if cfg.data.has_ood else "synth"
+    tag = f"{experiment}_{engine}_{regime}"
 
     # 4. Ablation suffix: keep these checkpoints distinct from the joint pilots so
     # evaluate.py's per-tag latest-checkpoint selection does not shadow them.
@@ -168,11 +167,11 @@ def _checkpoint_tag(cfg: DictConfig) -> str:
     has_onset = ("onset" in sg) or ("time" in sg) or ("both" in sg)
     has_f0 = ("f0" in sg) or ("both" in sg)
     if has_onset and has_f0:
-        tag = f"{tag}_sgBoth"
+        tag = f"{tag}_detach_both"
     elif has_onset:
-        tag = f"{tag}_sgOnset"
+        tag = f"{tag}_detach_onset"
     elif has_f0:
-        tag = f"{tag}_sgF0"
+        tag = f"{tag}_detach_f0"
 
     return tag
 

@@ -98,14 +98,14 @@ def _build_model_from_cfg(cfg) -> SoundMatchingModel:
     return SoundMatchingModel(decoder=decoder, encoder_kwargs=OmegaConf.to_container(cfg.model.encoder, resolve=True))
 
 
-def _get_latest_run(tag: str, ckpt_dir: Path):
+def _get_latest_run(tag: str, ckpt_dir: Path, expected: dict | None = None):
     """Finds the newest checkpoint and config file for a given tag based on the timestamp."""
     import re
     valid_runs = []
     # The tag must be followed *only* by the run timestamp, so a base tag like
-    # "tKSA_E2E_mix" does NOT also match sub-variants such as
-    # "tKSA_E2E_mix_sgOnset_..." (whose suffix starts with "_sg", not "_<digits>").
-    ts_suffix = re.compile(r"_\d{8}_\d{6}_best\.ckpt$")
+    # "tKSA_p_audio" does NOT also match sub-variants such as
+    # "tKSA_p_audio_detach_onset_..." (whose suffix starts with "_detach", not "_<digits>").
+    ts_suffix = re.compile(r"_\d{8}_\d{6}(?:_\d{6})?_best\.ckpt$")
 
     # Grab all checkpoints that start with our tag
     for ckpt_path in ckpt_dir.glob(f"{tag}*best.ckpt"):
@@ -117,6 +117,8 @@ def _get_latest_run(tag: str, ckpt_dir: Path):
 
         # Only consider it valid if BOTH the checkpoint and config exist
         if config_path.exists():
+            if expected is not None and not _config_matches(config_path, expected):
+                continue
             valid_runs.append((ckpt_path, config_path))
 
     if not valid_runs:
@@ -130,6 +132,17 @@ def _get_latest_run(tag: str, ckpt_dir: Path):
     return latest_config, latest_ckpt
 
 
+def _config_matches(config_path: Path, expected: dict) -> bool:
+    cfg = OmegaConf.load(config_path)
+    for dotted_key, value in expected.items():
+        node = cfg
+        for part in dotted_key.split("."):
+            node = node.get(part)
+        if node != value:
+            return False
+    return True
+
+
 def _load_model(config_path: Path, ckpt_path: Path, device: torch.device):
     cfg = OmegaConf.load(config_path)
     model = _build_model_from_cfg(cfg)
@@ -139,15 +152,59 @@ def _load_model(config_path: Path, ckpt_path: Path, device: torch.device):
     return model.to(device).eval()
 
 
+def _split_tag(tag: str) -> tuple[str, str, str, str]:
+    experiment, remainder = tag.split("_", 1)
+    for regime in ("audio_only", "p_audio", "p_only"):
+        marker = f"_{regime}"
+        idx = remainder.find(marker)
+        if idx < 0:
+            continue
+        suffix = remainder[idx + len(marker):].lstrip("_")
+        if suffix and not suffix.startswith("detach_"):
+            continue
+        return experiment, remainder[:idx], regime, suffix
+    raise ValueError(f"Could not parse evaluation tag: {tag}")
+
+
 def _tag_to_rel_path(tag: str) -> str:
-    return "/".join(tag.lower().split("_"))
+    _, engine, regime, suffix = _split_tag(tag)
+    rel_path = f"{engine.lower()}/{regime}"
+    if suffix:
+        rel_path = f"{rel_path}/{suffix.lower()}"
+    return rel_path
+
+
+def _expected_config(mode: str, tag: str) -> dict:
+    experiment, _, regime, _ = _split_tag(tag)
+    if regime == "p_only":
+        return {
+            "training.objective": "param_only",
+            "data.has_synthetic": True,
+            "data.has_ood": False,
+        }
+    if regime == "p_audio":
+        return {
+            "training.objective": "combined",
+            "data.has_synthetic": True,
+            "data.has_ood": experiment == "real",
+        }
+    if regime == "audio_only":
+        return {
+            "training.objective": "spectral_only",
+            "data.has_synthetic": experiment == "synth",
+            "data.has_ood": experiment == "real",
+        }
+    return {}
+
+
 
 
 # ── MAIN EVALUATION LOOP ────────────────────────────────────────────────────
 def run_evaluation(mode, args):
     device = torch.device(args.device)
     ckpt_dir = Path(args.ckpt_dir)
-    audio_root = Path(args.out_dir) / "audio" / mode
+    audio_mode = "real" if mode == "nsynth" else mode
+    audio_root = Path(args.out_dir) / "audio" / audio_mode
 
     # 1. Conditionally Load Perceptual Models
     if mode == "nsynth" and not getattr(args, "render_only", False):
@@ -160,29 +217,29 @@ def run_evaluation(mode, args):
     if mode == "nsynth":
         ds = NsynthGuitarDataset(nsynth_root="data/nsynth", split="test")
         tags = [
-            "fKSA_E2E_mix",
-            "tKSA_E2E_mix",
-            "fKSA_xDet_real",
-            "tKSA_xDet_real",
-            "HN_xDet_real",
-            "HNtcn_xDet_real",
-            "oKSA_E2E_synth",
+            "real_fKSA_p_audio",
+            "real_tKSA_p_audio",
+            "real_fKSA_audio_only",
+            "real_tKSA_audio_only",
+            "real_hpn_audio_only",
+            "real_hpn_p_audio_only",
+            "synth_oKSA_p_only",
             # P+Audio with audio-loss stop-gradient on onset/f0 (mix regime)
-            "tKSA_E2E_mix_sgOnset", "tKSA_E2E_mix_sgF0", "tKSA_E2E_mix_sgBoth",
-            "fKSA_E2E_mix_sgOnset", "fKSA_E2E_mix_sgF0", "fKSA_E2E_mix_sgBoth",
+            "real_tKSA_p_audio_detach_onset", "real_tKSA_p_audio_detach_f0", "real_tKSA_p_audio_detach_both",
+            "real_fKSA_p_audio_detach_onset", "real_fKSA_p_audio_detach_f0", "real_fKSA_p_audio_detach_both",
         ]
 
     else:
         ds = SyntheticDataset(num_samples_per_epoch=290, fs=16000, random_seed=77777)
         tags = [
-            "oKSA_E2E_synth",
-            "fKSA_E2E_synth",
-            "tKSA_E2E_synth",
-            "fKSA_xDet_synth",
-            "tKSA_xDet_synth",
+            "synth_oKSA_p_only",
+            "synth_fKSA_p_audio",
+            "synth_tKSA_p_audio",
+            "synth_fKSA_audio_only",
+            "synth_tKSA_audio_only",
             # P+Audio with audio-loss stop-gradient on onset/f0 (synth regime)
-            "tKSA_E2E_synth_sgOnset", "tKSA_E2E_synth_sgF0", "tKSA_E2E_synth_sgBoth",
-            "fKSA_E2E_synth_sgOnset", "fKSA_E2E_synth_sgF0", "fKSA_E2E_synth_sgBoth",
+            "synth_tKSA_p_audio_detach_onset", "synth_tKSA_p_audio_detach_f0", "synth_tKSA_p_audio_detach_both",
+            "synth_fKSA_p_audio_detach_onset", "synth_fKSA_p_audio_detach_f0", "synth_fKSA_p_audio_detach_both",
         ]
         event_loss_fn = EventSetLoss(fs=16000).to(device)
 
@@ -204,7 +261,7 @@ def run_evaluation(mode, args):
         tag_pbar.set_postfix({"Current Model": tag})
 
         # Look for the latest timestamped files dynamically
-        config_path, ckpt_path = _get_latest_run(tag, ckpt_dir)
+        config_path, ckpt_path = _get_latest_run(tag, ckpt_dir, _expected_config(mode, tag))
 
         if config_path is None or ckpt_path is None:
             print(f"\n⚠️ Skipping {tag}: No valid checkpoint/config pair found.")
@@ -345,7 +402,8 @@ def run_evaluation(mode, args):
             encodec_kad = compute_kad(torch.cat(all_encodec_tgt, dim=0), torch.cat(all_encodec_pred, dim=0))
             all_results[tag]["EnCodec_KAD"] = encodec_kad
 
-    out_csv = getattr(args, "out_csv", None) or (Path(args.out_dir) / f"{mode}_results.csv")
+    result_mode = "real" if mode == "nsynth" else mode
+    out_csv = getattr(args, "out_csv", None) or (Path(args.out_dir) / f"{result_mode}_results.csv")
     pd.DataFrame(all_results).T.to_csv(out_csv)
     print(f"\n✅ Done! Results saved to {out_csv}")
 
