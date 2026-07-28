@@ -57,16 +57,6 @@ def _modified_sigmoid(x: Tensor) -> Tensor:
     return 2.0 * torch.sigmoid(x) ** math.log(10) + 1e-7
 
 
-class STEReLU(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x):
-        return F.relu(x)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        return grad_output
-
-
 # ═════════════════════════════════════════════════════════════════════════════
 # Karplus-Strong Decoder
 # ═════════════════════════════════════════════════════════════════════════════

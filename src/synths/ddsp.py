@@ -18,17 +18,6 @@ class Implementation(Enum):
     FREQUENCY_SAMPLING = "frequency_sampling"
 
 
-class ExcitationMode(Enum):
-    """Strategy for placing the noise-burst excitation at the onset time.
-
-    - STE: integer placement in the forward pass (no fractional pre-echo),
-      frequency-sampling phase-rotation gradient in the backward pass.
-    - FREQUENCY_SAMPLING: fractional placement via frequency-domain phase
-      rotation, fully differentiable (no STE).
-    """
-    STE = "ste"
-    FREQUENCY_SAMPLING = "frequency_sampling"
-
 # =============================================================================
 #                           SHARED UTILITIES
 # =============================================================================
@@ -74,7 +63,7 @@ def no_dc_burst(
     burst_torch = torch.from_numpy(burst).to(device)
     return ((burst_torch / burst_torch.max()) - 0.5) * 2
 
-def _freq_excitation(
+def excitation(
         times: T,
         exists: T,
         f0: T,
@@ -111,45 +100,6 @@ def _freq_excitation(
         total_X += event_X
 
     return torch.fft.irfft(total_X, n=n_fft)
-
-
-def differentiable_excitation(
-        times: T,
-        exists: T,
-        f0: T,
-        signal_length: int,
-        fs: int = FS_MIN,
-        noise_seed: int = RND_SEED,
-) -> T:
-    """
-    STE excitation: integer placement in the forward pass (no fractional
-    pre-echo), frequency-sampling phase-rotation gradient in the backward pass.
-    """
-    t_samples = times * signal_length
-    t_int = torch.round(t_samples)
-    times_ste = (t_int - t_samples.detach() + t_samples) / signal_length
-    return _freq_excitation(times_ste, exists, f0, signal_length, fs, noise_seed)
-
-
-
-
-def excitation(
-        mode: "ExcitationMode",
-        times: T,
-        exists: T,
-        f0: T,
-        signal_length: int,
-        fs: int = FS_MIN,
-        noise_seed: int = RND_SEED,
-        lagrange_order: int = LAGRANGE_ORDER,
-) -> T:
-    """Dispatch noise-burst excitation placement on ``mode`` (see ExcitationMode)."""
-    if mode == ExcitationMode.STE:
-        return differentiable_excitation(times, exists, f0, signal_length, fs, noise_seed)
-    elif mode == ExcitationMode.FREQUENCY_SAMPLING:
-        return _freq_excitation(times, exists, f0, signal_length, fs, noise_seed)
-    else:
-        raise NotImplementedError
 
 
 # =============================================================================
