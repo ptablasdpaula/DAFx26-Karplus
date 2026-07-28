@@ -19,8 +19,8 @@
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet" />
 
   <style>
-    /* ---- diffapf-style academic layout on top of Bootstrap ---- */
-    body{color:#212529;line-height:1.6}
+    body{color:#212529;line-height:1.6;background:#fff}
+    body.synth-open{padding-bottom:300px}
     h1{font-weight:700;color:#212529}
     h2{font-weight:600;margin-top:0.5rem}
     h3{font-weight:600}
@@ -29,11 +29,53 @@
     .lead a{color:#007bff;text-decoration:none}
     .lead a:hover{color:#0056b3;text-decoration:underline}
     .affil{color:#5f6368}
-    /* centered, narrow abstract like diffapf */
-    .abstract{max-width:80%;margin:0 auto;text-align:justify}
     .hero-buttons .btn{border-radius:20px;margin:4px 4px}
+    .site-header{padding:1.75rem 1rem 1rem}
+    .site-header h1{font-size:2.25rem}
+    .app-shell{display:grid;grid-template-columns:220px minmax(0,1fr);gap:28px;max-width:1500px;margin:0 auto;padding:1rem 28px 0}
+    .side-tabs{position:sticky;top:18px;align-self:start;border-right:1px solid #dadce0;padding:0.5rem 14px 0.5rem 0}
+    .tab-button{display:block;width:100%;border:0;background:#fff;color:#333;text-align:left;padding:10px 12px;margin:2px 0;border-radius:6px;font-weight:600}
+    .tab-button.active{background:#e9f2ff;color:#0056b3}
+    .tab-panel{display:none}
+    .tab-panel.active{display:block}
+    .container-narrow{max-width:1120px;margin:0 auto}
+    .figure-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}
+    .figure-frame{border:1px solid #d8dde3;border-radius:6px;overflow:hidden;background:#f8f9fa}
+    .figure-frame object{display:block;width:100%;height:560px}
+    .figure-frame a{display:block;padding:14px;text-align:center}
 
-    /* ---- Audio comparison tables ---- */
+    .interactive-layout{display:grid;grid-template-columns:minmax(360px,1fr) minmax(320px,430px);gap:24px;align-items:start}
+    .pdf-stage{border:1px solid #d8dde3;border-radius:6px;overflow:hidden;background:#f8f9fa}
+    .pdf-stage object{display:block;width:100%;height:620px}
+    .control-panel{display:grid;gap:16px}
+    .knob-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+    .knob-card{border:1px solid #d8dde3;border-radius:6px;padding:12px;background:#fff}
+    .knob-head{display:flex;justify-content:space-between;gap:10px;font-size:0.88rem;font-weight:600}
+    .knob-readout{font-variant-numeric:tabular-nums;color:#555}
+    .knob-shell{position:relative;width:92px;height:92px;margin:10px auto;border-radius:50%;background:conic-gradient(#f1b44c var(--live,0deg), #0878d8 var(--base,0deg), #e9ecef 0);box-shadow:inset 0 0 0 11px #fff, inset 0 0 0 12px #cfd6dd}
+    .knob-shell input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+    .knob-indicator{position:absolute;left:50%;top:10px;width:3px;height:34px;background:#1f2933;border-radius:3px;transform-origin:50% 36px;transform:translateX(-50%) rotate(var(--angle,-135deg))}
+    .knob-live{position:absolute;left:50%;top:10px;width:3px;height:34px;background:#f1b44c;border-radius:3px;transform-origin:50% 36px;transform:translateX(-50%) rotate(var(--live-angle,-135deg))}
+    .lfo-grid{display:grid;grid-template-columns:1fr;gap:12px}
+    .lfo-card{border:1px solid #d8dde3;border-radius:6px;padding:12px;background:#fbfcfd}
+    .lfo-row{display:grid;grid-template-columns:90px 1fr 54px;gap:8px;align-items:center;margin-bottom:8px;font-size:0.88rem}
+    .lfo-targets{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px;font-size:0.86rem}
+    .lfo-targets label{margin:0;display:flex;gap:6px;align-items:center}
+    .transport{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .transport .btn{border-radius:20px}
+    .tempo-control{display:inline-grid;grid-template-columns:auto 80px;gap:8px;align-items:center;font-size:0.9rem}
+    .piano-roll{position:fixed;left:0;right:0;bottom:0;background:#f7f9fb;border-top:1px solid #cfd6dd;box-shadow:0 -4px 18px rgba(0,0,0,.1);z-index:50;display:none}
+    body.synth-open .piano-roll{display:block}
+    .piano-toolbar{height:48px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 18px;border-bottom:1px solid #d8dde3}
+    .roll-viewport{height:252px;overflow:auto}
+    .roll-grid{display:grid;grid-template-columns:76px repeat(64,24px);width:max-content;min-width:100%}
+    .note-label{position:sticky;left:0;z-index:2;height:24px;background:#eef2f6;border-right:1px solid #cfd6dd;border-bottom:1px solid #d8dde3;padding:2px 8px;font-size:0.78rem;font-variant-numeric:tabular-nums}
+    .roll-cell{width:24px;height:24px;border:0;border-right:1px solid #e4e8ec;border-bottom:1px solid #e4e8ec;background:#fff;padding:0}
+    .roll-cell.barline{border-left:2px solid #c0c8d0}
+    .roll-cell.beat{background:#f7f9fb}
+    .roll-cell.active{background:#0878d8}
+    .roll-cell.playhead{box-shadow:inset 2px 0 0 #f1b44c}
+
     .table-wrapper { overflow-x: auto; margin: 2rem 0; box-shadow:0 2px 8px rgba(0,0,0,.1); border-radius:8px; }
     .audio-table{border-collapse:collapse;width:100%;min-width:1100px;}
     .audio-table th,.audio-table td{border:1px solid #e1e5e9;padding:10px;text-align:center; vertical-align:middle;}
@@ -59,7 +101,6 @@
     .audio-toggle button:last-child{border-right:0}
     .audio-toggle button.active{background:#007BFF;color:#fff}
 
-    /* ---- Result tables: clean booktabs look + MathJax ---- */
     .results-table{border-collapse:collapse;margin:1rem auto 0.4rem;width:auto;min-width:0;font-variant-numeric:tabular-nums;}
     .results-table th,.results-table td{border:none;padding:4px 15px;text-align:center;font-size:0.95rem;background:none;}
     .results-table thead tr:first-child th{border-top:2px solid #222;padding-top:7px}
@@ -70,10 +111,16 @@
     .results-table td.sub{padding-left:34px;color:#555}
     .results-caption{max-width:1000px;margin:0.3rem auto 2.5rem;text-align:justify;font-size:0.85rem;color:#555}
     .results-scroll{overflow-x:auto;}
-
-    /* ---- BibTeX citation block ---- */
     pre.bibtex{background:#f8f9fa;border:1px solid #e1e5e9;border-radius:8px;padding:1.25rem 1.5rem;overflow-x:auto;text-align:left;}
     pre.bibtex code{font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;font-size:0.85rem;color:#2c3e50;white-space:pre;}
+    @media (max-width: 980px){
+      .app-shell{grid-template-columns:1fr;padding:0 16px}
+      .side-tabs{position:static;border-right:0;border-bottom:1px solid #dadce0;display:flex;gap:6px;overflow:auto;padding:0 0 10px}
+      .tab-button{white-space:nowrap}
+      .figure-grid,.interactive-layout{grid-template-columns:1fr}
+      .figure-frame object,.pdf-stage object{height:430px}
+      .knob-grid{grid-template-columns:1fr}
+    }
   </style>
   <script>
     window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] }, svg: { fontCache: 'global' } };
@@ -81,146 +128,213 @@
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 </head>
 <body>
-  <div class="text-center">
-    <div class="row">
-      <div class="col-lg-12">
-        <br>
-        <h1 class="mt-5 mb-3">Sound Matching with a Differentiable Karplus-Strong Algorithm</h1>
-        <p class="lead">
-          <a href="https://github.com/ptablasdpaula/" target="_blank">Pablo Tablas de Paula</a>,
-          <a href="https://github.com/davidmarttila" target="_blank">David Marttila</a>,
-          <a href="https://scholar.google.com/citations?user=pFcyfQYAAAAJ&amp;hl=en" target="_blank">Rodrigo Díaz</a>,
-          <a href="https://www.seresearch.qmul.ac.uk/cmai/people/iroman/" target="_blank">Irán Román</a>,
-          <a href="https://www.seresearch.qmul.ac.uk/cmai/people/ebenetos/" target="_blank">Emmanouil Benetos</a>, and
-          <a href="https://joshreiss.github.io/" target="_blank">Joshua D. Reiss</a>
-        </p>
-        <p class="lead affil">
-          <a href="https://c4dm.eecs.qmul.ac.uk" target="_blank">Centre for Digital Music (C4DM)</a>, Queen Mary University of London
-        </p>
-        <div class="hero-buttons">
-          <a class="btn btn-outline-dark" href="https://arxiv.org/abs/XXXX.XXXXX" target="_blank" role="button">
-            <i class="bi bi-newspaper"></i> Paper
-          </a>
-          <a class="btn btn-outline-dark" href="https://github.com/ptablasdpaula/DAFx26-Karplus" target="_blank" role="button">
-            <i class="bi bi-code-slash"></i> Code Repository
-          </a>
+  <header class="site-header text-center">
+    <h1 class="mb-3">Sound Matching with a Differentiable Karplus-Strong Algorithm</h1>
+    <p class="lead">
+      <a href="https://github.com/ptablasdpaula/" target="_blank">Pablo Tablas de Paula</a>,
+      <a href="https://github.com/davidmarttila" target="_blank">David Marttila</a>,
+      <a href="https://scholar.google.com/citations?user=pFcyfQYAAAAJ&amp;hl=en" target="_blank">Rodrigo Díaz</a>,
+      <a href="https://www.seresearch.qmul.ac.uk/cmai/people/iroman/" target="_blank">Irán Román</a>,
+      <a href="https://www.seresearch.qmul.ac.uk/cmai/people/ebenetos/" target="_blank">Emmanouil Benetos</a>, and
+      <a href="https://joshreiss.github.io/" target="_blank">Joshua D. Reiss</a>
+    </p>
+    <p class="lead affil">
+      <a href="https://c4dm.eecs.qmul.ac.uk" target="_blank">Centre for Digital Music (C4DM)</a>, Queen Mary University of London
+    </p>
+    <div class="hero-buttons">
+      <a class="btn btn-outline-dark" href="https://arxiv.org/abs/XXXX.XXXXX" target="_blank" role="button">
+        <i class="bi bi-newspaper"></i> Paper
+      </a>
+      <a class="btn btn-outline-dark" href="https://github.com/ptablasdpaula/DAFx26-Karplus" target="_blank" role="button">
+        <i class="bi bi-code-slash"></i> Code Repository
+      </a>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <nav class="side-tabs" aria-label="Project sections">
+      <button class="tab-button active" type="button" data-tab-target="intro">Introduction</button>
+      <button class="tab-button" type="button" data-tab-target="interactive">Interactive Karplus-Strong</button>
+      <button class="tab-button" type="button" data-tab-target="results">Results</button>
+      <button class="tab-button" type="button" data-tab-target="audio">Audio Examples</button>
+    </nav>
+
+    <div class="tab-content">
+      <section class="tab-panel active" id="tab-intro">
+        <div class="section mb-5">
+          <h2>Introduction</h2>
+          <hr>
+          <div class="figure-grid">
+            <div class="figure-frame"><object data="main/figures/fig_1.pdf" type="application/pdf"><a href="main/figures/fig_1.pdf">Open Fig. 1</a></object></div>
+            <div class="figure-frame"><object data="main/figures/fig_2.pdf" type="application/pdf"><a href="main/figures/fig_2.pdf">Open Fig. 2</a></object></div>
+            <div class="figure-frame"><object data="main/figures/fig_3.pdf" type="application/pdf"><a href="main/figures/fig_3.pdf">Open Fig. 3</a></object></div>
+            <div class="figure-frame"><object data="main/figures/fig_4.pdf" type="application/pdf"><a href="main/figures/fig_4.pdf">Open Fig. 4</a></object></div>
+          </div>
         </div>
-      </div>
-    </div>
-  </div>
+      </section>
 
-  <div class="container">
+      <section class="tab-panel" id="tab-interactive">
+        <div class="section mb-5">
+          <h2>Interactive Karplus-Strong</h2>
+          <hr>
+          <div class="interactive-layout">
+            <div class="pdf-stage">
+              <object data="main/figures/fig_1.pdf" type="application/pdf"><a href="main/figures/fig_1.pdf">Open Fig. 1</a></object>
+            </div>
+            <div class="control-panel">
+              <div class="knob-grid" id="ks-knobs"></div>
+              <div class="lfo-grid" id="lfo-grid"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="tab-results">
+        <div class="section mb-5">
+          <h2>Results</h2>
+          <hr>
+
+          <h3 style="margin-top:2rem">Single-Event Gradient Accuracy</h3>
+          <div class="results-scroll">
+            <table class="results-table">
+              <thead>
+                <tr><th></th><th colspan="4">$\mathcal{L}_{MSS}$</th><th colspan="4">$\mathcal{L}_{SOT}$</th></tr>
+                <tr><th></th><th colspan="2">tKSA</th><th colspan="2">fKSA</th><th colspan="2">tKSA</th><th colspan="2">fKSA</th></tr>
+                <tr><th>Parameter</th><th>CGA</th><th>FGA</th><th>CGA</th><th>FGA</th><th>CGA</th><th>FGA</th><th>CGA</th><th>FGA</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>$f_0$</td><td>68.0</td><td>58.4</td><td>69.6</td><td>63.6</td><td>54.8</td><td>50.8</td><td>50.0</td><td>50.0</td></tr>
+                <tr><td>$g$ (decay)</td><td>100.0</td><td>100.0</td><td>100.0</td><td>99.6</td><td>70.4</td><td>47.6</td><td>73.6</td><td>47.6</td></tr>
+                <tr><td>$a_1$ (damping)</td><td>100.0</td><td>100.0</td><td>99.2</td><td>94.8</td><td>40.0</td><td>50.0</td><td>34.4</td><td>50.0</td></tr>
+                <tr><td>Pluck position</td><td>66.8</td><td>89.2</td><td>67.6</td><td>90.0</td><td>49.6</td><td>48.0</td><td>47.6</td><td>46.0</td></tr>
+                <tr><td>Dynamic level</td><td>100.0</td><td>99.6</td><td>98.4</td><td>92.4</td><td>97.6</td><td>100.0</td><td>98.0</td><td>98.8</td></tr>
+                <tr><td>Distance gain</td><td>100.0</td><td>100.0</td><td>96.4</td><td>82.0</td><td>99.6</td><td>99.2</td><td>97.2</td><td>86.8</td></tr>
+                <tr><td>Onset time</td><td>51.2</td><td>55.2</td><td>52.0</td><td>56.0</td><td>42.4</td><td>14.4</td><td>62.4</td><td>88.8</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="results-caption">Single-event gradient accuracy (%) comparing $\mathcal{L}_{MSS}$ and $\mathcal{L}_{SOT}$ across tKSA and fKSA.</p>
+
+          <h3 style="margin-top:2.5rem">Multi-Event Onset Gradient Accuracy</h3>
+          <div class="results-scroll">
+            <table class="results-table">
+              <thead>
+                <tr><th></th><th colspan="4">$\mathcal{L}_{MSS}$</th><th colspan="4">$\mathcal{L}_{SOT}$</th></tr>
+                <tr><th></th><th colspan="2">tKSA</th><th colspan="2">fKSA</th><th colspan="2">tKSA</th><th colspan="2">fKSA</th></tr>
+                <tr><th>Events</th><th>Any</th><th>Joint</th><th>Any</th><th>Joint</th><th>Any</th><th>Joint</th><th>Any</th><th>Joint</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>2</td><td>73.4</td><td>22.7</td><td>77.1</td><td>23.0</td><td>64.1</td><td>12.1</td><td>77.5</td><td>28.5</td></tr>
+                <tr><td>3</td><td>83.3</td><td>7.4</td><td>82.7</td><td>13.9</td><td>79.9</td><td>5.6</td><td>84.9</td><td>11.6</td></tr>
+                <tr><td>4</td><td>71.6</td><td>1.6</td><td>72.8</td><td>4.7</td><td>70.7</td><td>1.2</td><td>77.6</td><td>6.6</td></tr>
+                <tr><td>5</td><td>65.9</td><td>0.4</td><td>65.3</td><td>3.3</td><td>66.9</td><td>1.2</td><td>68.6</td><td>4.1</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="results-caption">Multi-event onset time gradient accuracy (%) for $K$ equally spaced plucks. fKSA uses $N_{FFT}=16384$, hop=256. <em>Any</em>: at least one gradient points toward a target; <em>Joint</em>: all $K$ simultaneously toward their Hungarian-matched targets.</p>
+
+          <h3 style="margin-top:2.5rem">Synthetic Parameter Recovery</h3>
+          <div class="results-scroll">
+            <table class="results-table">
+              <thead>
+                <tr><th>Model</th><th>MSS&nbsp;&darr;</th><th>SOT&nbsp;&darr;</th><th>wMFCC&nbsp;&darr;</th><th>RMS&nbsp;&uarr;</th><th>Prec.&nbsp;&uarr;</th><th>Rec.&nbsp;&uarr;</th><th>F1&nbsp;&uarr;</th><th>$\Delta$&nbsp;Cents&nbsp;&darr;</th><th>$\mathcal{P}$-Loss&nbsp;&darr;</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>$\mathcal{P}$-Only</td><td><b>136.11</b></td><td><u>0.18</u></td><td><b>6.02</b></td><td><b>0.96</b></td><td><u>0.92</u></td><td><b>0.92</b></td><td><b>0.92</b></td><td>15.14</td><td><b>0.29</b></td></tr>
+                <tr class="grp"><td>Audio-Only (freq.)</td><td>158.95</td><td><i>0.19</i></td><td>9.29</td><td>0.91</td><td><b>0.94</b></td><td><u>0.85</u></td><td><u>0.89</u></td><td>294.39</td><td>17.49</td></tr>
+                <tr><td>Audio-Only (time)</td><td><u>149.07</u></td><td><b>0.16</b></td><td>9.23</td><td><i>0.93</i></td><td><b>0.94</b></td><td><u>0.85</u></td><td><u>0.89</u></td><td>294.33</td><td>15.66</td></tr>
+                <tr class="grp"><td>$\mathcal{P}$+Audio (freq.)</td><td>252.90</td><td><i>0.19</i></td><td>15.29</td><td>0.33</td><td>0.01</td><td>0.01</td><td>0.01</td><td>116.96</td><td>4.72</td></tr>
+                <tr><td class="sub">↪ detach $f_0$</td><td>251.79</td><td>0.22</td><td>15.09</td><td>0.36</td><td>0.02</td><td>0.02</td><td>0.02</td><td>45.49</td><td>3.73</td></tr>
+                <tr><td class="sub">↪ detach onset</td><td>195.29</td><td>0.27</td><td>10.92</td><td>0.81</td><td>0.31</td><td>0.31</td><td>0.31</td><td>42.60</td><td>1.94</td></tr>
+                <tr><td class="sub">↪ detach both</td><td>163.00</td><td>0.21</td><td><i>8.15</i></td><td><u>0.94</u></td><td>0.83</td><td>0.83</td><td>0.83</td><td><b>12.69</b></td><td><i>0.52</i></td></tr>
+                <tr><td>$\mathcal{P}$+Audio (time)</td><td>241.16</td><td>0.20</td><td>13.47</td><td>0.43</td><td>0.01</td><td>0.01</td><td>0.01</td><td><i>13.86</i></td><td>3.74</td></tr>
+                <tr><td class="sub">↪ detach $f_0$</td><td>245.77</td><td><u>0.18</u></td><td>16.29</td><td>0.38</td><td>0.01</td><td>0.01</td><td>0.01</td><td>216.76</td><td>4.55</td></tr>
+                <tr><td class="sub">↪ detach onset</td><td>157.95</td><td>0.20</td><td>8.19</td><td><i>0.93</i></td><td>0.64</td><td>0.64</td><td>0.64</td><td><u>13.15</u></td><td>0.82</td></tr>
+                <tr><td class="sub">↪ detach both</td><td><i>155.96</i></td><td>0.23</td><td><u>7.59</u></td><td><u>0.94</u></td><td><i>0.84</i></td><td><i>0.84</i></td><td><i>0.84</i></td><td>14.26</td><td><u>0.48</u></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="results-caption">Synthetic parameter recovery. All models are trained and evaluated on synthetic data. $\mathcal{P}$-Only uses tKSA with $\mathcal{P}_{\text{Loss}}$ supervision; $\mathcal{P}$+Audio models use differentiable decoders trained end-to-end with both $\mathcal{P}_{\text{Loss}}$ and audio losses (MSS, SOT); Audio-Only models use differentiable decoders with audio losses and external detectors for onsets and $f_0$. Rows beneath each $\mathcal{P}$+Audio model are stop-gradient ablations that detach the audio-loss gradient from the named head ($f_0$, onset, or both), leaving it supervised only by $\mathcal{P}_{\text{Loss}}$. Per column, the best, second-best, and third-best values are shown in <b>bold</b>, <u>underline</u>, and <i>italic</i> respectively.</p>
+
+          <h3 style="margin-top:2.5rem">Real-World Instrument Modelling</h3>
+          <div class="results-scroll">
+            <table class="results-table">
+              <thead>
+                <tr><th>Model</th><th>MSS&nbsp;&darr;</th><th>SOT&nbsp;&darr;</th><th>wMFCC&nbsp;&darr;</th><th>RMS&nbsp;&uarr;</th><th>CLAP&nbsp;&darr;</th><th>EnCodec&nbsp;&darr;</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>HpN</td><td><u>246.60</u></td><td><i>0.14</i></td><td><u>7.90</u></td><td><i>0.96</i></td><td>266.20</td><td><u>17.99</u></td></tr>
+                <tr><td>HpN+</td><td><b>183.43</b></td><td><b>0.02</b></td><td><b>6.20</b></td><td><b>1.00</b></td><td><u>183.11</u></td><td><b>5.20</b></td></tr>
+                <tr class="grp"><td>$\mathcal{P}$-Only</td><td>311.86</td><td>0.20</td><td>13.18</td><td>0.95</td><td>193.78</td><td>64.40</td></tr>
+                <tr class="grp"><td>Audio-Only (freq.)</td><td>299.47</td><td>0.30</td><td>14.08</td><td>0.93</td><td><i>191.50</i></td><td>71.91</td></tr>
+                <tr><td>Audio-Only (time)</td><td><i>262.72</i></td><td>0.20</td><td><i>12.18</i></td><td><u>0.97</u></td><td><b>163.95</b></td><td><i>40.39</i></td></tr>
+                <tr class="grp"><td>$\mathcal{P}$+Audio (freq.)</td><td>468.33</td><td><u>0.13</u></td><td>32.43</td><td>0.09</td><td>547.78</td><td>494.88</td></tr>
+                <tr><td class="sub">↪ detach $f_0$</td><td>466.40</td><td>0.20</td><td>30.80</td><td>0.12</td><td>431.52</td><td>482.48</td></tr>
+                <tr><td class="sub">↪ detach onset</td><td>393.13</td><td>0.28</td><td>21.44</td><td>0.86</td><td>363.81</td><td>118.33</td></tr>
+                <tr><td class="sub">↪ detach both</td><td>348.18</td><td>0.25</td><td>15.37</td><td>0.81</td><td>204.19</td><td>116.66</td></tr>
+                <tr><td>$\mathcal{P}$+Audio (time)</td><td>461.06</td><td>0.18</td><td>26.63</td><td>0.16</td><td>403.83</td><td>470.67</td></tr>
+                <tr><td class="sub">↪ detach $f_0$</td><td>463.00</td><td>0.18</td><td>27.29</td><td>0.16</td><td>446.45</td><td>480.10</td></tr>
+                <tr><td class="sub">↪ detach onset</td><td>336.72</td><td>0.19</td><td>14.88</td><td>0.82</td><td>213.53</td><td>96.80</td></tr>
+                <tr><td class="sub">↪ detach both</td><td>341.44</td><td>0.21</td><td>15.08</td><td>0.83</td><td>201.14</td><td>99.01</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="results-caption">Real-world instrument modeling results evaluated on the NSynth acoustic guitar test set. $\mathcal{P}$-Only uses tKSA trained on synthetic data with $\mathcal{P}_{\text{Loss}}$ only; $\mathcal{P}$+Audio models are trained with both $\mathcal{P}_{\text{Loss}}$ and audio losses; Audio-Only models are trained with audio losses and external detectors. HpN and HpN+ are Harmonics-plus-Noise baselines using the original DDSP encoder and our TCN encoder respectively. KAD is reported in CLAP and EnCodec embedding spaces. Rows beneath each $\mathcal{P}$+Audio model are stop-gradient ablations that detach the audio-loss gradient from the named head. Per column, the best, second-best, and third-best values are shown in <b>bold</b>, <u>underline</u>, and <i>italic</i> respectively.</p>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="tab-audio">
+        <div class="section mb-5">
+          <h2>Audio Examples</h2>
+          <hr>
+          <h3 style="margin-top:2rem">Audio Examples &mdash; Synthetic</h3>
+          <div class="audio-options" aria-label="Audio example display options">
+            <div class="audio-toggle" role="group" aria-label="KSA implementation filter">
+              <button type="button" data-section="synth" data-view="freq">Show freq.</button>
+              <button type="button" data-section="synth" data-view="both" class="active">Show both</button>
+              <button type="button" data-section="synth" data-view="time">Show time</button>
+            </div>
+            <div class="audio-toggle" role="group" aria-label="Ablation visibility">
+              <button type="button" data-section="synth" data-ablation="off" class="active">Hide ablations</button>
+              <button type="button" data-section="synth" data-ablation="on">Show ablations</button>
+            </div>
+          </div>
+          <button class="btn btn-outline-dark" id="shuffle-synth" style="display:block; margin:0.75rem auto 0; border-radius:20px"><i class="bi bi-shuffle"></i> Shuffle</button>
+          <div class="table-wrapper">
+            <table class="audio-table" id="table-synth"><thead></thead><tbody></tbody></table>
+          </div>
+
+          <h3 style="margin-top:2.5rem">Audio Examples &mdash; Real</h3>
+          <div class="audio-options" aria-label="Real audio example display options">
+            <div class="audio-toggle" role="group" aria-label="KSA implementation filter">
+              <button type="button" data-section="real" data-view="freq">Show freq.</button>
+              <button type="button" data-section="real" data-view="both" class="active">Show both</button>
+              <button type="button" data-section="real" data-view="time">Show time</button>
+            </div>
+            <div class="audio-toggle" role="group" aria-label="Ablation visibility">
+              <button type="button" data-section="real" data-ablation="off" class="active">Hide ablations</button>
+              <button type="button" data-section="real" data-ablation="on">Show ablations</button>
+            </div>
+            <div class="audio-toggle" role="group" aria-label="Harmonics-plus-Noise visibility">
+              <button type="button" data-section="real" data-hpn="off" class="active">Hide Harmonics plus Noise</button>
+              <button type="button" data-section="real" data-hpn="on">Show Harmonics plus Noise</button>
+            </div>
+          </div>
+          <button class="btn btn-outline-dark" id="shuffle-nsynth" style="display:block; margin:0.75rem auto 0; border-radius:20px"><i class="bi bi-shuffle"></i> Shuffle</button>
+          <div class="table-wrapper">
+            <table class="audio-table" id="table-nsynth"><thead></thead><tbody></tbody></table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <section class="container-narrow">
     <div class="section mt-5 mb-5">
-      <h2>Abstract</h2>
+      <h2>Citation</h2>
       <hr>
-      <div class="abstract">
-        <p>We present a self-supervised, event-based sound matching model using a differentiable extended Karplus-Strong algorithm. To avoid relying on external onset and fundamental frequency detectors, we explore training methodologies combining parameter losses on synthetic data with audio losses. We demonstrate that time-domain fractional delay interpolation provides gradient accuracy comparable to frequency-sampling while avoiding time-aliasing in highly resonant time-varying scenarios. Through systematic gradient analysis, we reveal that standard spectral losses provide no meaningful directional gradients for onset times, heavily degrading joint training. Training exclusively with parameter losses on synthetic data effectively learns fundamental frequency, timbral parameters, and onset times, but struggles to generalise to monophonic studio recordings of plucked guitar due to domain shifts in transient features. External detectors combined with audio losses generalise best, isolating the model to timbre optimisation. While our Karplus-Strong decoder recovers interpretable parameters and naturally captures the transient characteristics of plucked guitar, Harmonics plus Noise baselines yield higher reconstruction fidelity.</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===================== RESULTS ===================== -->
-  <div class="container">
-    <div class="section mt-5 mb-5">
-    <h2>Results</h2>
-    <hr>
-
-    <h3 style="margin-top:2rem">Synthetic Parameter Recovery</h3>
-    <div class="results-scroll">
-      <table class="results-table">
-        <thead>
-          <tr><th>Model</th><th>MSS&nbsp;&darr;</th><th>SOT&nbsp;&darr;</th><th>wMFCC&nbsp;&darr;</th><th>RMS&nbsp;&uarr;</th><th>Prec.&nbsp;&uarr;</th><th>Rec.&nbsp;&uarr;</th><th>F1&nbsp;&uarr;</th><th>$\Delta$&nbsp;Cents&nbsp;&darr;</th><th>$\mathcal{P}$-Loss&nbsp;&darr;</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>$\mathcal{P}$-Only</td><td><b>136.11</b></td><td><u>0.18</u></td><td><b>6.02</b></td><td><b>0.96</b></td><td><u>0.92</u></td><td><b>0.92</b></td><td><b>0.92</b></td><td>15.14</td><td><b>0.29</b></td></tr>
-          <tr class="grp"><td>Audio-Only (freq.)</td><td>158.95</td><td><i>0.19</i></td><td>9.29</td><td>0.91</td><td><b>0.94</b></td><td><u>0.85</u></td><td><u>0.89</u></td><td>294.39</td><td>17.49</td></tr>
-          <tr><td>Audio-Only (time)</td><td><u>149.07</u></td><td><b>0.16</b></td><td>9.23</td><td><i>0.93</i></td><td><b>0.94</b></td><td><u>0.85</u></td><td><u>0.89</u></td><td>294.33</td><td>15.66</td></tr>
-          <tr class="grp"><td>$\mathcal{P}$+Audio (freq.)</td><td>252.90</td><td><i>0.19</i></td><td>15.29</td><td>0.33</td><td>0.01</td><td>0.01</td><td>0.01</td><td>116.96</td><td>4.72</td></tr>
-          <tr><td class="sub">↪ detach $f_0$</td><td>251.79</td><td>0.22</td><td>15.09</td><td>0.36</td><td>0.02</td><td>0.02</td><td>0.02</td><td>45.49</td><td>3.73</td></tr>
-          <tr><td class="sub">↪ detach onset</td><td>195.29</td><td>0.27</td><td>10.92</td><td>0.81</td><td>0.31</td><td>0.31</td><td>0.31</td><td>42.60</td><td>1.94</td></tr>
-          <tr><td class="sub">↪ detach both</td><td>163.00</td><td>0.21</td><td><i>8.15</i></td><td><u>0.94</u></td><td>0.83</td><td>0.83</td><td>0.83</td><td><b>12.69</b></td><td><i>0.52</i></td></tr>
-          <tr><td>$\mathcal{P}$+Audio (time)</td><td>241.16</td><td>0.20</td><td>13.47</td><td>0.43</td><td>0.01</td><td>0.01</td><td>0.01</td><td><i>13.86</i></td><td>3.74</td></tr>
-          <tr><td class="sub">↪ detach $f_0$</td><td>245.77</td><td><u>0.18</u></td><td>16.29</td><td>0.38</td><td>0.01</td><td>0.01</td><td>0.01</td><td>216.76</td><td>4.55</td></tr>
-          <tr><td class="sub">↪ detach onset</td><td>157.95</td><td>0.20</td><td>8.19</td><td><i>0.93</i></td><td>0.64</td><td>0.64</td><td>0.64</td><td><u>13.15</u></td><td>0.82</td></tr>
-          <tr><td class="sub">↪ detach both</td><td><i>155.96</i></td><td>0.23</td><td><u>7.59</u></td><td><u>0.94</u></td><td><i>0.84</i></td><td><i>0.84</i></td><td><i>0.84</i></td><td>14.26</td><td><u>0.48</u></td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="results-caption">Synthetic parameter recovery. All models are trained and evaluated on synthetic data. $\mathcal{P}$-Only uses tKSA with $\mathcal{P}_{\text{Loss}}$ supervision; $\mathcal{P}$+Audio models use differentiable decoders trained end-to-end with both $\mathcal{P}_{\text{Loss}}$ and audio losses (MSS, SOT); Audio-Only models use differentiable decoders with audio losses and external detectors for onsets and $f_0$. Rows beneath each $\mathcal{P}$+Audio model are stop-gradient ablations that detach the audio-loss gradient from the named head ($f_0$, onset, or both), leaving it supervised only by $\mathcal{P}_{\text{Loss}}$. Per column, the best, second-best, and third-best values are shown in <b>bold</b>, <u>underline</u>, and <i>italic</i> respectively.</p>
-
-    <h3 style="margin-top:2.5rem">Audio Examples &mdash; Synthetic</h3>
-    <div class="audio-options" aria-label="Audio example display options">
-      <div class="audio-toggle" role="group" aria-label="KSA implementation filter">
-        <button type="button" data-section="synth" data-view="freq">Show freq.</button>
-        <button type="button" data-section="synth" data-view="both" class="active">Show both</button>
-        <button type="button" data-section="synth" data-view="time">Show time</button>
-      </div>
-      <div class="audio-toggle" role="group" aria-label="Ablation visibility">
-        <button type="button" data-section="synth" data-ablation="off" class="active">Hide ablations</button>
-        <button type="button" data-section="synth" data-ablation="on">Show ablations</button>
-      </div>
-    </div>
-    <button class="btn btn-outline-dark" id="shuffle-synth" style="display:block; margin:0.75rem auto 0; border-radius:20px">&#128256; Shuffle</button>
-    <div class="table-wrapper">
-      <table class="audio-table" id="table-synth"><thead></thead><tbody></tbody></table>
-    </div>
-
-    <h3 style="margin-top:2.5rem">Real-World Instrument Modelling</h3>
-    <div class="results-scroll">
-      <table class="results-table">
-        <thead>
-          <tr><th>Model</th><th>MSS&nbsp;&darr;</th><th>SOT&nbsp;&darr;</th><th>wMFCC&nbsp;&darr;</th><th>RMS&nbsp;&uarr;</th><th>CLAP&nbsp;&darr;</th><th>EnCodec&nbsp;&darr;</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>HpN</td><td><u>246.60</u></td><td><i>0.14</i></td><td><u>7.90</u></td><td><i>0.96</i></td><td>266.20</td><td><u>17.99</u></td></tr>
-          <tr><td>HpN+</td><td><b>183.43</b></td><td><b>0.02</b></td><td><b>6.20</b></td><td><b>1.00</b></td><td><u>183.11</u></td><td><b>5.20</b></td></tr>
-          <tr class="grp"><td>$\mathcal{P}$-Only</td><td>311.86</td><td>0.20</td><td>13.18</td><td>0.95</td><td>193.78</td><td>64.40</td></tr>
-          <tr class="grp"><td>Audio-Only (freq.)</td><td>299.47</td><td>0.30</td><td>14.08</td><td>0.93</td><td><i>191.50</i></td><td>71.91</td></tr>
-          <tr><td>Audio-Only (time)</td><td><i>262.72</i></td><td>0.20</td><td><i>12.18</i></td><td><u>0.97</u></td><td><b>163.95</b></td><td><i>40.39</i></td></tr>
-          <tr class="grp"><td>$\mathcal{P}$+Audio (freq.)</td><td>468.33</td><td><u>0.13</u></td><td>32.43</td><td>0.09</td><td>547.78</td><td>494.88</td></tr>
-          <tr><td class="sub">↪ detach $f_0$</td><td>466.40</td><td>0.20</td><td>30.80</td><td>0.12</td><td>431.52</td><td>482.48</td></tr>
-          <tr><td class="sub">↪ detach onset</td><td>393.13</td><td>0.28</td><td>21.44</td><td>0.86</td><td>363.81</td><td>118.33</td></tr>
-          <tr><td class="sub">↪ detach both</td><td>348.18</td><td>0.25</td><td>15.37</td><td>0.81</td><td>204.19</td><td>116.66</td></tr>
-          <tr><td>$\mathcal{P}$+Audio (time)</td><td>461.06</td><td>0.18</td><td>26.63</td><td>0.16</td><td>403.83</td><td>470.67</td></tr>
-          <tr><td class="sub">↪ detach $f_0$</td><td>463.00</td><td>0.18</td><td>27.29</td><td>0.16</td><td>446.45</td><td>480.10</td></tr>
-          <tr><td class="sub">↪ detach onset</td><td>336.72</td><td>0.19</td><td>14.88</td><td>0.82</td><td>213.53</td><td>96.80</td></tr>
-          <tr><td class="sub">↪ detach both</td><td>341.44</td><td>0.21</td><td>15.08</td><td>0.83</td><td>201.14</td><td>99.01</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="results-caption">Real-world instrument modeling results evaluated on the NSynth acoustic guitar test set. $\mathcal{P}$-Only uses tKSA trained on synthetic data with $\mathcal{P}_{\text{Loss}}$ only; $\mathcal{P}$+Audio models are trained with both $\mathcal{P}_{\text{Loss}}$ and audio losses; Audio-Only models are trained with audio losses and external detectors. HpN and HpN+ are Harmonics-plus-Noise baselines using the original DDSP encoder and our TCN encoder respectively. KAD is reported in CLAP and EnCodec embedding spaces. Rows beneath each $\mathcal{P}$+Audio model are stop-gradient ablations that detach the audio-loss gradient from the named head. Per column, the best, second-best, and third-best values are shown in <b>bold</b>, <u>underline</u>, and <i>italic</i> respectively.</p>
-
-    <h3 style="margin-top:2.5rem">Audio Examples &mdash; Real</h3>
-    <div class="audio-options" aria-label="Real audio example display options">
-      <div class="audio-toggle" role="group" aria-label="KSA implementation filter">
-        <button type="button" data-section="real" data-view="freq">Show freq.</button>
-        <button type="button" data-section="real" data-view="both" class="active">Show both</button>
-        <button type="button" data-section="real" data-view="time">Show time</button>
-      </div>
-      <div class="audio-toggle" role="group" aria-label="Ablation visibility">
-        <button type="button" data-section="real" data-ablation="off" class="active">Hide ablations</button>
-        <button type="button" data-section="real" data-ablation="on">Show ablations</button>
-      </div>
-      <div class="audio-toggle" role="group" aria-label="Harmonics-plus-Noise visibility">
-        <button type="button" data-section="real" data-hpn="off" class="active">Hide Harmonics plus Noise</button>
-        <button type="button" data-section="real" data-hpn="on">Show Harmonics plus Noise</button>
-      </div>
-    </div>
-    <button class="btn btn-outline-dark" id="shuffle-nsynth" style="display:block; margin:0.75rem auto 0; border-radius:20px">&#128256; Shuffle</button>
-    <div class="table-wrapper">
-      <table class="audio-table" id="table-nsynth"><thead></thead><tbody></tbody></table>
-    </div>
-
-    </div>
-  </div>
-
-  <!-- ===================== CITATION ===================== -->
-  <div class="container">
-    <div class="section mt-5 mb-5">
-    <h2>Citation</h2>
-    <hr>
-    <p>If you find this work useful, please cite our paper:</p>
-    <pre class="bibtex"><code>@InProceedings{TablasDePaula:2026:Sound,
+      <p>If you find this work useful, please cite our paper:</p>
+      <pre class="bibtex"><code>@InProceedings{TablasDePaula:2026:Sound,
   title     = {Sound Matching with a Differentiable Karplus-Strong Algorithm},
   author    = {Tablas de Paula, Pablo and Marttila, David and D{\'\i}az, Rodrigo and
                Rom{\'a}n, Ir{\'a}n and Benetos, Emmanouil and Reiss, Joshua D.},
@@ -229,6 +343,20 @@
   month     = sep,
   year      = {2026}
 }</code></pre>
+    </div>
+  </section>
+
+  <div class="piano-roll" id="piano-roll" aria-label="Karplus-Strong piano roll">
+    <div class="piano-toolbar">
+      <div class="transport">
+        <button class="btn btn-outline-dark" type="button" id="ks-play"><i class="bi bi-play-fill"></i> Play</button>
+        <button class="btn btn-outline-dark" type="button" id="ks-stop"><i class="bi bi-stop-fill"></i> Stop</button>
+        <label class="tempo-control">Tempo <input class="form-control form-control-sm" id="ks-tempo" type="number" min="60" max="180" step="1" value="110"></label>
+      </div>
+      <div id="ks-step-readout">1.1.1</div>
+    </div>
+    <div class="roll-viewport" id="roll-viewport">
+      <div class="roll-grid" id="roll-grid"></div>
     </div>
   </div>
 
@@ -239,6 +367,355 @@
   <script type="module">
     import WaveSurfer from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/wavesurfer.esm.js';
     import Spectrogram from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/plugins/spectrogram.js';
+
+    const tabButtons = Array.from(document.querySelectorAll('[data-tab-target]'));
+    const tabPanels = new Map(Array.from(document.querySelectorAll('.tab-panel')).map(panel => [panel.id.replace('tab-', ''), panel]));
+    function setTab(tabName) {
+      tabButtons.forEach(button => button.classList.toggle('active', button.dataset.tabTarget === tabName));
+      tabPanels.forEach((panel, name) => panel.classList.toggle('active', name === tabName));
+      document.body.classList.toggle('synth-open', tabName === 'interactive');
+      if (tabName !== 'interactive') stopSequence();
+      if (window.MathJax && window.MathJax.typesetPromise) {
+        const panel = tabPanels.get(tabName);
+        if (panel) window.MathJax.typesetPromise([panel]);
+      }
+    }
+    tabButtons.forEach(button => {
+      button.addEventListener('click', () => setTab(button.dataset.tabTarget));
+    });
+
+    const SAMPLE_F0_MIN = 55;
+    const KS_PARAMS = [
+      { id: 'dynamic', label: 'Dynamics', min: 0, max: 1, value: 0.62, decimals: 2 },
+      { id: 'pluck', label: 'Pluck position', min: 0.01, max: 0.5, value: 0.22, decimals: 2 },
+      { id: 'decay', label: 'Decay', min: 0.9, max: 0.999, value: 0.985, decimals: 3 },
+      { id: 'a1', label: 'Damping', min: 0, max: 0.99, value: 0.48, decimals: 2 },
+      { id: 'f0', label: 'Fundamental frequency', min: 110, max: 880, value: 440, decimals: 0, unit: ' Hz' }
+    ];
+    const paramState = Object.fromEntries(KS_PARAMS.map(param => [param.id, { base: param.value, live: param.value }]));
+    const lfos = [
+      { id: 'lfo1', label: 'LFO 1', freq: 0.35, amp: 0, targets: new Set() },
+      { id: 'lfo2', label: 'LFO 2', freq: 0.9, amp: 0, targets: new Set() }
+    ];
+    const STEPS = 64;
+    const FIRST_MIDI = 36;
+    const LAST_MIDI = 84;
+    const midiNotes = Array.from({ length: LAST_MIDI - FIRST_MIDI + 1 }, (_, i) => LAST_MIDI - i);
+    const pattern = new Map(midiNotes.map(note => [note, new Set()]));
+    const defaultNotes = [
+      [48, 0], [55, 4], [60, 8], [55, 12],
+      [50, 16], [57, 20], [62, 24], [57, 28],
+      [52, 32], [59, 36], [64, 40], [59, 44],
+      [47, 48], [55, 52], [62, 56], [59, 60]
+    ];
+    defaultNotes.forEach(([note, step]) => pattern.get(note)?.add(step));
+    let audioContext = null;
+    let sequenceTimer = null;
+    let currentStep = 0;
+    let activeSources = [];
+
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+    const normalize = (value, min, max) => (value - min) / (max - min);
+    const midiToFreq = midi => 440 * 2 ** ((midi - 69) / 12);
+    const noteName = midi => {
+      const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      return `${names[midi % 12]}${Math.floor(midi / 12) - 1}`;
+    };
+
+    function buildKnobs() {
+      const holder = document.getElementById('ks-knobs');
+      holder.innerHTML = '';
+      KS_PARAMS.forEach(param => {
+        const card = document.createElement('div');
+        card.className = 'knob-card';
+        card.innerHTML = `
+          <div class="knob-head"><span>${param.label}</span><span class="knob-readout" data-readout="${param.id}"></span></div>
+          <div class="knob-shell" data-knob="${param.id}">
+            <div class="knob-live"></div>
+            <div class="knob-indicator"></div>
+            <input type="range" min="${param.min}" max="${param.max}" step="${param.id === 'f0' ? 1 : 0.001}" value="${param.value}" data-param="${param.id}">
+          </div>`;
+        holder.appendChild(card);
+      });
+      document.querySelectorAll('[data-param]').forEach(input => {
+        input.addEventListener('input', () => {
+          paramState[input.dataset.param].base = Number(input.value);
+          updateSynthReadouts(performance.now() / 1000);
+        });
+      });
+    }
+
+    function buildLfos() {
+      const holder = document.getElementById('lfo-grid');
+      holder.innerHTML = '';
+      lfos.forEach(lfo => {
+        const card = document.createElement('div');
+        card.className = 'lfo-card';
+        card.innerHTML = `
+          <h3 style="font-size:1rem;margin:0 0 0.75rem">${lfo.label}</h3>
+          <label class="lfo-row">Rate <input type="range" min="0.05" max="8" step="0.01" value="${lfo.freq}" data-lfo-rate="${lfo.id}"><span data-lfo-rate-readout="${lfo.id}"></span></label>
+          <label class="lfo-row">Amount <input type="range" min="0" max="1" step="0.01" value="${lfo.amp}" data-lfo-amp="${lfo.id}"><span data-lfo-amp-readout="${lfo.id}"></span></label>
+          <div class="lfo-targets">
+            ${KS_PARAMS.map(param => `<label><input type="checkbox" data-lfo-target="${lfo.id}" value="${param.id}">${param.label}</label>`).join('')}
+          </div>`;
+        holder.appendChild(card);
+      });
+      document.querySelectorAll('[data-lfo-rate]').forEach(input => {
+        input.addEventListener('input', () => {
+          lfos.find(lfo => lfo.id === input.dataset.lfoRate).freq = Number(input.value);
+        });
+      });
+      document.querySelectorAll('[data-lfo-amp]').forEach(input => {
+        input.addEventListener('input', () => {
+          lfos.find(lfo => lfo.id === input.dataset.lfoAmp).amp = Number(input.value);
+        });
+      });
+      document.querySelectorAll('[data-lfo-target]').forEach(input => {
+        input.addEventListener('change', () => {
+          const lfo = lfos.find(item => item.id === input.dataset.lfoTarget);
+          if (input.checked) lfo.targets.add(input.value);
+          else lfo.targets.delete(input.value);
+        });
+      });
+    }
+
+    function buildPianoRoll() {
+      const grid = document.getElementById('roll-grid');
+      grid.innerHTML = '';
+      midiNotes.forEach(note => {
+        const label = document.createElement('div');
+        label.className = 'note-label';
+        label.textContent = noteName(note);
+        grid.appendChild(label);
+        for (let step = 0; step < STEPS; step += 1) {
+          const cell = document.createElement('button');
+          cell.type = 'button';
+          cell.className = `roll-cell${step % 16 === 0 ? ' barline' : ''}${step % 4 === 0 ? ' beat' : ''}`;
+          cell.dataset.note = String(note);
+          cell.dataset.step = String(step);
+          cell.classList.toggle('active', pattern.get(note).has(step));
+          cell.addEventListener('click', () => {
+            const notes = pattern.get(note);
+            if (notes.has(step)) notes.delete(step);
+            else notes.add(step);
+            cell.classList.toggle('active', notes.has(step));
+          });
+          grid.appendChild(cell);
+        }
+      });
+      document.getElementById('roll-viewport').scrollTop = 260;
+    }
+
+    function lfoValueFor(param, timeSeconds) {
+      const definition = KS_PARAMS.find(item => item.id === param);
+      let value = paramState[param].base;
+      lfos.forEach(lfo => {
+        if (!lfo.targets.has(param) || lfo.amp === 0) return;
+        value += Math.sin(2 * Math.PI * lfo.freq * timeSeconds) * lfo.amp * (definition.max - definition.min) * 0.5;
+      });
+      return clamp(value, definition.min, definition.max);
+    }
+
+    function updateSynthReadouts(timeSeconds = performance.now() / 1000) {
+      KS_PARAMS.forEach(param => {
+        const base = paramState[param.id].base;
+        const live = lfoValueFor(param.id, timeSeconds);
+        paramState[param.id].live = live;
+        const baseNorm = normalize(base, param.min, param.max);
+        const liveNorm = normalize(live, param.min, param.max);
+        const shell = document.querySelector(`[data-knob="${param.id}"]`);
+        const readout = document.querySelector(`[data-readout="${param.id}"]`);
+        if (shell) {
+          shell.style.setProperty('--base', `${baseNorm * 270}deg`);
+          shell.style.setProperty('--live', `${liveNorm * 270}deg`);
+          shell.style.setProperty('--angle', `${-135 + baseNorm * 270}deg`);
+          shell.style.setProperty('--live-angle', `${-135 + liveNorm * 270}deg`);
+        }
+        if (readout) readout.textContent = `${live.toFixed(param.decimals)}${param.unit || ''}`;
+      });
+      lfos.forEach(lfo => {
+        const rate = document.querySelector(`[data-lfo-rate-readout="${lfo.id}"]`);
+        const amp = document.querySelector(`[data-lfo-amp-readout="${lfo.id}"]`);
+        if (rate) rate.textContent = `${lfo.freq.toFixed(2)} Hz`;
+        if (amp) amp.textContent = lfo.amp.toFixed(2);
+      });
+      requestAnimationFrame(() => updateSynthReadouts());
+    }
+
+    function computeDynamicsR(f0, dynamicLevel, fs) {
+      const minBw = SAMPLE_F0_MIN;
+      const maxBw = fs / 2;
+      const bwHz = minBw * (maxBw / minBw) ** dynamicLevel;
+      const fm = Math.sqrt(minBw * maxBw);
+      const Ts = 1 / fs;
+      const rL = Math.exp(-bwHz * Math.PI * Ts);
+      const cosFm = Math.cos(2 * Math.PI * fm * Ts);
+      const sinFm = Math.sin(2 * Math.PI * fm * Ts);
+      const denom = Math.hypot(1 - rL * cosFm, rL * sinFm);
+      const gL = (1 - rL) / Math.max(denom, 1e-9);
+      const left = (1 - gL ** 2 * Math.cos(2 * Math.PI * f0 * Ts)) / Math.max(1 - gL ** 2, 1e-9);
+      const right = 2 * gL * Math.sin(Math.PI * f0 * Ts) * (Math.sqrt(Math.max(0, 1 - gL ** 2 * Math.cos(Math.PI * f0 * Ts) ** 2)) / Math.max(1 - gL ** 2, 1e-9));
+      const rPlus = left + right;
+      const rMinus = left - right;
+      return Math.abs(rPlus) < 1 ? rPlus : rMinus;
+    }
+
+    function onePolePhaseDelay(f0, a1, fs) {
+      const omega = 2 * Math.PI * f0 / fs;
+      const denomReal = 1 - a1 * Math.cos(omega);
+      const denomImag = a1 * Math.sin(omega);
+      return -Math.atan2(denomImag, denomReal) / omega;
+    }
+
+    function renderKsBuffer(ctx, freq, values, seconds) {
+      const fs = ctx.sampleRate;
+      const length = Math.max(1, Math.floor(seconds * fs));
+      const excitation = new Float32Array(length);
+      const burstLength = Math.min(length, Math.max(2, Math.floor(fs / freq)));
+      let maxBurst = 0;
+      for (let n = 0; n < burstLength; n += 1) {
+        excitation[n] = Math.random() * 2 - 1;
+        maxBurst = Math.max(maxBurst, Math.abs(excitation[n]));
+      }
+      for (let n = 0; n < burstLength; n += 1) excitation[n] /= Math.max(maxBurst, 1e-6);
+
+      const combed = new Float32Array(length);
+      const combDelay = clamp((fs / freq) * values.pluck, 1, fs / SAMPLE_F0_MIN);
+      for (let n = 0; n < length; n += 1) {
+        const read = n - combDelay;
+        let delayed = 0;
+        if (read >= 0) {
+          const i0 = Math.floor(read);
+          const frac = read - i0;
+          delayed = excitation[i0] * (1 - frac) + (excitation[i0 + 1] || 0) * frac;
+        }
+        combed[n] = excitation[n] - delayed;
+      }
+
+      const shaped = new Float32Array(length);
+      const r = clamp(computeDynamicsR(freq, values.dynamic, fs), -0.999, 0.999);
+      let dynState = 0;
+      for (let n = 0; n < length; n += 1) {
+        shaped[n] = (1 - r) * combed[n] + r * dynState;
+        dynState = shaped[n];
+      }
+
+      const output = new Float32Array(length);
+      const delayBuffer = new Float32Array(Math.ceil(fs / SAMPLE_F0_MIN) + 8);
+      let writeIdx = 0;
+      let filterState = 0;
+      let peak = 0;
+      for (let n = 0; n < length; n += 1) {
+        const delay = clamp(fs / freq + onePolePhaseDelay(freq, values.a1, fs), 2, delayBuffer.length - 4);
+        const read = writeIdx - delay;
+        const readWrapped = read < 0 ? read + delayBuffer.length : read;
+        const i0 = Math.floor(readWrapped) % delayBuffer.length;
+        const i1 = (i0 + 1) % delayBuffer.length;
+        const frac = readWrapped - Math.floor(readWrapped);
+        const delayed = delayBuffer[i0] * (1 - frac) + delayBuffer[i1] * frac;
+        const filtered = values.decay * (1 - values.a1) * delayed + values.a1 * filterState;
+        filterState = filtered;
+        const sample = shaped[n] + filtered;
+        delayBuffer[writeIdx] = sample;
+        writeIdx = (writeIdx + 1) % delayBuffer.length;
+        output[n] = sample;
+        peak = Math.max(peak, Math.abs(sample));
+      }
+
+      const buffer = ctx.createBuffer(1, length, fs);
+      const channel = buffer.getChannelData(0);
+      const gain = 0.42 / Math.max(peak, 1);
+      for (let n = 0; n < length; n += 1) {
+        const fade = Math.min(1, (length - n) / (0.02 * fs));
+        channel[n] = output[n] * gain * fade;
+      }
+      return buffer;
+    }
+
+    function playKsNote(midi, timeSeconds, noteSeconds) {
+      if (!audioContext) audioContext = new AudioContext();
+      const now = audioContext.currentTime;
+      const values = Object.fromEntries(KS_PARAMS.map(param => [param.id, lfoValueFor(param.id, timeSeconds)]));
+      const freq = clamp(midiToFreq(midi) * (values.f0 / 440), 40, 5000);
+      const buffer = renderKsBuffer(audioContext, freq, values, Math.max(0.8, noteSeconds * 5));
+      const source = audioContext.createBufferSource();
+      const gain = audioContext.createGain();
+      source.buffer = buffer;
+      gain.gain.setValueAtTime(0.95, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + Math.max(0.18, noteSeconds * 4));
+      source.connect(gain).connect(audioContext.destination);
+      source.start(now);
+      source.stop(now + buffer.duration);
+      activeSources.push(source);
+      source.onended = () => {
+        activeSources = activeSources.filter(item => item !== source);
+      };
+    }
+
+    function clearPlayhead() {
+      document.querySelectorAll('.roll-cell.playhead').forEach(cell => cell.classList.remove('playhead'));
+    }
+
+    function setPlayhead(step) {
+      clearPlayhead();
+      document.querySelectorAll(`.roll-cell[data-step="${step}"]`).forEach(cell => cell.classList.add('playhead'));
+      const bar = Math.floor(step / 16) + 1;
+      const beat = Math.floor((step % 16) / 4) + 1;
+      const sixteenth = (step % 4) + 1;
+      document.getElementById('ks-step-readout').textContent = `${bar}.${beat}.${sixteenth}`;
+    }
+
+    function stopSequence() {
+      if (sequenceTimer) {
+        clearInterval(sequenceTimer);
+        sequenceTimer = null;
+      }
+      activeSources.forEach(source => {
+        try { source.stop(); } catch (error) {}
+      });
+      activeSources = [];
+      clearPlayhead();
+      const playButton = document.getElementById('ks-play');
+      if (playButton) playButton.innerHTML = '<i class="bi bi-play-fill"></i> Play';
+    }
+
+    async function startSequence() {
+      pauseOthers(null);
+      if (!audioContext) audioContext = new AudioContext();
+      if (audioContext.state === 'suspended') await audioContext.resume();
+      if (sequenceTimer) {
+        stopSequence();
+        return;
+      }
+      currentStep = 0;
+      const playButton = document.getElementById('ks-play');
+      playButton.innerHTML = '<i class="bi bi-pause-fill"></i> Pause';
+      const tick = () => {
+        const bpm = clamp(Number(document.getElementById('ks-tempo').value) || 110, 60, 180);
+        const stepSeconds = 60 / bpm / 4;
+        setPlayhead(currentStep);
+        midiNotes.forEach(note => {
+          if (pattern.get(note).has(currentStep)) playKsNote(note, performance.now() / 1000, stepSeconds);
+        });
+        currentStep = (currentStep + 1) % STEPS;
+      };
+      tick();
+      sequenceTimer = setInterval(tick, 60 / (clamp(Number(document.getElementById('ks-tempo').value) || 110, 60, 180) * 4) * 1000);
+    }
+
+    function initSynth() {
+      buildKnobs();
+      buildLfos();
+      buildPianoRoll();
+      document.getElementById('ks-play').addEventListener('click', startSequence);
+      document.getElementById('ks-stop').addEventListener('click', stopSequence);
+      document.getElementById('ks-tempo').addEventListener('change', () => {
+        if (!sequenceTimer) return;
+        stopSequence();
+        startSequence();
+      });
+      updateSynthReadouts();
+    }
 
     const AUDIO_EXT = '.ogg';
     const EXAMPLES_TO_SHOW = 5;
@@ -577,6 +1054,7 @@
       state.real.ids = rand(allFileIDs, EXAMPLES_TO_SHOW);
       renderTable('#table-nsynth', NSYNTH_MODELS, state.real);
     };
+    initSynth();
     renderAll();
   </script>
 </body>
