@@ -38,10 +38,13 @@
     .audio-table{border-collapse:collapse;width:100%;min-width:1100px;}
     .audio-table th,.audio-table td{border:1px solid #e1e5e9;padding:10px;text-align:center; vertical-align:middle;}
     .audio-table th{background:#f0f0f0;font-weight:600; font-size: 0.9rem;}
-    .audio-table td:first-child { background-color:#fafafa; width:210px; text-align:left; padding-left:15px;}
+    .audio-table th:first-child,.audio-table td:first-child{width:1%;white-space:nowrap;}
+    .audio-table td:first-child { background-color:#fafafa; text-align:left; padding-left:15px;}
     .row-label{font-weight:bold;}
+    .row-label small{font-weight:normal;color:#555}
     .play-btn,.ctrl-btn{cursor:pointer;padding:6px 14px;background:#007BFF;color:#fff;border:none;border-radius:6px;font-size:15px;transition:.3s;box-shadow:0 2px 4px rgba(0,0,0,.1)}
     .play-btn:hover,.ctrl-btn:hover{transform:translateY(-1px);box-shadow:0 4px 8px rgba(0,0,0,.15)}
+    .play-btn:disabled,.ctrl-btn:disabled{opacity:.45;cursor:wait;transform:none;box-shadow:none}
     .waveform,.spectrogram{height:60px;margin:6px 0;border-radius:4px}
     .cell.loaded .waveform,.cell.loaded .spectrogram{background:#e8e8e8;border:1px solid #ddd}
     .cell:not(.loaded) .waveform,.cell:not(.loaded) .spectrogram{display:none}
@@ -243,16 +246,16 @@
     const SYNTH_MODELS = [
       { label: 'Target', path: `${BASE_PATH}/synthetic/target`, domain: 'always' },
       { label: '$\\mathcal{P}$-Only', path: `${BASE_PATH}/synthetic/pred/oksa/p_only`, domain: 'always' },
-      { label: 'Audio-Only (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/audio_only`, domain: 'freq' },
-      { label: 'Audio-Only (time)', path: `${BASE_PATH}/synthetic/pred/tksa/audio_only`, domain: 'time' },
-      { label: '$\\mathcal{P}$+Audio (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio`, domain: 'freq' },
-      { label: '↪ detach $f_0$ (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio/detach_f0`, domain: 'freq', ablation: true },
-      { label: '↪ detach onset (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio/detach_onset`, domain: 'freq', ablation: true },
-      { label: '↪ detach both (freq.)', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio/detach_both`, domain: 'freq', ablation: true },
-      { label: '$\\mathcal{P}$+Audio (time)', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio`, domain: 'time' },
-      { label: '↪ detach $f_0$ (time)', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio/detach_f0`, domain: 'time', ablation: true },
-      { label: '↪ detach onset (time)', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio/detach_onset`, domain: 'time', ablation: true },
-      { label: '↪ detach both (time)', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio/detach_both`, domain: 'time', ablation: true }
+      { label: 'Audio-Only<br><small>(freq.)</small>', path: `${BASE_PATH}/synthetic/pred/fksa/audio_only`, domain: 'freq' },
+      { label: 'Audio-Only<br><small>(time)</small>', path: `${BASE_PATH}/synthetic/pred/tksa/audio_only`, domain: 'time' },
+      { label: '$\\mathcal{P}$+Audio<br><small>(freq.)</small>', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio`, domain: 'freq' },
+      { label: '↪ detach $f_0$<br><small>(freq.)</small>', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio/detach_f0`, domain: 'freq', ablation: true },
+      { label: '↪ detach onset<br><small>(freq.)</small>', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio/detach_onset`, domain: 'freq', ablation: true },
+      { label: '↪ detach both<br><small>(freq.)</small>', path: `${BASE_PATH}/synthetic/pred/fksa/p_audio/detach_both`, domain: 'freq', ablation: true },
+      { label: '$\\mathcal{P}$+Audio<br><small>(time)</small>', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio`, domain: 'time' },
+      { label: '↪ detach $f_0$<br><small>(time)</small>', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio/detach_f0`, domain: 'time', ablation: true },
+      { label: '↪ detach onset<br><small>(time)</small>', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio/detach_onset`, domain: 'time', ablation: true },
+      { label: '↪ detach both<br><small>(time)</small>', path: `${BASE_PATH}/synthetic/pred/tksa/p_audio/detach_both`, domain: 'time', ablation: true }
     ];
 
     const NSYNTH_MODELS = [
@@ -260,19 +263,23 @@
       { label: 'HpN', path: `${BASE_PATH}/real/pred/hpn/audio_only`, domain: 'always', hpn: true },
       { label: 'HpN+', path: `${BASE_PATH}/real/pred/hpn_p/audio_only`, domain: 'always', hpn: true },
       { label: '$\\mathcal{P}$-Only', path: `${BASE_PATH}/real/pred/oksa/p_only`, domain: 'always' },
-      { label: 'Audio-Only (freq.)', path: `${BASE_PATH}/real/pred/fksa/audio_only`, domain: 'freq' },
-      { label: 'Audio-Only (time)', path: `${BASE_PATH}/real/pred/tksa/audio_only`, domain: 'time' },
-      { label: '$\\mathcal{P}$+Audio (freq.)', path: `${BASE_PATH}/real/pred/fksa/p_audio`, domain: 'freq' },
-      { label: '↪ detach $f_0$ (freq.)', path: `${BASE_PATH}/real/pred/fksa/p_audio/detach_f0`, domain: 'freq', ablation: true },
-      { label: '↪ detach onset (freq.)', path: `${BASE_PATH}/real/pred/fksa/p_audio/detach_onset`, domain: 'freq', ablation: true },
-      { label: '↪ detach both (freq.)', path: `${BASE_PATH}/real/pred/fksa/p_audio/detach_both`, domain: 'freq', ablation: true },
-      { label: '$\\mathcal{P}$+Audio (time)', path: `${BASE_PATH}/real/pred/tksa/p_audio`, domain: 'time' },
-      { label: '↪ detach $f_0$ (time)', path: `${BASE_PATH}/real/pred/tksa/p_audio/detach_f0`, domain: 'time', ablation: true },
-      { label: '↪ detach onset (time)', path: `${BASE_PATH}/real/pred/tksa/p_audio/detach_onset`, domain: 'time', ablation: true },
-      { label: '↪ detach both (time)', path: `${BASE_PATH}/real/pred/tksa/p_audio/detach_both`, domain: 'time', ablation: true }
+      { label: 'Audio-Only<br><small>(freq.)</small>', path: `${BASE_PATH}/real/pred/fksa/audio_only`, domain: 'freq' },
+      { label: 'Audio-Only<br><small>(time)</small>', path: `${BASE_PATH}/real/pred/tksa/audio_only`, domain: 'time' },
+      { label: '$\\mathcal{P}$+Audio<br><small>(freq.)</small>', path: `${BASE_PATH}/real/pred/fksa/p_audio`, domain: 'freq' },
+      { label: '↪ detach $f_0$<br><small>(freq.)</small>', path: `${BASE_PATH}/real/pred/fksa/p_audio/detach_f0`, domain: 'freq', ablation: true },
+      { label: '↪ detach onset<br><small>(freq.)</small>', path: `${BASE_PATH}/real/pred/fksa/p_audio/detach_onset`, domain: 'freq', ablation: true },
+      { label: '↪ detach both<br><small>(freq.)</small>', path: `${BASE_PATH}/real/pred/fksa/p_audio/detach_both`, domain: 'freq', ablation: true },
+      { label: '$\\mathcal{P}$+Audio<br><small>(time)</small>', path: `${BASE_PATH}/real/pred/tksa/p_audio`, domain: 'time' },
+      { label: '↪ detach $f_0$<br><small>(time)</small>', path: `${BASE_PATH}/real/pred/tksa/p_audio/detach_f0`, domain: 'time', ablation: true },
+      { label: '↪ detach onset<br><small>(time)</small>', path: `${BASE_PATH}/real/pred/tksa/p_audio/detach_onset`, domain: 'time', ablation: true },
+      { label: '↪ detach both<br><small>(time)</small>', path: `${BASE_PATH}/real/pred/tksa/p_audio/detach_both`, domain: 'time', ablation: true }
     ];
 
     const players = new Map();
+    const playerCleanups = new Map();
+    const MAX_ACTIVE_AUDIO_LOADS = 8;
+    let activeAudioLoads = 0;
+    const audioLoadQueue = [];
     const pauseOthers = (keep) => players.forEach((ws, btn) => { if (ws !== keep && ws.isPlaying()) { ws.pause(); icon(btn, false); } });
     const state = {
       synth: {
@@ -288,14 +295,34 @@
       }
     };
 
-    function makePlayer(td, url) {
-      const ws = WaveSurfer.create({
+    function makePlayer(td) {
+      return WaveSurfer.create({
         container: td.querySelector('.waveform'),
         backend: 'WebAudio', height: 60, waveColor: '#999', progressColor: '#007BFF',
         plugins: [ Spectrogram.create({ container: td.querySelector('.spectrogram'), scale: 'mel', labels: false, height: 60 }) ]
       });
-      ws.load(url);
-      return ws;
+    }
+
+    function enqueueAudioLoad(start) {
+      const job = { start, cancelled: false, done: false };
+      audioLoadQueue.push(job);
+      pumpAudioLoadQueue();
+      return () => { job.cancelled = true; };
+    }
+
+    function pumpAudioLoadQueue() {
+      while (activeAudioLoads < MAX_ACTIVE_AUDIO_LOADS && audioLoadQueue.length) {
+        const job = audioLoadQueue.shift();
+        if (job.cancelled) continue;
+        activeAudioLoads += 1;
+        job.start(() => {
+          if (!job.done) {
+            job.done = true;
+            activeAudioLoads -= 1;
+            pumpAudioLoadQueue();
+          }
+        });
+      }
     }
 
     function visibleModels(modelsArray, sectionState) {
@@ -308,10 +335,9 @@
     }
 
     function clearTablePlayers(tbody) {
-      players.forEach((ws, btn) => {
+      Array.from(playerCleanups.entries()).forEach(([btn, destroy]) => {
         if (tbody.contains(btn)) {
-          try { ws.destroy(); } catch (e) {}
-          players.delete(btn);
+          destroy();
         }
       });
     }
@@ -344,17 +370,90 @@
           const playBtn = td.querySelector('.play-btn');
           const stopBtn = td.querySelector('[data-act="stop"]');
           let ws = null;
-          const cell = {
-            init() { if (!ws) { ws = makePlayer(td, url); players.set(playBtn, ws); td.classList.add('loaded'); } return ws; },
-            destroy() { if (ws) { try { ws.destroy(); } catch (e) {} players.delete(playBtn); ws = null; td.classList.remove('loaded'); icon(playBtn, false); } },
+          let ready = false;
+          let cancelQueuedLoad = null;
+          let finishActiveLoad = null;
+          const setReady = (isReady) => {
+            ready = isReady;
+            playBtn.disabled = !isReady;
+            stopBtn.disabled = !isReady;
           };
-          playBtn.onclick = () => {
+          const releaseLoadSlot = () => {
+            if (finishActiveLoad) {
+              const finish = finishActiveLoad;
+              finishActiveLoad = null;
+              finish();
+            }
+          };
+          const cell = {
+            init() {
+              if (!ws) {
+                setReady(false);
+                td.classList.add('loaded');
+                ws = makePlayer(td);
+                players.set(playBtn, ws);
+                playerCleanups.set(playBtn, cell.destroy);
+                ws.on('ready', () => {
+                  setReady(true);
+                  releaseLoadSlot();
+                });
+                ws.on('play', () => icon(playBtn, true));
+                ws.on('pause', () => icon(playBtn, false));
+                ws.on('finish', () => icon(playBtn, false));
+                ws.on('error', error => {
+                  console.warn(`Could not load ${url}`, error);
+                  setReady(false);
+                  icon(playBtn, false);
+                  releaseLoadSlot();
+                });
+                cancelQueuedLoad = enqueueAudioLoad(finish => {
+                  cancelQueuedLoad = null;
+                  if (!ws) {
+                    finish();
+                    return;
+                  }
+                  finishActiveLoad = finish;
+                  const loadResult = ws.load(url);
+                  if (loadResult && typeof loadResult.catch === 'function') {
+                    loadResult.catch(error => {
+                      console.warn(`Could not load ${url}`, error);
+                      releaseLoadSlot();
+                    });
+                  }
+                });
+              }
+              return ws;
+            },
+            destroy() {
+              if (cancelQueuedLoad) {
+                cancelQueuedLoad();
+                cancelQueuedLoad = null;
+              }
+              releaseLoadSlot();
+              if (ws) {
+                try { ws.destroy(); } catch (e) {}
+                players.delete(playBtn);
+                playerCleanups.delete(playBtn);
+                ws = null;
+              }
+              setReady(false);
+              td.classList.remove('loaded');
+              icon(playBtn, false);
+            },
+          };
+          playBtn.onclick = async () => {
             const w = cell.init();
+            if (!ready) return;
+            if (w.isPlaying()) {
+              w.pause();
+              return;
+            }
             pauseOthers(w);
-            if (w.isPlaying()) { w.pause(); icon(playBtn, false); }
-            else {
-              const doPlay = () => { w.play(); icon(playBtn, true); };
-              if (w.getDuration() > 0) doPlay(); else w.once('ready', doPlay);  // first click: wait for decode before playing
+            try {
+              await w.play();
+            } catch (error) {
+              console.warn(`Could not play ${url}`, error);
+              icon(playBtn, false);
             }
           };
           stopBtn.onclick = () => { if (ws) { ws.pause(); ws.seekTo(0); icon(playBtn, false); } };
