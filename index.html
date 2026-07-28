@@ -242,6 +242,7 @@
     const allFileIDs = Array.from({length: MAX_FILES}, (_, i) => String(i + 1).padStart(3, '0'));
     const rand = (arr, n) => arr.slice().sort(() => 0.5 - Math.random()).slice(0, Math.min(n, arr.length));
     const icon = (btn, on) => { btn.innerHTML = on ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>'; };
+    const loadingIcon = btn => { btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; };
 
     const SYNTH_MODELS = [
       { label: 'Target', path: `${BASE_PATH}/synthetic/target`, domain: 'always' },
@@ -298,14 +299,15 @@
     function makePlayer(td) {
       return WaveSurfer.create({
         container: td.querySelector('.waveform'),
-        backend: 'WebAudio', height: 60, waveColor: '#999', progressColor: '#007BFF',
+        backend: 'MediaElement', height: 60, waveColor: '#999', progressColor: '#007BFF',
         plugins: [ Spectrogram.create({ container: td.querySelector('.spectrogram'), scale: 'mel', labels: false, height: 60 }) ]
       });
     }
 
-    function enqueueAudioLoad(start) {
+    function enqueueAudioLoad(start, priority = false) {
       const job = { start, cancelled: false, done: false };
-      audioLoadQueue.push(job);
+      if (priority) audioLoadQueue.unshift(job);
+      else audioLoadQueue.push(job);
       pumpAudioLoadQueue();
       return () => { job.cancelled = true; };
     }
@@ -371,11 +373,13 @@
           const stopBtn = td.querySelector('[data-act="stop"]');
           let ws = null;
           let ready = false;
+          let loadStarted = false;
+          let pendingPlay = false;
           let cancelQueuedLoad = null;
           let finishActiveLoad = null;
           const setReady = (isReady) => {
             ready = isReady;
-            playBtn.disabled = !isReady;
+            playBtn.disabled = false;
             stopBtn.disabled = !isReady;
           };
           const releaseLoadSlot = () => {
@@ -385,10 +389,43 @@
               finish();
             }
           };
+          const attemptPlay = async () => {
+            if (!ws) return;
+            pauseOthers(ws);
+            try {
+              await ws.play();
+            } catch (error) {
+              console.warn(`Could not play ${url}`, error);
+              icon(playBtn, false);
+            }
+          };
+          const startLoad = finish => {
+            if (loadStarted) {
+              if (finish) finish();
+              return;
+            }
+            loadStarted = true;
+            finishActiveLoad = finish || null;
+            const loadResult = ws.load(url);
+            if (loadResult && typeof loadResult.catch === 'function') {
+              loadResult.catch(error => {
+                console.warn(`Could not load ${url}`, error);
+                releaseLoadSlot();
+              });
+            }
+          };
+          const promoteLoad = () => {
+            if (cancelQueuedLoad) {
+              cancelQueuedLoad();
+              cancelQueuedLoad = null;
+              startLoad(null);
+            }
+          };
           const cell = {
             init() {
               if (!ws) {
                 setReady(false);
+                loadingIcon(playBtn);
                 td.classList.add('loaded');
                 ws = makePlayer(td);
                 players.set(playBtn, ws);
@@ -396,6 +433,12 @@
                 ws.on('ready', () => {
                   setReady(true);
                   releaseLoadSlot();
+                  if (pendingPlay) {
+                    pendingPlay = false;
+                    attemptPlay();
+                  } else {
+                    icon(playBtn, false);
+                  }
                 });
                 ws.on('play', () => icon(playBtn, true));
                 ws.on('pause', () => icon(playBtn, false));
@@ -408,23 +451,14 @@
                 });
                 cancelQueuedLoad = enqueueAudioLoad(finish => {
                   cancelQueuedLoad = null;
-                  if (!ws) {
-                    finish();
-                    return;
-                  }
-                  finishActiveLoad = finish;
-                  const loadResult = ws.load(url);
-                  if (loadResult && typeof loadResult.catch === 'function') {
-                    loadResult.catch(error => {
-                      console.warn(`Could not load ${url}`, error);
-                      releaseLoadSlot();
-                    });
-                  }
+                  if (!ws) finish();
+                  else startLoad(finish);
                 });
               }
               return ws;
             },
             destroy() {
+              pendingPlay = false;
               if (cancelQueuedLoad) {
                 cancelQueuedLoad();
                 cancelQueuedLoad = null;
@@ -436,6 +470,7 @@
                 playerCleanups.delete(playBtn);
                 ws = null;
               }
+              loadStarted = false;
               setReady(false);
               td.classList.remove('loaded');
               icon(playBtn, false);
@@ -443,18 +478,23 @@
           };
           playBtn.onclick = async () => {
             const w = cell.init();
-            if (!ready) return;
             if (w.isPlaying()) {
+              pendingPlay = false;
               w.pause();
               return;
             }
-            pauseOthers(w);
-            try {
-              await w.play();
-            } catch (error) {
-              console.warn(`Could not play ${url}`, error);
-              icon(playBtn, false);
+            if (!ready) {
+              pendingPlay = true;
+              loadingIcon(playBtn);
+              promoteLoad();
+              try {
+                await w.play();
+              } catch (error) {
+                // MediaElement playback will retry from the ready handler if the source is still loading.
+              }
+              return;
             }
+            await attemptPlay();
           };
           stopBtn.onclick = () => { if (ws) { ws.pause(); ws.seekTo(0); icon(playBtn, false); } };
           cell.init();
