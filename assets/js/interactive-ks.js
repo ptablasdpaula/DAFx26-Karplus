@@ -6,6 +6,8 @@ const FIRST_MIDI = 48;
 const LAST_MIDI = 60;
 const KNOB_FULL_SCALE_PIXELS = 320;
 const FINE_KNOB_FULL_SCALE_PIXELS = 1000;
+const MIN_NOTE_SECONDS = 0.8;
+const MAX_NOTE_SECONDS = 14;
 
 const KS_PARAMS = [
   { id: 'f0', label: 'Fundamental frequency', min: 110, max: 880, value: 440, decimals: 0, unit: ' Hz' },
@@ -443,18 +445,22 @@ function renderKsBuffer(ctx, freq, values, seconds) {
   return buffer;
 }
 
+function estimateTailSeconds(freq, decay) {
+  const stableDecay = clamp(decay, 0.00001, 0.99999);
+  const periodsToMinus60Db = Math.log(0.001) / Math.log(stableDecay);
+  return clamp(periodsToMinus60Db / Math.max(freq, 1), MIN_NOTE_SECONDS, MAX_NOTE_SECONDS);
+}
+
 function playKsNote(midi, timeSeconds, noteSeconds) {
   if (!audioContext) audioContext = new AudioContext();
   const now = audioContext.currentTime;
   const values = Object.fromEntries(KS_PARAMS.map(param => [param.id, lfoValueFor(param.id, timeSeconds)]));
   const freq = clamp(midiToFreq(midi) * (values.f0 / 440), 40, 5000);
-  const buffer = renderKsBuffer(audioContext, freq, values, Math.max(0.8, noteSeconds * 5));
+  const renderSeconds = Math.max(noteSeconds * 2, estimateTailSeconds(freq, values.decay));
+  const buffer = renderKsBuffer(audioContext, freq, values, renderSeconds);
   const source = audioContext.createBufferSource();
-  const gain = audioContext.createGain();
   source.buffer = buffer;
-  gain.gain.setValueAtTime(0.95, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + Math.max(0.18, noteSeconds * 4));
-  source.connect(gain).connect(audioContext.destination);
+  source.connect(audioContext.destination);
   source.start(now);
   source.stop(now + buffer.duration);
   activeSources.push(source);
