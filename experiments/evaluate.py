@@ -413,7 +413,7 @@ if __name__ == "__main__":
     parser.add_argument("--mode", type=str, default="synthetic", choices=["nsynth", "synthetic", "all"])
     parser.add_argument("--ckpt_dir", type=str, default="experiments/checkpoints")
     parser.add_argument("--out_dir", type=str, default="experiments/evaluation")
-    parser.add_argument("--audio_out_dir", type=str, default="docs/experiments/evaluation/audio")
+    parser.add_argument("--audio_out_dir", type=str, default="experiments/evaluation/audio")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--tags", type=str, default=None, help="comma-separated subset of tags to evaluate (for chunked eval)")
     parser.add_argument("--out_csv", type=str, default=None, help="explicit output CSV path (so chunks don't clobber each other)")

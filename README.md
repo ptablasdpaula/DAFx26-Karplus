@@ -25,9 +25,9 @@ data/                     Synthetic dataset and NSynth download/preprocessing co
 figures/                  Paper figure notebooks.
 experiments/              Training, evaluation, gradient analysis, and artifacts.
 experiments/checkpoints/  Trained checkpoints used for the paper.
-experiments/evaluation/   Result CSVs.
+experiments/evaluation/   Result CSVs and audio examples.
 experiments/jobs/         Minimal SLURM wrappers for train/eval.
-docs/                     GitHub Pages source and deployable audio examples.
+docs/                     GitHub Pages source.
 ```
 
 ## Install
@@ -64,8 +64,8 @@ Outputs:
 ```text
 experiments/evaluation/synthetic_results.csv
 experiments/evaluation/real_results.csv
-docs/experiments/evaluation/audio/synthetic/
-docs/experiments/evaluation/audio/real/
+experiments/evaluation/audio/synthetic/
+experiments/evaluation/audio/real/
 ```
 
 The evaluation CLI still uses `--mode nsynth` for the real-guitar dataset loader,
@@ -182,8 +182,8 @@ real_hpn_p_audio_only_20260618_003348_best.ckpt
 Audio examples use the same paper-facing objective names:
 
 ```text
-docs/experiments/evaluation/audio/synthetic/pred/fksa/p_audio/detach_onset/
-docs/experiments/evaluation/audio/real/pred/hpn_p/audio_only/
+experiments/evaluation/audio/synthetic/pred/fksa/p_audio/detach_onset/
+experiments/evaluation/audio/real/pred/hpn_p/audio_only/
 ```
 
 ## Job Scripts
