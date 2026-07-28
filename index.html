@@ -15,7 +15,7 @@
   <!-- Bootstrap core CSS (diffapf-style academic layout) -->
   <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.0/font/bootstrap-icons.css" />
-  <!-- FontAwesome retained for the in-table play/pause/stop controls -->
+  <!-- FontAwesome retained for the in-table play/pause controls -->
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet" />
 
   <style>
@@ -42,13 +42,15 @@
     .audio-table td:first-child { background-color:#fafafa; text-align:left; padding-left:15px;}
     .row-label{font-weight:bold;}
     .row-label small{font-weight:normal;color:#555}
-    .play-btn,.ctrl-btn{cursor:pointer;padding:6px 14px;background:#007BFF;color:#fff;border:none;border-radius:6px;font-size:15px;transition:.3s;box-shadow:0 2px 4px rgba(0,0,0,.1)}
-    .play-btn:hover,.ctrl-btn:hover{transform:translateY(-1px);box-shadow:0 4px 8px rgba(0,0,0,.15)}
-    .play-btn:disabled,.ctrl-btn:disabled{opacity:.45;cursor:wait;transform:none;box-shadow:none}
+    .cell{position:relative;min-width:170px;}
+    .media-stack{position:relative;}
+    .overlay-play{position:absolute;top:50%;left:50%;width:44px;height:44px;border:0;border-radius:50%;transform:translate(-50%,-50%);background:rgba(0,123,255,.72);color:#fff;font-size:17px;cursor:pointer;opacity:0;transition:opacity .2s,background .2s,transform .2s;box-shadow:0 4px 14px rgba(0,0,0,.25);z-index:2}
+    .cell:hover .overlay-play,.overlay-play:focus,.cell.playing .overlay-play,.cell.loading .overlay-play{opacity:1}
+    .overlay-play:hover{background:rgba(0,123,255,.9);transform:translate(-50%,-50%) scale(1.05)}
+    .overlay-play:disabled{cursor:wait}
     .waveform,.spectrogram{height:60px;margin:6px 0;border-radius:4px}
     .cell.loaded .waveform,.cell.loaded .spectrogram{background:#e8e8e8;border:1px solid #ddd}
     .cell:not(.loaded) .waveform,.cell:not(.loaded) .spectrogram{display:none}
-    .controls{display:flex;justify-content:center;gap:6px;margin-bottom:10px}
     .audio-options{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin:1rem auto 0}
     .audio-toggle{display:inline-flex;border:1px solid #ced4da;border-radius:20px;overflow:hidden}
     .audio-toggle button{border:0;border-right:1px solid #ced4da;background:#fff;color:#212529;padding:6px 14px;font-size:0.9rem}
@@ -281,7 +283,14 @@
     const MAX_ACTIVE_AUDIO_LOADS = 8;
     let activeAudioLoads = 0;
     const audioLoadQueue = [];
-    const pauseOthers = (keep) => players.forEach((ws, btn) => { if (ws !== keep && ws.isPlaying()) { ws.pause(); icon(btn, false); } });
+    const pauseOthers = (keep) => players.forEach((ws, btn) => {
+      if (ws !== keep && ws.isPlaying()) {
+        ws.pause();
+        ws.seekTo(0);
+        icon(btn, false);
+        btn.closest('.cell')?.classList.remove('playing');
+      }
+    });
     const state = {
       synth: {
         view: 'both',
@@ -367,10 +376,9 @@
         ids.forEach(id => {
           const td = document.createElement('td');
           td.className = 'cell';
-          td.innerHTML = `<div class="controls"><button class="play-btn"><i class="fas fa-play"></i></button><button class="ctrl-btn" data-act="stop"><i class="fas fa-stop"></i></button></div><div class="waveform"></div><div class="spectrogram"></div>`;
+          td.innerHTML = `<div class="media-stack"><div class="waveform"></div><div class="spectrogram"></div><button class="overlay-play" aria-label="Play audio"><i class="fas fa-play"></i></button></div>`;
           const url = `${model.path}/${id}${AUDIO_EXT}`;
-          const playBtn = td.querySelector('.play-btn');
-          const stopBtn = td.querySelector('[data-act="stop"]');
+          const playBtn = td.querySelector('.overlay-play');
           let ws = null;
           let ready = false;
           let loadStarted = false;
@@ -380,7 +388,6 @@
           const setReady = (isReady) => {
             ready = isReady;
             playBtn.disabled = false;
-            stopBtn.disabled = !isReady;
           };
           const releaseLoadSlot = () => {
             if (finishActiveLoad) {
@@ -440,13 +447,27 @@
                     icon(playBtn, false);
                   }
                 });
-                ws.on('play', () => icon(playBtn, true));
-                ws.on('pause', () => icon(playBtn, false));
-                ws.on('finish', () => icon(playBtn, false));
+                ws.on('play', () => {
+                  icon(playBtn, true);
+                  playBtn.setAttribute('aria-label', 'Pause audio');
+                  td.classList.add('playing');
+                  td.classList.remove('loading');
+                });
+                ws.on('pause', () => {
+                  icon(playBtn, false);
+                  playBtn.setAttribute('aria-label', 'Play audio');
+                  td.classList.remove('playing');
+                });
+                ws.on('finish', () => {
+                  icon(playBtn, false);
+                  playBtn.setAttribute('aria-label', 'Play audio');
+                  td.classList.remove('playing');
+                });
                 ws.on('error', error => {
                   console.warn(`Could not load ${url}`, error);
                   setReady(false);
                   icon(playBtn, false);
+                  td.classList.remove('loading');
                   releaseLoadSlot();
                 });
                 cancelQueuedLoad = enqueueAudioLoad(finish => {
@@ -473,7 +494,10 @@
               loadStarted = false;
               setReady(false);
               td.classList.remove('loaded');
+              td.classList.remove('loading');
+              td.classList.remove('playing');
               icon(playBtn, false);
+              playBtn.setAttribute('aria-label', 'Play audio');
             },
           };
           playBtn.onclick = async () => {
@@ -486,6 +510,7 @@
             if (!ready) {
               pendingPlay = true;
               loadingIcon(playBtn);
+              td.classList.add('loading');
               promoteLoad();
               try {
                 await w.play();
@@ -496,7 +521,6 @@
             }
             await attemptPlay();
           };
-          stopBtn.onclick = () => { if (ws) { ws.pause(); ws.seekTo(0); icon(playBtn, false); } };
           cell.init();
           row.appendChild(td);
         });
