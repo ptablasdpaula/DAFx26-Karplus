@@ -50,8 +50,7 @@
 
   <main class="app-shell">
     <nav class="side-tabs" aria-label="Project sections">
-      <button class="tab-button active" type="button" data-tab-target="intro">Introduction</button>
-      <button class="tab-button" type="button" data-tab-target="interactive">Interactive Karplus-Strong</button>
+      <button class="tab-button active" type="button" data-tab-target="intro">The story</button>
       <button class="tab-button" type="button" data-tab-target="results">Results</button>
       <button class="tab-button" type="button" data-tab-target="audio">Audio Examples</button>
     </nav>
@@ -59,39 +58,62 @@
     <div class="tab-content">
       <section class="tab-panel active" id="tab-intro">
         <div class="section mb-5">
-          <h2>Introduction</h2>
+          <p class="eyebrow">From a one-line idea to event-based sound matching</p>
+          <h2>Why Karplus-Strong?</h2>
           <hr>
-          <div class="figure-grid">
-            <figure class="figure-frame"><canvas class="pdf-canvas" data-pdf-src="main/figures/fig_1.pdf"></canvas><a class="pdf-fallback" href="main/figures/fig_1.pdf">Open Fig. 1</a></figure>
-            <figure class="figure-frame"><canvas class="pdf-canvas" data-pdf-src="main/figures/fig_2.pdf"></canvas><a class="pdf-fallback" href="main/figures/fig_2.pdf">Open Fig. 2</a></figure>
-            <figure class="figure-frame"><canvas class="pdf-canvas" data-pdf-src="main/figures/fig_3.pdf"></canvas><a class="pdf-fallback" href="main/figures/fig_3.pdf">Open Fig. 3</a></figure>
-            <figure class="figure-frame"><canvas class="pdf-canvas" data-pdf-src="main/figures/fig_4.pdf"></canvas><a class="pdf-fallback" href="main/figures/fig_4.pdf">Open Fig. 4</a></figure>
+          <p class="story-lead">The Karplus-Strong algorithm turns a tiny burst of noise into a convincing plucked string. A delay line stores one period of the waveform; a two-point moving average removes a little high-frequency energy on every trip around the loop. The result is both an instrument and a compact physical explanation: pitch comes from the round-trip delay, while the gradual loss of energy creates the decay.</p>
+          <div class="story-figure algorithm-figure">
+            <img src="fig_0.jpg" alt="Original Karplus-Strong delay loop with a two-point moving-average filter">
+            <p><strong>Original KSA.</strong> At note-on, the excitation is exactly one delay-line period long: $N = f_s/f_0$ samples. Note duration is deliberately ignored; after the burst, the loop simply rings down.</p>
           </div>
-        </div>
-      </section>
 
-      <section class="tab-panel" id="tab-interactive">
-        <div class="section mb-5">
-          <h2>Interactive Karplus-Strong</h2>
-          <hr>
-          <div class="interactive-layout">
-            <div class="patch-stage" id="patch-stage">
-              <svg class="component-arrows" id="component-arrows" viewBox="0 0 1000 700" preserveAspectRatio="none" aria-hidden="true">
-                <defs>
-                  <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-                    <path d="M0,0 L8,4 L0,8 Z" fill="#58616b"></path>
-                  </marker>
-                </defs>
-              </svg>
-              <svg class="patch-cables" id="patch-cables" aria-hidden="true"></svg>
-              <figure class="patch-figure">
-                <canvas class="pdf-canvas" data-pdf-src="main/figures/fig_1.pdf"></canvas>
-                <a class="pdf-fallback" href="main/figures/fig_1.pdf">Open Fig. 1</a>
-              </figure>
-              <div id="ks-knobs"></div>
-              <div class="lfo-grid" id="lfo-grid"></div>
+          <div class="synth-chapter" data-synth-mode="original">
+            <div class="chapter-copy">
+              <span class="chapter-number">01</span>
+              <div><h3>The original algorithm</h3><p>Draw notes of any length and press play. Every onset injects a fresh $f_s/f_0$-sample noise burst into the delay loop. Because the 1983 algorithm has no note-off mechanism, changing a block's length does not change its sound.</p></div>
             </div>
           </div>
+          <div class="inline-roll light-roll" data-roll="original" aria-label="Original Karplus-Strong piano roll"></div>
+
+          <div class="story-divider"><span>One loop, more expressive controls</span></div>
+          <h2>From a pluck to a playable string</h2>
+          <p>Later extensions separated the physical causes that the moving average entangles. Jaffe and Smith added pluck-position and dynamics filters; Välimäki and colleagues introduced independent controls for overall decay and frequency-dependent damping. We use these ideas with a fractional delay, so $f_0$ need not land on an integer number of samples.</p>
+          <div class="story-figure algorithm-figure">
+            <figure><img class="paper-figure" src="assets/images/fig_1.png" alt="Extended Karplus-Strong signal-flow diagram"><a class="figure-source" href="main/figures/fig_1.pdf">Open PDF</a></figure>
+            <p><strong>Extended KSA.</strong> A fractional round-trip delay controls pitch; damping, decay, pluck position, and dynamics separate the string's timbral properties; explicit note-on excitation and note-off damping turn a resonator into a playable instrument.</p>
+          </div>
+
+          <div class="synth-chapter" data-synth-mode="extended">
+            <div class="chapter-copy">
+              <span class="chapter-number">02</span>
+              <div><h3>Our extended algorithm</h3><p>Now note length matters. At the exact note onset the delay changes immediately to the new $f_0$ - no glide. At note-off, damping increases by 10% and decay decreases by 10%, creating a simple palm-mute gesture.</p></div>
+            </div>
+          </div>
+          <div class="parameter-panel" aria-label="Extended Karplus-Strong parameters">
+            <label>Dynamics <input type="range" min="0" max="1" step="0.01" value="0.62" data-ks-param="dynamic"><output>0.62</output></label>
+            <label>Pluck position <input type="range" min="0.01" max="0.5" step="0.01" value="0.22" data-ks-param="pluck"><output>0.22</output></label>
+            <label>Decay <input type="range" min="0" max="1" step="0.001" data-ks-param="decay" data-scale="reverse-log" data-physical-min="0.00001" data-physical-max="0.99999" data-initial="0.994"><output>0.99400</output></label>
+            <label>Damping <input type="range" min="0" max="1" step="0.001" data-ks-param="damping" data-scale="log" data-physical-min="0.00001" data-physical-max="1" data-initial="0.34"><output>0.34000</output></label>
+            <div class="event-toggles"><label><input type="checkbox" data-event-toggle="on" checked> Note-on</label><label><input type="checkbox" data-event-toggle="off" checked> Note-off palm mute</label></div>
+          </div>
+          <div class="inline-roll light-roll" data-roll="extended" aria-label="Extended Karplus-Strong piano roll"></div>
+
+          <div class="story-divider"><span>Why predict events?</span></div>
+          <h2>A guitar note is an event, not a frame</h2>
+          <p>In real guitar recordings, a string is excited and later stopped by the player. The example below is plucked and muted at approximately 3 seconds. This discrete structure motivates a model that predicts a set of events - each with its own onset, $f_0$, duration, and timbral properties - rather than unnecessarily predicting the same parameters frame by frame.</p>
+          <div class="featured-audio cell" data-featured-audio="main/experiments/evaluation/audio/real/target/010.ogg"><div class="featured-label"><span>NSynth acoustic guitar</span><strong>Target 10 · palm mute near 3 s</strong></div><div class="media-stack"><div class="waveform"></div><div class="spectrogram"></div><button class="overlay-play" aria-label="Play target 10"><i class="fas fa-play"></i></button></div></div>
+          <figure class="architecture-figure"><img class="paper-figure" src="assets/images/fig_2.png" alt="Event-based sound-matching model architecture"><a class="figure-source" href="main/figures/fig_2.pdf">Open PDF</a><figcaption>Our dual frontend feeds a set-prediction transformer: it asks which events exist, when they occur, their pitch, and their timbre, then resynthesises them through the differentiable KSA.</figcaption></figure>
+
+          <div class="story-divider"><span>Making the loop differentiable</span></div>
+          <h2>Two routes through the same recursive system</h2>
+          <p>DDSP learns synthesis controls by backpropagating an audio reconstruction loss through the synthesiser. Prior work used a <a href="https://intro2ddsp.github.io/physical-modeling/wave_equation.html" target="_blank">frequency-domain formulation</a> with multi-scale spectral loss; our earlier <cite>Differentiable Karplus-Strong</cite> work used a fully time-domain implementation. Their relative behaviour had not been compared.</p>
+          <div class="method-comparison"><article><span>Frequency sampling</span><h3>Fast, smooth fractional delays</h3><p>The delay becomes a continuous phase shift. But the required Hermitian spectrum produces a finite, circular impulse response: if a resonant decay exceeds the FFT frame, its tail wraps around in time.</p></article><article><span>Time-domain interpolation</span><h3>Native decay, no wrap-around</h3><p>Fifth-order Lagrange interpolation makes delay length differentiable sample by sample. It avoids frame-based time aliasing and gives gradient accuracy comparable to frequency sampling.</p></article></div>
+          <div class="figure-grid narrative-figures"><figure class="figure-frame"><img class="paper-figure" src="assets/images/fig_3.png" alt="Karplus-Strong RT60 across fundamental frequency, damping, and decay"><a class="figure-source" href="main/figures/fig_3.pdf">Open PDF</a><figcaption>With fixed loop coefficients, RT60 changes with $f_0$: higher notes traverse the loss filter more often per second. Return to the instrument above and hear how pitch and decay interact.</figcaption></figure><figure class="figure-frame"><img class="paper-figure" src="assets/images/fig_4.png" alt="Comparison of real guitar and time- and frequency-domain KSA responses"><a class="figure-source" href="main/figures/fig_4.pdf">Open PDF</a><figcaption>Frequency sampling becomes time-aliased when the physical response outlasts its FFT frame; the time-domain implementation preserves the full decay.</figcaption></figure></div>
+
+          <div class="story-divider"><span>The learning problem</span></div>
+          <h2>Spectral similarity does not tell an onset which way to move</h2>
+          <p>Our gradient analysis reveals the central obstacle. Multi-scale spectral loss is useful for timbre, but a shifted event often receives no meaningful directional onset gradient: it cannot reliably say “earlier” or “later.” Joint audio-and-parameter training therefore collapses unless onset and $f_0$ gradients are detached. Parameter supervision works well on synthetic events but does not yet cross the sim-to-real gap; on real audio, classical external onset and pitch detectors combined with audio losses remain the strongest KSA strategy. The tables and listening examples below let you inspect that trade-off.</p>
+          <details class="story-references"><summary>References behind this story</summary><ol><li>K. Karplus and A. Strong, “Digital Synthesis of Plucked-String and Drum Timbres,” <i>Computer Music Journal</i>, 1983.</li><li>D. A. Jaffe and J. O. Smith, “Extensions of the Karplus-Strong Plucked-String Algorithm,” <i>Computer Music Journal</i>, 1983.</li><li>V. Välimäki et al., “Physical Modeling of Plucked String Instruments with Application to Real-Time Sound Synthesis,” <i>JAES</i>, 1996.</li><li>J. Engel et al., “DDSP: Differentiable Digital Signal Processing,” ICLR, 2020.</li><li>B. Hayes et al., “A Review of Differentiable Digital Signal Processing for Music and Speech Synthesis,” 2024, with its <a href="https://intro2ddsp.github.io/physical-modeling/wave_equation.html" target="_blank">physical-modelling supplement</a>.</li><li>P. Tablas de Paula, D. Marttila, and J. D. Reiss, “Differentiable Karplus-Strong,” DMRN+20, 2025.</li></ol></details>
         </div>
       </section>
 
@@ -252,24 +274,10 @@
     </div>
   </section>
 
-  <div class="piano-roll" id="piano-roll" aria-label="Karplus-Strong piano roll">
-    <div class="piano-toolbar">
-      <div class="transport">
-        <button class="btn btn-outline-dark" type="button" id="ks-play"><i class="bi bi-play-fill"></i> Play</button>
-        <button class="btn btn-outline-dark" type="button" id="ks-stop"><i class="bi bi-stop-fill"></i> Stop</button>
-        <label class="tempo-control">Tempo <input class="form-control form-control-sm" id="ks-tempo" type="number" min="60" max="180" step="1" value="110"></label>
-      </div>
-      <div id="ks-step-readout">1.1.1</div>
-    </div>
-    <div class="roll-viewport" id="roll-viewport">
-      <div class="roll-grid" id="roll-grid"></div>
-    </div>
-  </div>
-
   <footer style="margin-top: 4rem; text-align:center; font-size:0.85rem; padding-bottom: 2rem;">
     &copy; 2026 Sound Matching with a Differentiable Karplus-Strong Algorithm
   </footer>
 
-  <script type="module" src="assets/js/app.js"></script>
+  <script type="module" src="assets/js/app.js?v=story-13"></script>
 </body>
 </html>

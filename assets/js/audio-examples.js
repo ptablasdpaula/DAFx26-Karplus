@@ -306,8 +306,38 @@ function renderAll() {
   renderTable('#table-nsynth', NSYNTH_MODELS, state.real);
 }
 
+function initFeaturedAudio() {
+  const container = document.querySelector('[data-featured-audio]');
+  if (!container) return;
+  const button = container.querySelector('.overlay-play');
+  const ws = makePlayer(container);
+  players.set(button, ws);
+  container.classList.add('loaded', 'loading');
+  loadingIcon(button);
+  button.disabled = true;
+  ws.load(container.dataset.featuredAudio);
+  ws.on('ready', () => {
+    container.classList.remove('loading');
+    button.disabled = false;
+    icon(button, false);
+  });
+  ws.on('play', () => { icon(button, true); container.classList.add('playing'); });
+  ws.on('pause', () => { icon(button, false); container.classList.remove('playing'); });
+  ws.on('finish', () => { icon(button, false); container.classList.remove('playing'); });
+  ws.on('error', error => {
+    console.warn(`Could not load ${container.dataset.featuredAudio}`, error);
+    button.disabled = false;
+    icon(button, false);
+  });
+  button.addEventListener('click', async () => {
+    if (ws.isPlaying()) ws.pause();
+    else { pauseExamplePlayers(ws); await ws.play(); }
+  });
+}
+
 
 export function initAudioExamples() {
+  initFeaturedAudio();
   document.querySelectorAll('[data-view]').forEach(button => {
     button.onclick = () => {
       const section = button.dataset.section;
