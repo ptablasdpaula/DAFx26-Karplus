@@ -27,7 +27,6 @@ experiments/              Training, evaluation, gradient analysis, and artifacts
 experiments/checkpoints/  Trained checkpoints used for the paper.
 experiments/evaluation/   Result CSVs and audio examples.
 experiments/jobs/         Minimal SLURM wrappers for train/eval.
-docs/                     GitHub Pages source.
 ```
 
 ## Install
