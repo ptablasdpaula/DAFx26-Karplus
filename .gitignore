@@ -66,3 +66,6 @@ experiments/evaluation/*.ACCEPTED.csv
 .render_*jid
 experiments/evaluation/*_rerun.csv
 .eval_hn_jid
+
+# gradient-analysis CSVs are regenerated from the notebook/table source
+experiments/gradient_accuracy_*.csv
