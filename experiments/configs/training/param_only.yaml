@@ -1,0 +1,8 @@
+defaults:
+  - base
+  - _self_
+
+objective: param_only
+w_param: 1.0
+w_mss: 0.0
+w_sot: 0.0

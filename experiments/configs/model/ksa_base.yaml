@@ -1,0 +1,25 @@
+decoder: ks
+encoder:
+  max_events: 10
+  d_model: 64
+  num_blocks: 7
+  kernel_size: 3
+  dilation_base: 2
+  dropout: 0.1
+  cross_attn_heads: 8
+  cross_attn_layers: 3
+  n_f0_bins: 128
+  f0_min_hz: 32.0
+  f0_max_hz: 2000.0
+  mel_kwargs:
+    fs: ${fs}
+    n_fft: 1024
+    hop_length: 256
+    n_mels: 128
+    f_min: 32.0
+    f_max: 8000.0
+  frontend_kwargs: {}
+synth:
+  lagrange_order: 5
+  n_fft: 16384
+  hop_length: 256

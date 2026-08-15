@@ -1,0 +1,18 @@
+decoder: harmonics_noise
+implementation: null   # not applicable to H+N
+
+n_harmonics: 100
+n_noise_bands: 65
+
+# ── DDSP Architecture Params ──
+z_dim: 16
+hidden_dim: 512
+
+# The new HpNEncoder only needs the sample rate for the MFCC transform
+encoder:
+  fs: ${fs}
+
+# synth block not used by H+N, but kept for schema compatibility
+synth:
+  lagrange_order: 5
+  n_fft: 2048

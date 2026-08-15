@@ -1,0 +1,8 @@
+# SCM syntax highlighting & preventing 3-way merges
+pixi.lock merge=binary linguist-language=YAML linguist-generated=true -diff
+
+# No checkpoints are committed here — they come from the `checkpoints` branch
+# via scripts/fetch_checkpoints.sh. The rule still has to live on this branch:
+# git applies attributes from the working tree, so without it the fetched
+# .ckpt files stay as 132-byte LFS pointers instead of real weights.
+experiments/checkpoints/**/*.ckpt filter=lfs diff=lfs merge=lfs -text
