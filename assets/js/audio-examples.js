@@ -4,7 +4,7 @@ import Spectrogram from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/plugi
 const AUDIO_EXT = '.ogg';
 const EXAMPLES_TO_SHOW = 5;
 const MAX_FILES = 290;
-const BASE_PATH = 'main/experiments/evaluation/audio';
+const BASE_PATH = 'assets/audio';
 
 const allFileIDs = Array.from({length: MAX_FILES}, (_, i) => String(i + 1).padStart(3, '0'));
 const rand = (arr, n) => arr.slice().sort(() => 0.5 - Math.random()).slice(0, Math.min(n, arr.length));

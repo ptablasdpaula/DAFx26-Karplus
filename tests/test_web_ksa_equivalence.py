@@ -1,17 +1,36 @@
 """Numerical regression test for the extended KSA used by the project page.
 
-Run from the repository root with:
-    cd main && pixi run python ../tests/test_web_ksa_equivalence.py
+Checks that the JavaScript synth in assets/js/interactive-ks.js still matches
+src/synths/dsp.py from the code repository, which lives on the `main` branch of
+DAFx26-Karplus and is not vendored here.
+
+Point KARPLUS_REPO at your checkout of it, then run from this repository's root:
+
+    KARPLUS_REPO=../DAFx26-Karplus-main pixi run python tests/test_web_ksa_equivalence.py
+
+If KARPLUS_REPO is unset, a sibling directory named DAFx26-Karplus-main is tried.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "main"))
+_default = Path(__file__).resolve().parents[2] / "DAFx26-Karplus-main"
+KARPLUS_REPO = Path(os.environ.get("KARPLUS_REPO", _default)).expanduser().resolve()
+
+if not (KARPLUS_REPO / "src" / "synths" / "dsp.py").is_file():
+    sys.exit(
+        f"Could not find src/synths/dsp.py under {KARPLUS_REPO}.\n"
+        "Set KARPLUS_REPO to a checkout of the DAFx26-Karplus code repository:\n"
+        "  git clone -b main https://github.com/ptablasdpaula/DAFx26-Karplus.git\n"
+        "  KARPLUS_REPO=<that path> python tests/test_web_ksa_equivalence.py"
+    )
+
+sys.path.insert(0, str(KARPLUS_REPO))
 from src.synths import dsp
 
 
