@@ -1,0 +1,7 @@
+.DS_Store
+.pixi/
+tmp/
+
+# Paper drafts kept locally alongside the page; the site links the published PDF.
+*.pdf
+!assets/figures/*.pdf
