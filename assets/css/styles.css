@@ -155,6 +155,8 @@
     .light-roll .roll-lane:after{background:#d55b37}
     .light-roll .midi-note{top:2px;height:17px;border:1px solid #688ba3;background:rgba(111,151,178,calc(.28 + var(--velocity) * .52));color:#17232b;padding:0 6px;font-size:.62rem}
     .light-roll .midi-note.selected{border-color:#111;box-shadow:0 0 0 1px #111;z-index:4}
+    .light-roll .midi-note.bass-note{border-color:#8b7460;background:rgba(174,143,113,calc(.25 + var(--velocity) * .48));color:#35291f}
+    .light-roll .midi-note.bass-note .velocity-meter{background:#76563c}
     .velocity-meter{position:absolute;left:0;bottom:0;height:2px;width:calc(var(--velocity) * 100%);background:#274f69}
     .parameter-panel{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:12px;width:min(100%,880px);margin:1rem auto;padding:16px;border:1px solid #d8dde1;border-radius:8px;background:#fafbfc}
     .parameter-panel>label{display:grid;grid-template-columns:1fr auto;gap:4px 8px;font-size:.82rem;font-weight:600}.parameter-panel input[type="range"]{grid-column:1/-1;width:100%}.parameter-panel output{font-variant-numeric:tabular-nums;color:#5f6871;font-weight:400}

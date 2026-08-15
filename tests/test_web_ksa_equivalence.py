@@ -112,7 +112,7 @@ def main() -> None:
             web_karplus_strong(impulse, f0, damping, decay),
         )
 
-    for decay_value in (0.9, 0.97, 0.994, 0.99999):
+    for decay_value in (0.9, 0.97, 0.994, 0.99999, 0.99999999):
         damping = np.full(N, 0.34)
         decay = np.full(N, decay_value)
         assert_equivalent(
