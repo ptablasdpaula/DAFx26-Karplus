@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Landscape data checks</title>
+</head>
+<body>
+<pre id="out">running…</pre>
+<script>
+window.addEventListener('error', e => {
+  document.getElementById('out').textContent = `UNCAUGHT: ${e.message}\n${e.filename}:${e.lineno}`;
+});
+window.addEventListener('unhandledrejection', e => {
+  document.getElementById('out').textContent = `REJECTED: ${e.reason && e.reason.stack || e.reason}`;
+});
+</script>
+<script type="module">
+// Verifies the precomputed surfaces still say what Section 2 claims, and that
+// the descent engine reaches the answer the paper reports.
+import { Surface, Walker, loadData, nearestIndex } from '../assets/js/optim-demo.js';
+
+const lines = [];
+let failures = 0;
+const report = (name, ok, detail = '') => {
+  if (!ok) failures += 1;
+  lines.push(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  ${detail}` : ''}`);
+};
+
+let meta;
+try {
+  meta = await loadData();
+} catch (error) {
+  document.getElementById('out').textContent = `FAILED TO LOAD DATA: ${error}`;
+  throw error;
+}
+
+// ── Landscape A: tKSA finds the target, fKSA does not, and is flatter. ──────
+{
+  const target = meta.A.target;
+  for (const onset of ['0s', '3s']) {
+    const t = new Surface('A', `A_${onset}_tksa`);
+    const tMin = t.argmin();
+    const gErr = Math.abs(t.xValues[tMin.col] - target.decay);
+    const aErr = Math.abs(t.yValues[tMin.row] - target.a1);
+    const gStep = Math.abs(t.xValues[1] - t.xValues[0]) * 3;
+    const aStep = Math.abs(t.yValues[tMin.row + 1] - t.yValues[tMin.row]) * 3;
+    report(`A/${onset} tKSA minimum is the true answer`, gErr < gStep && aErr < aStep,
+      `g=${t.xValues[tMin.col].toFixed(4)} (true ${target.decay}), ` +
+      `a1=${t.yValues[tMin.row].toFixed(4)} (true ${target.a1})`);
+
+    const f = new Surface('A', `A_${onset}_fksa512`);
+    const fMin = f.argmin();
+    report(`A/${onset} fKSA/512 minimum is displaced`,
+      Math.abs(f.xValues[fMin.col] - target.decay) > gStep,
+      `g=${f.xValues[fMin.col].toFixed(4)}`);
+
+    const tRange = t.max - t.min;
+    const fRange = f.max - f.min;
+    report(`A/${onset} fKSA/512 surface is much flatter`, fRange < tRange / 5,
+      `range ${fRange.toFixed(2)} vs tKSA ${tRange.toFixed(2)} (${(tRange / fRange).toFixed(1)}x)`);
+  }
+
+  // The displacement should shrink as the frame grows toward alias-free.
+  const errs = [512, 1024, 2048, 4096].map(n => {
+    const s = new Surface('A', `A_3s_fksa${n}`);
+    return Math.abs(s.xValues[s.argmin().col] - target.decay);
+  });
+  const monotone = errs.every((e, i) => i === 0 || e <= errs[i - 1] + 1e-9);
+  report('A/3s fKSA error shrinks with FFT size', monotone,
+    errs.map(e => e.toFixed(4)).join(' → '));
+}
+
+// ── Descent actually converges on the tKSA surface. ─────────────────────────
+{
+  const s = new Surface('A', 'A_3s_tksa');
+  const { col: tc, row: tr } = s.argmin();
+  const walker = new Walker(s, '#000', 'tKSA');
+  let worst = 0;
+  for (const [c0, r0] of [[10, 10], [10, 80], [80, 10], [80, 80], [50, 50]]) {
+    walker.reset(c0, r0);
+    for (let i = 0; i < 300; i += 1) walker.step();
+    worst = Math.max(worst, Math.hypot(walker.col - tc, walker.row - tr));
+  }
+  report('descent converges from every corner', worst < 12,
+    `worst final distance ${worst.toFixed(1)} cells`);
+}
+
+// ── Landscape B: sign test reproduces the paper's coin flip on onset. ───────
+if (meta.B.terms) {
+  const mix = meta.B.weights.sot / (meta.B.weights.sot + meta.B.weights.mss);
+  const acc = (surface, targetCol, targetRow) => {
+    let okX = 0, nX = 0, okY = 0, nY = 0;
+    for (let r = 1; r < surface.rows - 1; r += 1) {
+      for (let c = 1; c < surface.cols - 1; c += 1) {
+        const [gc, gr] = surface.gradient(c, r, 1);
+        if (c !== targetCol) { nX += 1; if (Math.sign(-gc) === Math.sign(targetCol - c)) okX += 1; }
+        if (r !== targetRow) { nY += 1; if (Math.sign(-gr) === Math.sign(targetRow - r)) okY += 1; }
+      }
+    }
+    return [100 * okX / nX, 100 * okY / nY];
+  };
+
+  const summarise = m => {
+    let onset = 0, f0 = 0, n = 0;
+    meta.B.targets.onsets.forEach((t, ti) => meta.B.targets.f0s.forEach((f, fi) => {
+      const s = new Surface('B', `B_t${ti}_f${fi}_tksa`, m);
+      const [ox, oy] = acc(s, nearestIndex(s.xValues, t), nearestIndex(s.yValues, f));
+      onset += ox; f0 += oy; n += 1;
+    }));
+    return [onset / n, f0 / n];
+  };
+
+  const [onsetTrain, f0Train] = summarise(mix);
+  report('onset gradient is a coin flip at training weights',
+    onsetTrain > 40 && onsetTrain < 62, `${onsetTrain.toFixed(1)}% (paper: 51-56%)`);
+  report('f0 gradient is near chance at training weights (SOT-dominated)',
+    f0Train > 40 && f0Train < 62, `${f0Train.toFixed(1)}% (paper L_SOT: 50-55%)`);
+
+  const [, f0Mss] = summarise(0);
+  report('pure MSS gives a better f0 gradient than SOT-dominated mix',
+    f0Mss > f0Train + 3, `MSS ${f0Mss.toFixed(1)}% vs mix ${f0Train.toFixed(1)}%`);
+
+  const [onsetMss] = summarise(0);
+  report('onset stays a coin flip even under pure MSS',
+    onsetMss < 62, `${onsetMss.toFixed(1)}%`);
+} else {
+  report('landscape B has split loss terms', false, 'manifest predates the split — rerun the precompute');
+}
+
+document.getElementById('out').textContent =
+  lines.join('\n') + `\n\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`;
+</script>
+</body>
+</html>

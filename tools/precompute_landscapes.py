@@ -119,15 +119,25 @@ class Objective:
         self.sot = SOT2048Loss(sample_rate=FS, reduce=False).to(DEVICE)
 
     def __call__(self, pred: torch.Tensor, target: torch.Tensor) -> np.ndarray:
-        out = np.empty(pred.shape[0], dtype=np.float64)
+        """Combined loss, at the paper's weights."""
+        mss, sot = self.split(pred, target)
+        return W_MSS * mss + W_SOT * sot
+
+    def split(self, pred: torch.Tensor, target: torch.Tensor):
+        """The two terms separately, so the page can reweight them live.
+
+        This matters: the training objective is dominated by SOT, and Table 1
+        shows SOT is close to chance on f0 while MSS is not. Storing only the
+        sum would hide which term is responsible for which behaviour.
+        """
+        mss_out = np.empty(pred.shape[0], dtype=np.float64)
         with torch.no_grad():
             sot = self.sot(pred, target.expand_as(pred))
-            sot = sot.reshape(pred.shape[0], -1).mean(dim=1)
+            sot_out = sot.reshape(pred.shape[0], -1).mean(dim=1).cpu().numpy().astype(np.float64)
             for i in range(pred.shape[0]):
                 # MSS reduces over the batch, so feed it one pair at a time.
-                mss = self.mss(pred[i : i + 1], target[:1])
-                out[i] = W_MSS * float(mss) + W_SOT * float(sot[i])
-        return out
+                mss_out[i] = float(self.mss(pred[i : i + 1], target[:1]))
+        return mss_out, sot_out
 
 
 def render(synth: Synth, **kwargs) -> torch.Tensor:
@@ -216,18 +226,21 @@ def landscape_b(objective: Objective, manifest: dict, payload: list) -> None:
                             a1=TARGET["a1"], onset=t_onset)
             for var_name, impl in variants:
                 synth = build_synth(impl, FFT_LONG)
-                grid = np.empty((n, n), dtype=np.float64)
+                grid_mss = np.empty((n, n), dtype=np.float64)
+                grid_sot = np.empty((n, n), dtype=np.float64)
                 t0 = time.time()
                 for row, f0 in enumerate(f0_axis):
                     pred = render(synth, f0=f0, decay=[TARGET["decay"]] * n,
                                   a1=TARGET["a1"], onset=onset_axis)
-                    grid[row] = objective(pred, target)
-                key = f"B_t{ti}_f{fi}_{var_name}"
-                q, lo, hi = quantise(grid)
-                slices[key] = {"offset": sum(p.nbytes for p in payload),
-                               "min": lo, "max": hi}
-                payload.append(q)
-                print(f"  {key}: [{lo:.4f}, {hi:.4f}] in {time.time() - t0:.0f}s", flush=True)
+                    grid_mss[row], grid_sot[row] = objective.split(pred, target)
+                for term, grid in (("mss", grid_mss), ("sot", grid_sot)):
+                    key = f"B_t{ti}_f{fi}_{var_name}_{term}"
+                    q, lo, hi = quantise(grid)
+                    slices[key] = {"offset": sum(p.nbytes for p in payload),
+                                   "min": lo, "max": hi}
+                    payload.append(q)
+                print(f"  B_t{ti}_f{fi}_{var_name}: mss [{grid_mss.min():.3f}, {grid_mss.max():.3f}] "
+                      f"sot [{grid_sot.min():.3f}, {grid_sot.max():.3f}] in {time.time() - t0:.0f}s", flush=True)
 
     manifest["B"] = {
         "axes": {
@@ -237,6 +250,8 @@ def landscape_b(objective: Objective, manifest: dict, payload: list) -> None:
         "shape": [n, n],
         "targets": {"onsets": target_onsets, "f0s": target_f0s},
         "fftLong": FFT_LONG,
+        "terms": ["mss", "sot"],
+        "weights": {"mss": W_MSS, "sot": W_SOT},
         "slices": slices,
     }
 

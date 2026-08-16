@@ -263,6 +263,9 @@
               <label>Target
                 <select data-target-choice></select>
               </label>
+              <label>Loss mix &mdash; <span data-readout="mix">training weights</span>
+                <input type="range" data-loss-mix min="0" max="100" step="1" value="95">
+              </label>
               <button class="btn btn-sm btn-dark" type="button" data-action="play">Run descent</button>
               <button class="btn btn-sm btn-outline-dark" type="button" data-action="step">Step</button>
               <button class="btn btn-sm btn-outline-dark" type="button" data-action="reset">Reset</button>
@@ -279,8 +282,10 @@
             <p class="demo-readout" data-readout="status">Loading landscapes…</p>
           </div>
 
-          <p>Start the marker to the right of the target and run it. The vertical axis behaves: pitch is pulled toward the target, because $f_0$ errors show up as energy in the wrong frequency bins and both losses compare frequency bins. The horizontal axis does not. The marker slides sideways almost at random, and the loss barely changes as it does — because <em>neither loss looks across time at all</em>.</p>
-          <p>That is the crux. $\mathcal{L}_{MSS}$ is a <em>vertical</em>, point-wise distance: it compares each time-frequency bin with the same bin in the target, so a correctly shaped note in the wrong place is simply wrong twice — once where it is, once where it should be — with no indication of which direction closes the gap. $\mathcal{L}_{SOT}$ is <em>horizontal</em> in the other sense: it transports magnitude along the frequency axis <em>within</em> each STFT frame, which is exactly why it helps with pitch, but it never transports energy <em>between</em> frames. Neither operator can express the sentence "this note should move earlier."</p>
+          <p>Start the marker away from the target and run it. Both surfaces do have their global minimum in the right place — the cross really is the lowest point. But a minimum existing is not the same as a gradient finding it, and the slider above lets you see which loss is responsible for what.</p>
+          <p>Slide to pure $\mathcal{L}_{MSS}$ and the vertical axis behaves: pitch is pulled toward the target, because an $f_0$ error puts energy in the wrong frequency bins and a bin-wise comparison notices. Slide to pure $\mathcal{L}_{SOT}$ and that pull largely disappears. Applying the sign test of Eq. 17 directly to these surfaces gives <b>54.3%</b> for onset and <b>50.5%</b> for $f_0$ under the combined objective — both indistinguishable from a coin flip, with the $f_0$ figure matching the $\mathcal{L}_{SOT}$ column of Table 1 rather than the $\mathcal{L}_{MSS}$ one. Since training weights SOT at $1.0$ against MSS at $0.05$, it is SOT's behaviour that dominates what the model actually receives.</p>
+          <p>That is worth sitting with, because $\mathcal{L}_{SOT}$ was adopted precisely to supply the directional frequency information a point-wise loss lacks — and on this synthesiser it does not. Surprisingly, given its design, it is close to blind to $f_0$.</p>
+          <p>The horizontal axis is worse still, and for a structural reason no reweighting can fix. $\mathcal{L}_{MSS}$ is a <em>vertical</em>, point-wise distance: it compares each time-frequency bin with the same bin in the target, so a correctly shaped note in the wrong place is simply wrong twice — once where it is, once where it should be — with no indication of which direction closes the gap. $\mathcal{L}_{SOT}$ transports magnitude along the frequency axis <em>within</em> each STFT frame, but never <em>between</em> frames. Neither operator can express the sentence &ldquo;this note should move earlier.&rdquo;</p>
           <p>There is a second, sneakier problem, and this figure explains it:</p>
           <div class="figure-grid narrative-figures"><figure class="figure-frame"><img class="paper-figure" src="assets/images/fig_3.png" alt="Karplus-Strong RT60 across fundamental frequency, damping, and decay"><a class="figure-source" href="assets/figures/fig_3.pdf">Open PDF</a><figcaption>RT60 across $f_0$, damping and decay. At the most resonant setting the decay lasts 86 s at 80 Hz but only 4.5 s at 1280 Hz — from the same loop coefficients.</figcaption></figure></div>
           <p>Pitch and decay are not independent in this algorithm. A signal at harmonic $k$ passes through the loop filter exactly $f_0$ times per second, so</p>

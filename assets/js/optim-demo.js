@@ -15,34 +15,86 @@ import { whenVisible } from './scrollytelling.js';
 let manifest = null;
 let blob = null;
 
+// Resolved against this module rather than the host page, so the demos and the
+// test harnesses under tests/ both find the data.
+const DATA_BASE = new URL('../data/', import.meta.url);
+
 async function loadData() {
   if (manifest) return manifest;
+  const get = async (name, as) => {
+    const response = await fetch(new URL(name, DATA_BASE));
+    if (!response.ok) throw new Error(`${name}: HTTP ${response.status}`);
+    return as === 'json' ? response.json() : response.arrayBuffer();
+  };
   const [meta, bin] = await Promise.all([
-    fetch('assets/data/landscapes.json').then(r => r.json()),
-    fetch('assets/data/landscapes.bin').then(r => r.arrayBuffer()),
+    get('landscapes.json', 'json'),
+    get('landscapes.bin', 'bin'),
   ]);
   manifest = meta;
   blob = bin;
   return manifest;
 }
 
-/** A single precomputed slice, dequantised on demand. */
+/** Dequantise one stored slice into physical loss units. */
+function dequantise(group, key) {
+  const meta = manifest[group];
+  const slice = meta.slices[key];
+  if (!slice) throw new Error(`no slice ${key}`);
+  const [rows, cols] = meta.shape;
+  const raw = new Uint16Array(blob, slice.offset, rows * cols);
+  const out = new Float32Array(rows * cols);
+  const span = (slice.max - slice.min) / 65535;
+  for (let i = 0; i < raw.length; i += 1) out[i] = slice.min + raw[i] * span;
+  return out;
+}
+
+/**
+ * A loss surface over the two axes of a landscape.
+ *
+ * Landscape B stores L_MSS and L_SOT separately, because they behave very
+ * differently on f0 and the training objective is dominated by one of them.
+ * Passing `mix` (0 = pure MSS, 1 = pure SOT) blends them; each term is first
+ * normalised to its own range, since their absolute scales are unrelated.
+ */
 class Surface {
-  constructor(group, key) {
+  constructor(group, key, mix = null) {
     const meta = manifest[group];
-    const slice = meta.slices[key];
-    if (!slice) throw new Error(`no slice ${key}`);
     const [rows, cols] = meta.shape;
     this.rows = rows;
     this.cols = cols;
-    this.min = slice.min;
-    this.max = slice.max;
     this.xValues = meta.axes.x.values;
     this.yValues = meta.axes.y.values;
-    const raw = new Uint16Array(blob, slice.offset, rows * cols);
-    this.data = new Float32Array(rows * cols);
-    const span = (slice.max - slice.min) / 65535;
-    for (let i = 0; i < raw.length; i += 1) this.data[i] = slice.min + raw[i] * span;
+
+    if (mix === null) {
+      const slice = meta.slices[key];
+      if (!slice) throw new Error(`no slice ${key}`);
+      this.data = dequantise(group, key);
+      this.min = slice.min;
+      this.max = slice.max;
+    } else {
+      const mss = dequantise(group, `${key}_mss`);
+      const sot = dequantise(group, `${key}_sot`);
+      const range = buf => {
+        let lo = Infinity, hi = -Infinity;
+        for (let i = 0; i < buf.length; i += 1) {
+          if (buf[i] < lo) lo = buf[i];
+          if (buf[i] > hi) hi = buf[i];
+        }
+        return [lo, (hi - lo) || 1];
+      };
+      const [mLo, mSpan] = range(mss);
+      const [sLo, sSpan] = range(sot);
+      this.data = new Float32Array(rows * cols);
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < this.data.length; i += 1) {
+        const v = (1 - mix) * ((mss[i] - mLo) / mSpan) + mix * ((sot[i] - sLo) / sSpan);
+        this.data[i] = v;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      this.min = lo;
+      this.max = hi;
+    }
   }
 
   /** Loss at fractional grid coordinates (col, row), bilinearly interpolated. */

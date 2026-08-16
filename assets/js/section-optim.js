@@ -67,6 +67,7 @@ function initDemoA(root, meta) {
     surfaceF = new Surface('A', `A_${onset}_fksa${fft}`);
     walkerT = new Walker(surfaceT, TKSA_COLOUR, 'tKSA');
     walkerF = new Walker(surfaceF, FKSA_COLOUR, 'fKSA');
+    drawTargetSpectrogram();
     reset();
   };
 
@@ -81,12 +82,24 @@ function initDemoA(root, meta) {
     length,
   });
 
-  const drawSpectrograms = () => {
+  // Resynthesising and transforming three 4-second signals costs tens of
+  // milliseconds, which is the same order as the descent tick. The target never
+  // moves during a run, so draw it once; the predictions only need redrawing
+  // when a walker has actually crossed into a different grid cell.
+  const drawTargetSpectrogram = () => {
     const onsetSamples = (onsetSelect.value === '3s' ? 3 : 0) * fs;
     paintSpectrogram(specTarget, renderTimeDomain({
       f0: fixed.f0, fs, decay: fixed.decay, damping: fixed.a1,
       pluck: fixed.pluck_position, dynamic: fixed.dynamic_level, onsetSamples, length,
     }), {});
+  };
+
+  let lastCells = '';
+  const drawSpectrograms = (force = false) => {
+    const cells = [Math.round(walkerT.col), Math.round(walkerT.row),
+      Math.round(walkerF.col), Math.round(walkerF.row)].join(',');
+    if (!force && cells === lastCells) return;
+    lastCells = cells;
     paintSpectrogram(specT, renderTimeDomain(paramsAt(surfaceT, walkerT.col, walkerT.row)), {});
     paintSpectrogram(specF, renderFrequencySampling({
       ...paramsAt(surfaceF, walkerF.col, walkerF.row),
@@ -115,6 +128,7 @@ function initDemoA(root, meta) {
     stop();
     walkerT.reset(startCol, startRow);
     walkerF.reset(startCol, startRow);
+    lastCells = '';
     render();
   }
 
@@ -134,7 +148,7 @@ function initDemoA(root, meta) {
   if (playButton) playButton.addEventListener('click', () => {
     if (timer) { stop(); return; }
     playButton.textContent = 'Pause';
-    timer = setInterval(stepOnce, 60);
+    timer = setInterval(stepOnce, 90);
   });
   if (stepButton) stepButton.addEventListener('click', () => { stop(); stepOnce(); });
   if (resetButton) resetButton.addEventListener('click', reset);
@@ -154,6 +168,8 @@ function initDemoB(root, meta) {
   const canvas = root.querySelector('[data-landscape]');
   const overlay = root.querySelector('[data-spec="overlay"]');
   const targetSelect = root.querySelector('[data-target-choice]');
+  const mixSlider = root.querySelector('[data-loss-mix]');
+  const mixLabel = root.querySelector('[data-readout="mix"]');
   const playButton = root.querySelector('[data-action="play"]');
   const stepButton = root.querySelector('[data-action="step"]');
   const resetButton = root.querySelector('[data-action="reset"]');
@@ -173,12 +189,25 @@ function initDemoB(root, meta) {
   let startRow = 20;
   let targetIndex = [1, 1];
 
+  // Slider position is the SOT share. The paper trains at w_MSS = 0.05 against
+  // w_SOT = 1.0, i.e. a 95% SOT share, which is where the slider starts.
+  const trainingMix = meta.B.weights.sot / (meta.B.weights.sot + meta.B.weights.mss);
+  const currentMix = () => (mixSlider ? Number(mixSlider.value) / 100 : trainingMix);
+
   const load = () => {
     const [ti, fi] = targetIndex;
-    surfaceT = new Surface('B', `B_t${ti}_f${fi}_tksa`);
-    surfaceF = new Surface('B', `B_t${ti}_f${fi}_fksa`);
+    const mix = currentMix();
+    if (mixLabel) {
+      const pct = Math.round(mix * 100);
+      mixLabel.textContent = Math.abs(mix - trainingMix) < 0.02
+        ? 'training weights'
+        : pct === 0 ? 'pure MSS' : pct === 100 ? 'pure SOT' : `${100 - pct}% MSS / ${pct}% SOT`;
+    }
+    surfaceT = new Surface('B', `B_t${ti}_f${fi}_tksa`, mix);
+    surfaceF = new Surface('B', `B_t${ti}_f${fi}_fksa`, mix);
     walkerT = new Walker(surfaceT, TKSA_COLOUR, 'tKSA');
     walkerF = new Walker(surfaceF, FKSA_COLOUR, 'fKSA');
+    targetSignal = null;
     reset();
   };
 
@@ -193,6 +222,11 @@ function initDemoB(root, meta) {
     length,
   });
 
+  // The target signal only changes when the reader picks a different target,
+  // so synthesise it there rather than on every descent tick.
+  let targetSignal = null;
+  let lastCell = '';
+
   const render = () => {
     const targetOnset = targets.onsets[targetIndex[0]];
     const targetF0 = targets.f0s[targetIndex[1]];
@@ -202,12 +236,18 @@ function initDemoB(root, meta) {
       nearestIndex(surfaceT.yValues, targetF0));
     drawWalkers(ctx, canvas, [walkerT, walkerF], surfaceT);
 
-    const target = renderTimeDomain({
-      f0: targetF0, fs, decay: fixed.decay, damping: fixed.a1,
-      pluck: fixed.pluck_position, dynamic: fixed.dynamic_level,
-      onsetSamples: targetOnset * fs, length,
-    });
-    paintOverlay(overlay, target, signalAt(surfaceT, walkerT.col, walkerT.row));
+    if (!targetSignal) {
+      targetSignal = renderTimeDomain({
+        f0: targetF0, fs, decay: fixed.decay, damping: fixed.a1,
+        pluck: fixed.pluck_position, dynamic: fixed.dynamic_level,
+        onsetSamples: targetOnset * fs, length,
+      });
+    }
+    const cell = `${Math.round(walkerT.col)},${Math.round(walkerT.row)}`;
+    if (cell !== lastCell) {
+      lastCell = cell;
+      paintOverlay(overlay, targetSignal, signalAt(surfaceT, walkerT.col, walkerT.row));
+    }
 
     if (readout) {
       readout.innerHTML =
@@ -223,6 +263,7 @@ function initDemoB(root, meta) {
     stop();
     walkerT.reset(startCol, startRow);
     walkerF.reset(startCol, startRow);
+    lastCell = '';
     render();
   }
 
@@ -246,6 +287,7 @@ function initDemoB(root, meta) {
   });
   if (stepButton) stepButton.addEventListener('click', () => { stop(); stepOnce(); });
   if (resetButton) resetButton.addEventListener('click', reset);
+  if (mixSlider) mixSlider.addEventListener('input', load);
   if (targetSelect) {
     targets.onsets.forEach((t, ti) => targets.f0s.forEach((f, fi) => {
       const option = document.createElement('option');
