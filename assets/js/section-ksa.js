@@ -37,6 +37,7 @@ let running = false;
 let root = null;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const sampleRate = () => (audioContext ? audioContext.sampleRate : 48000);
 
 function ensureAudio() {
   if (!audioContext) {
@@ -145,7 +146,7 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
 
-  const fs = audioContext ? audioContext.sampleRate : 48000;
+  const fs = sampleRate();
   const top = Math.min(MAX_HZ, fs / 2);
   const padL = 46;
   const padR = 12;
@@ -232,7 +233,7 @@ function tick() {
 
 function updateReadouts() {
   if (!root) return;
-  const fs = audioContext ? audioContext.sampleRate : 48000;
+  const fs = sampleRate();
   const n = OriginalKsaProcessor.delayLengthFor(state.f0, fs);
   const sounding = OriginalKsaProcessor.soundingFrequency(n, fs);
   const set = (name, value) => {
@@ -268,20 +269,29 @@ export function initKsaFigure() {
   ctx = canvas.getContext('2d');
   root.dataset.mode = state.mode;
 
+  // Build the context up front (it starts suspended, which needs no gesture) so
+  // the analytic curve and the measured spectrum are computed at the same
+  // sample rate from the very first frame rather than after the first pluck.
+  try {
+    ensureAudio();
+  } catch (error) {
+    console.warn('ksa figure: no AudioContext', error);
+  }
+
   root.querySelectorAll('[data-ksa-param]').forEach(input => {
     const key = input.dataset.ksaParam;
     const apply = () => {
       const value = Number(input.value);
       if (key === 'delay') {
         // Two views of one quantity: dragging the integer delay sets the pitch.
-        const fs = audioContext ? audioContext.sampleRate : 48000;
+        const fs = sampleRate();
         state.f0 = OriginalKsaProcessor.soundingFrequency(Math.round(value), fs);
         const f0Input = root.querySelector('[data-ksa-param="f0"]');
         if (f0Input) f0Input.value = state.f0;
       } else {
         state[key] = value;
         if (key === 'f0') {
-          const fs = audioContext ? audioContext.sampleRate : 48000;
+          const fs = sampleRate();
           const delayInput = root.querySelector('[data-ksa-param="delay"]');
           if (delayInput) delayInput.value = OriginalKsaProcessor.delayLengthFor(value, fs);
         }

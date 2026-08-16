@@ -215,6 +215,7 @@
     .regime-grid h4{font-size:.92rem;margin:0 0 6px}
     .regime-grid p{font-size:.83rem;color:#5f6871;margin:0}
     .audio-heading{font-size:1.05rem;margin:1.4rem 0 .6rem}
+    .table-heading{font-size:1rem;font-weight:600;color:#274f69}
     .inline-diagram{margin:1.2rem 0;padding:12px;border:1px solid #e1e4e7;border-radius:8px;background:#fff}
     .inline-diagram img{width:100%;height:auto;display:block}
     .inline-diagram figcaption{font-size:.76rem;color:#5f6871;margin-top:8px;line-height:1.45}

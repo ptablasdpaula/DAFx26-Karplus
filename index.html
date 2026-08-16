@@ -215,7 +215,7 @@
           <p>To measure it we ask a deliberately minimal question of each gradient — not how large it is, but whether it even points the right way:</p>
           <p class="equation">$$\mathrm{sgn}\left(\frac{\partial \mathcal{L}(\hat{x}f[n], x[n])}{\partial f}\right) = \mathrm{sgn}(f - f_x)$$</p>
           <p>A parameter scoring 50% is indistinguishable from a coin flip. <em>Coarse</em> gradient accuracy initialises across the whole parameter range; <em>fine</em> accuracy initialises within $\pm 10\%$ of the target, asking whether the gradient is still trustworthy once you are already close.</p>
-          <h3 style="margin-top:2rem">Single-Event Gradient Accuracy</h3>
+          <h4 class="table-heading" style="margin-top:2rem">Single-Event Gradient Accuracy</h4>
           <div class="results-scroll">
             <table class="results-table">
               <thead>
@@ -237,7 +237,7 @@
           <p class="results-caption">Single-event gradient accuracy (%) comparing $\mathcal{L}_{MSS}$ and $\mathcal{L}_{SOT}$ across tKSA and fKSA.</p>
 
           <p>The numbers are stark. Every timbral parameter is reliable under $\mathcal{L}_{MSS}$ — decay and damping score at or near 100%, dropping only to 94.8% for fKSA in the fine regime. Onset time sits at 51–56%: a coin flip. $f_0$ manages 58–70%, better than chance but nowhere near usable.</p>
-          <h3 style="margin-top:2.5rem">Multi-Event Onset Gradient Accuracy</h3>
+          <h4 class="table-heading" style="margin-top:2.5rem">Multi-Event Onset Gradient Accuracy</h4>
           <div class="results-scroll">
             <table class="results-table">
               <thead>
@@ -312,7 +312,7 @@
 
           <h3 style="margin-top:2.5rem">3.2 &nbsp;What happened</h3>
           <p>Two datasets. <strong>Synth</strong> is 4-second mono clips at 16 kHz containing 1–10 plucks at constant $f_0$ over D1–D6, parameters drawn from Beta distributions with a 30% palm-mute probability, reseeded every epoch — 8,360 training samples. <strong>Real</strong> is the acoustic guitar subset of NSynth, restricted to non-reverberant samples in the same D1–D6 range, split 8,360 / 930 / 290.</p>
-          <h3 style="margin-top:2.5rem">Synthetic Parameter Recovery</h3>
+          <h4 class="table-heading" style="margin-top:2.5rem">Synthetic Parameter Recovery</h4>
           <div class="results-scroll">
             <table class="results-table">
               <thead>
@@ -337,7 +337,7 @@
 
           <p>The prediction from Chapter 2 holds, and more sharply than we expected. $\mathcal{P}$+Audio does not merely underperform — it <em>collapses</em>. Precision, recall and F1 all fall to 0.01, and RMS to 0.33: the model is emitting near-silence. Detaching the onset head alone lifts F1 from 0.01 to 0.31; detaching both onset and $f_0$ takes it to 0.83 and brings $\Delta$Cents from 117 down to 12.7. Removing a training signal makes the model dramatically better, which only makes sense if that signal was actively misleading — exactly what a 51% directional accuracy means.</p>
           <p>$\mathcal{P}$-Only wins nearly everything on synthetic data, including timbre. Beyond having a clean path to the optimum, it benefits from the RT60 reparameterisation, which supervises damping and decay jointly instead of pretending they are independent.</p>
-          <h3 style="margin-top:2.5rem">Real-World Instrument Modelling</h3>
+          <h4 class="table-heading" style="margin-top:2.5rem">Real-World Instrument Modelling</h4>
           <div class="results-scroll">
             <table class="results-table">
               <thead>
