@@ -159,6 +159,69 @@
     .parameter-panel{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:12px;width:min(100%,880px);margin:1rem auto;padding:16px;border:1px solid #d8dde1;border-radius:8px;background:#fafbfc}
     .parameter-panel>label{display:grid;grid-template-columns:1fr auto;gap:4px 8px;font-size:.82rem;font-weight:600}.parameter-panel input[type="range"]{grid-column:1/-1;width:100%}.parameter-panel output{font-variant-numeric:tabular-nums;color:#5f6871;font-weight:400}
     .event-toggles{grid-column:1/-1;display:flex;gap:22px;padding-top:6px;border-top:1px solid #e1e4e7;font-size:.85rem}.event-toggles label{display:flex;gap:7px;align-items:center;margin:0}
+
+    /* ── Scrolling narrative ─────────────────────────────────────────── */
+    .chapter{margin:0 0 4.5rem}
+    .chapter>hr{margin-bottom:1.6rem}
+    .equation{margin:1.1rem 0;overflow-x:auto}
+    .aside{margin-top:1.6rem;padding:12px 16px;border-left:3px solid #d8dde1;background:#fafbfc;font-size:.9rem;color:#5f6871}
+    .link-button{border:0;background:none;padding:0;color:#274f69;font:inherit;text-decoration:underline;cursor:pointer}
+    .ink-red{color:#c2412a;font-weight:600}.ink-blue{color:#2f6fb0;font-weight:600}
+    .roll-note{font-size:.85rem;color:#5f6871}
+
+    /* Sticky figure + stepped prose */
+    .scrolly{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:36px;align-items:start}
+    .scrolly-figure{position:sticky;top:18px;align-self:start}
+    .scrolly-steps>.scrolly-step{padding:2.5rem 0;opacity:.45;transition:opacity .35s ease}
+    .scrolly-steps>.scrolly-step.is-active{opacity:1}
+    .scrolly-steps>.scrolly-step:first-child{padding-top:.5rem}
+
+    .ksa-figure{border:1px solid #d8dde1;border-radius:10px;background:#fff;padding:14px}
+    .figure-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
+    .mode-switch{display:inline-flex;border:1px solid #cfd5da;border-radius:20px;overflow:hidden}
+    .mode-switch button{border:0;background:#fff;padding:5px 14px;font-size:.78rem;font-weight:600;color:#5f6871;cursor:pointer}
+    .mode-switch button.active{background:#274f69;color:#fff}
+    .response-canvas{display:block;width:100%;height:260px}
+    .figure-legend{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;margin:.5rem 0 0;font-size:.72rem;color:#5f6871}
+    .swatch{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+    .swatch.analytic{background:#d55b37;height:3px}
+    .swatch.measured{background:rgba(111,151,178,.6);height:9px}
+    .knob-panel{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px;margin-top:12px;padding-top:12px;border-top:1px solid #e6e9ec}
+    .knob-panel label{display:grid;grid-template-columns:1fr auto;gap:3px 8px;font-size:.78rem;font-weight:600;margin:0}
+    .knob-panel input[type="range"]{grid-column:1/-1;width:100%}
+    .knob-panel output{font-variant-numeric:tabular-nums;color:#5f6871;font-weight:400}
+    .tuning-readout{grid-column:1/-1;font-size:.78rem;color:#5f6871;padding:6px 9px;border-radius:6px;background:#f4f6f7}
+    .tuning-readout b{font-variant-numeric:tabular-nums;color:#274f69}
+    .tuning-readout b.off-pitch{color:#c2412a}
+
+    /* Optimisation demos */
+    .demo{margin:1.6rem 0;padding:16px;border:1px solid #d8dde1;border-radius:10px;background:#fafbfc}
+    .demo-controls{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:end;margin-bottom:14px}
+    .demo-controls label{display:grid;gap:3px;font-size:.76rem;font-weight:600;margin:0}
+    .demo-controls select{border:1px solid #cfd5da;border-radius:6px;padding:4px 8px;font-size:.82rem;background:#fff}
+    .demo-body{display:grid;grid-template-columns:minmax(0,440px) minmax(0,1fr);gap:20px;align-items:start}
+    .landscape{margin:0}
+    .landscape canvas{width:100%;height:auto;display:block;border-radius:6px;cursor:crosshair;image-rendering:auto}
+    .demo figcaption{font-size:.72rem;color:#5f6871;margin-top:6px;line-height:1.4}
+    .spec-stack{display:grid;gap:10px}
+    .spec-stack figure{margin:0}
+    .spec-stack canvas{width:100%;height:auto;display:block;border:1px solid #e1e4e7;border-radius:4px;background:#fff}
+    .demo-readout{margin:12px 0 0;font-size:.78rem;font-variant-numeric:tabular-nums;color:#5f6871}
+
+    /* Training regimes */
+    .regime-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:1.2rem 0}
+    .regime-grid article{border:1px solid #d8dde1;border-radius:8px;padding:14px;background:#fff}
+    .regime-grid span{display:inline-block;font-size:.72rem;font-weight:700;color:#274f69;margin-bottom:6px}
+    .regime-grid h4{font-size:.92rem;margin:0 0 6px}
+    .regime-grid p{font-size:.83rem;color:#5f6871;margin:0}
+    .audio-heading{font-size:1.05rem;margin:1.4rem 0 .6rem}
+    .inline-diagram{margin:1.2rem 0;padding:12px;border:1px solid #e1e4e7;border-radius:8px;background:#fff}
+    .inline-diagram img{width:100%;height:auto;display:block}
+    .inline-diagram figcaption{font-size:.76rem;color:#5f6871;margin-top:8px;line-height:1.45}
+    .story-references{margin-top:2.5rem;font-size:.85rem}
+    .story-references summary{cursor:pointer;font-weight:600;color:#274f69}
+    .story-references ol{margin-top:.8rem;color:#5f6871;line-height:1.6}
+
     @media (max-width: 980px){
       .app-shell{grid-template-columns:1fr;padding:0 16px}
       .side-tabs{position:static;border-right:0;border-bottom:1px solid #dadce0;display:flex;gap:6px;overflow:auto;padding:0 0 10px}
@@ -167,6 +230,12 @@
       .extended-figure,.method-comparison{grid-template-columns:1fr}
       .synth-chapter{align-items:flex-start;flex-direction:column}
       .parameter-panel{grid-template-columns:repeat(2,minmax(130px,1fr))}
+      .scrolly{grid-template-columns:1fr}
+      .scrolly-figure{position:static}
+      .scrolly-steps>.scrolly-step{opacity:1;padding:1.5rem 0}
+      .demo-body{grid-template-columns:1fr}
+      .regime-grid{grid-template-columns:1fr}
+      .knob-panel{grid-template-columns:1fr}
       .light-roll{overflow:hidden}.light-roll .roll-grid{transform-origin:top left}
       .patch-stage{min-height:1180px}
       .patch-figure{position:relative;left:auto;right:auto;top:auto;margin:0 auto 16px}

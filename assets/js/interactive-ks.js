@@ -1,32 +1,71 @@
 let pauseExamples = () => {};
 
-const STEPS = 32;
-const FIRST_MIDI = 48;
-const LAST_MIDI = 60;
-const STEP_WIDTH = 22;
+const STEPS = 64;
+const BAR_STEPS = 8;
+const FIRST_MIDI = 36;
+const LAST_MIDI = 64;
+const STEP_WIDTH = 11;
 const KSA_F0_MIN = 20;
 const LAGRANGE_ORDER = 5;
+const MAX_VOICES = 24;
+const VELOCITY_GAIN_MIN = 0.001;
+const VELOCITY_GAIN_MAX = 1;
+const C_MAJOR_PITCH_CLASSES = new Set([0, 2, 4, 5, 7, 9, 11]);
+const ROLL_MIDI_NOTES = Array.from(
+  { length: LAST_MIDI - FIRST_MIDI + 1 },
+  (_, index) => LAST_MIDI - index
+).filter(midi => C_MAJOR_PITCH_CLASSES.has(midi % 12));
 const controllers = [];
 let audioContext;
 let lastActiveController = null;
-let extendedParams = { dynamic: 0.62, pluck: 0.22, decay: 0.994, damping: 0.34, noteOn: true, noteOff: true };
+let extendedParams = { dynamic: 0.62, pluck: 0.22, decay: 0.99999999, damping: 0.7, noteOn: true, noteOff: true };
 
-// Two-bar, one-octave monophonic adaptation of the climactic rolled-chord
-// contour from Debussy's Clair de lune.
-const clairContour = [56, 53, 49, 53, 56, 60, 56, 53, 58, 54, 51, 54, 58, 60, 58, 54];
-const defaultNotes = clairContour.map((midi, index) => ({
-  midi,
-  start: index * 2,
-  length: 2,
-  velocity: 0.5 + 0.45 * Math.sin((index / (clairContour.length - 1)) * Math.PI)
-}));
+// Upper-staff transcription supplied by the user: eight 2/4 measures,
+// transposed down one octave to fit the compact C3-E4 demonstration range.
+const defaultNotes = [
+  { midi: 53, start: 0, length: 2, velocity: 0.82 },
+  { midi: 57, start: 2, length: 2, velocity: 0.88 },
+  { midi: 59, start: 4, length: 4, velocity: 0.92 },
+  { midi: 53, start: 8, length: 2, velocity: 0.78 },
+  { midi: 57, start: 10, length: 2, velocity: 0.86 },
+  { midi: 59, start: 12, length: 4, velocity: 0.90 },
+  { midi: 53, start: 16, length: 2, velocity: 0.80 },
+  { midi: 57, start: 18, length: 2, velocity: 0.86 },
+  { midi: 59, start: 20, length: 2, velocity: 0.90 },
+  { midi: 64, start: 22, length: 2, velocity: 0.94 },
+  { midi: 62, start: 24, length: 4, velocity: 0.96 },
+  { midi: 59, start: 28, length: 2, velocity: 0.86 },
+  { midi: 60, start: 30, length: 2, velocity: 0.88 },
+  { midi: 59, start: 32, length: 2, velocity: 0.86 },
+  { midi: 55, start: 34, length: 2, velocity: 0.78 },
+  { midi: 52, start: 36, length: 8, velocity: 0.72 },
+  { midi: 50, start: 46, length: 2, velocity: 0.68 },
+  { midi: 52, start: 48, length: 2, velocity: 0.74 },
+  { midi: 55, start: 50, length: 2, velocity: 0.82 },
+  { midi: 52, start: 52, length: 12, velocity: 0.70 }
+];
+
+// Lower-staff accompaniment from the supplied score: F-(A,C) for the first
+// four bars, then C-(E,G). The bass root is followed by three repeated dyads.
+const accompaniment = [
+  { root: 41, dyad: [45, 48] }, // F2, then A2-C3
+  { root: 36, dyad: [40, 43] }  // C2, then E2-G2
+];
+for (let bar = 0; bar < 8; bar += 1) {
+  const chord = accompaniment[bar < 4 ? 0 : 1];
+  defaultNotes.push({ midi: chord.root, start: bar * BAR_STEPS, length: 2, velocity: 0.01, voice: 'bass' });
+  for (let beat = 1; beat < 4; beat += 1) {
+    chord.dyad.forEach(midi => defaultNotes.push({ midi, start: bar * BAR_STEPS + beat * 2, length: 2, velocity: 0.01, voice: 'bass' }));
+  }
+}
 
 const midiToFreq = midi => 440 * 2 ** ((midi - 69) / 12);
 const noteName = midi => `${['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][midi % 12]}${Math.floor(midi / 12) - 1}`;
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const modulo = (value, length) => ((value % length) + length) % length;
+const gainToDecibels = gain => 20 * Math.log10(gain);
 
-function computeDynamicsR(f0, dynamicLevel, fs) {
+export function computeDynamicsR(f0, dynamicLevel, fs) {
   const minBw = KSA_F0_MIN;
   const maxBw = fs / 2;
   const bwHz = minBw * (maxBw / minBw) ** dynamicLevel;
@@ -44,12 +83,12 @@ function computeDynamicsR(f0, dynamicLevel, fs) {
   return Math.abs(plus) < 1 ? plus : minus;
 }
 
-function onePolePhaseDelay(f0, a1, fs) {
+export function onePolePhaseDelay(f0, a1, fs) {
   const omega = 2 * Math.PI * f0 / fs;
   return -Math.atan2(a1 * Math.sin(omega), 1 - a1 * Math.cos(omega)) / omega;
 }
 
-function lagrangeFractionalDelay(totalDelay) {
+export function lagrangeFractionalDelay(totalDelay) {
   const offset = Math.floor(LAGRANGE_ORDER / 2);
   const adjusted = totalDelay - offset;
   const integerDelay = Math.floor(adjusted);
@@ -63,6 +102,50 @@ function lagrangeFractionalDelay(totalDelay) {
     coefficients[n] = coefficient;
   }
   return { integerDelay, coefficients };
+}
+
+/**
+ * Karplus & Strong (1983), in Smith's signal-processing recasting with explicit
+ * additive input:  y[n] = x[n] + g/2 * (y[n-N] + y[n-N-1]).
+ *
+ * The two-point averager H_L(z) = 1/2 (1 + z^-1) is linear phase with a phase
+ * delay of exactly half a sample at every frequency, so the loop rings at
+ * fs / (N + 1/2), not fs / N. Karplus and Strong's own tuning rule is therefore
+ *
+ *     N = fs / f0 - 1/2
+ *
+ * and because N must be an integer, pitch lands on a quantised grid — there is
+ * no interpolation filter here to take up the remainder. That residual error is
+ * what the fractional delay in the extended algorithm exists to remove.
+ */
+export class OriginalKsaProcessor {
+  static delayLengthFor(f0, fs) {
+    return Math.max(2, Math.round(fs / f0 - 0.5));
+  }
+
+  static soundingFrequency(delayLength, fs) {
+    return fs / (delayLength + 0.5);
+  }
+
+  constructor(sampleRate, frequency, { decayGain = 0.996 } = {}) {
+    this.fs = sampleRate;
+    this.decayGain = decayGain;
+    this.delayLength = OriginalKsaProcessor.delayLengthFor(frequency, sampleRate);
+    this.frequency = OriginalKsaProcessor.soundingFrequency(this.delayLength, sampleRate);
+    this.delay = new Float64Array(Math.floor(sampleRate / KSA_F0_MIN));
+    this.write = 0;
+    this.previous = 0;
+  }
+
+  process(excitation) {
+    const delayed = this.delay[modulo(this.write - this.delayLength, this.delay.length)];
+    const filtered = this.decayGain * 0.5 * (delayed + this.previous);
+    this.previous = delayed;
+    const output = excitation + filtered;
+    this.delay[this.write] = output;
+    this.write = (this.write + 1) % this.delay.length;
+    return output;
+  }
 }
 
 export class ExtendedKsaProcessor {
@@ -131,7 +214,7 @@ export function initInteractiveKarplus({ pauseExamples: callback } = {}) {
     const update = () => {
       const value = toPhysical(Number(input.value));
       extendedParams[input.dataset.ksParam] = value;
-      input.parentElement.querySelector('output').value = scale ? value.toFixed(5) : value.toFixed(2);
+      input.parentElement.querySelector('output').value = input.dataset.ksParam === 'decay' ? value.toFixed(8) : scale ? value.toFixed(5) : value.toFixed(2);
     };
     input.addEventListener('input', update);
     update();
@@ -169,16 +252,33 @@ class PianoRoll {
     this.build();
   }
 
+  setMode(mode) {
+    if (mode === this.mode) return;
+    this.stop();
+    this.mode = mode;
+    this.root.dataset.mode = mode;
+    this.root.querySelectorAll('[data-mode-option]').forEach(button =>
+      button.classList.toggle('active', button.dataset.modeOption === mode));
+    document.querySelectorAll('[data-extended-only]').forEach(element =>
+      element.toggleAttribute('hidden', mode !== 'extended'));
+    this.renderNotes();
+  }
+
   build() {
+    this.root.dataset.mode = this.mode;
     this.root.innerHTML = `
       <div class="piano-toolbar">
-        <div class="transport"><button class="btn btn-sm btn-dark" type="button" data-action="play"><i class="bi bi-play-fill"></i> Play</button><label class="tempo-control">Tempo <input class="form-control form-control-sm" type="number" min="60" max="180" value="110"></label></div>
-        <div><span class="mode-badge">${this.mode === 'original' ? 'Original KSA' : 'Extended KSA'}</span><span data-readout>1.1.1</span></div>
+        <div class="transport"><button class="btn btn-sm btn-dark" type="button" data-action="play"><i class="bi bi-play-fill"></i> Play</button><label class="tempo-control">Tempo <input class="form-control form-control-sm" type="number" min="60" max="180" value="160"></label></div>
+        <div class="mode-switch" role="group" aria-label="Algorithm">
+          <button type="button" data-mode-option="original"${this.mode === 'original' ? ' class="active"' : ''}>Original KSA</button>
+          <button type="button" data-mode-option="extended"${this.mode === 'extended' ? ' class="active"' : ''}>Extended KSA</button>
+        </div>
+        <span data-readout>1.1.1</span>
       </div>
-      <p class="roll-help">Drag empty space to draw · drag notes sideways for time or up/down for pitch · drag an edge to resize · double-click to delete${this.mode === 'extended' ? ' · <kbd>⌘</kbd>-drag vertically for velocity' : ''}</p>
+      <p class="roll-help">C-major notes · drag empty space to draw · drag notes sideways for time or up/down for pitch · drag an edge to resize · double-click to delete · <kbd>⌘</kbd>-drag vertically for burst gain</p>
       <div class="roll-grid"></div>`;
     this.grid = this.root.querySelector('.roll-grid');
-    for (let midi = LAST_MIDI; midi >= FIRST_MIDI; midi -= 1) {
+    ROLL_MIDI_NOTES.forEach(midi => {
       const label = document.createElement('div');
       label.className = `note-label${[1,3,6,8,10].includes(midi % 12) ? ' black-key' : ''}`;
       label.textContent = noteName(midi);
@@ -189,13 +289,15 @@ class PianoRoll {
       for (let beat = 0; beat <= STEPS; beat += 4) {
         const line = document.createElement('i');
         line.style.left = `${beat * STEP_WIDTH}px`;
-        line.className = beat % 16 === 0 ? 'bar-line' : 'beat-line';
+        line.className = beat % BAR_STEPS === 0 ? 'bar-line' : 'beat-line';
         lane.appendChild(line);
       }
       lane.addEventListener('pointerdown', event => this.beginDraw(event));
       this.grid.appendChild(lane);
-    }
+    });
     this.root.querySelector('[data-action="play"]').addEventListener('click', () => this.play());
+    this.root.querySelectorAll('[data-mode-option]').forEach(button =>
+      button.addEventListener('click', () => this.setMode(button.dataset.modeOption)));
     this.renderNotes();
   }
 
@@ -206,11 +308,12 @@ class PianoRoll {
       const block = document.createElement('div');
       block.className = 'midi-note';
       block.classList.toggle('selected', note === this.selectedNote);
+      block.classList.toggle('bass-note', note.voice === 'bass');
       block.style.left = `${note.start * STEP_WIDTH + 1}px`;
       block.style.width = `${note.length * STEP_WIDTH - 2}px`;
-      block.style.setProperty('--velocity', this.mode === 'extended' ? note.velocity : 0.72);
-      block.title = this.mode === 'extended' ? `${noteName(note.midi)} · velocity ${Math.round(note.velocity * 127)}` : noteName(note.midi);
-      block.innerHTML = `<span>${noteName(note.midi)}</span>${this.mode === 'extended' ? '<b class="velocity-meter"></b>' : ''}<b class="resize-handle left"></b><b class="resize-handle right"></b>`;
+      block.style.setProperty('--velocity', note.velocity);
+      block.title = `${noteName(note.midi)} · burst gain ${note.velocity.toFixed(3)} (${gainToDecibels(note.velocity).toFixed(1)} dB)`;
+      block.innerHTML = `<span>${noteName(note.midi)}</span><b class="velocity-meter"></b><b class="resize-handle left"></b><b class="resize-handle right"></b>`;
       block.addEventListener('pointerdown', event => this.beginEdit(event, note));
       block.addEventListener('dblclick', event => {
         event.stopPropagation();
@@ -229,7 +332,7 @@ class PianoRoll {
     lastActiveController = this;
     this.recordHistory();
     const start = clamp(Math.floor(event.offsetX / STEP_WIDTH), 0, STEPS - 1);
-    const note = { midi: Number(event.currentTarget.dataset.midi), start, length: 1, velocity: 0.72 };
+    const note = { midi: Number(event.currentTarget.dataset.midi), start, length: 1, velocity: 0.72, voice: 'melody' };
     this.notes.push(note);
     this.selectedNote = note;
     this.gesture = { kind: 'draw', note, originX: event.clientX };
@@ -244,7 +347,7 @@ class PianoRoll {
     this.root.querySelectorAll('.midi-note.selected').forEach(block => block.classList.remove('selected'));
     event.currentTarget.classList.add('selected');
     const handle = event.target.closest('.resize-handle');
-    const velocityEdit = this.mode === 'extended' && event.metaKey;
+    const velocityEdit = event.metaKey;
     this.gesture = { kind: velocityEdit ? 'velocity' : handle?.classList.contains('left') ? 'resize-left' : handle ? 'resize-right' : 'move', note, originX: event.clientX, originY: event.clientY, originStart: note.start, originLength: note.length, originMidi: note.midi, originVelocity: note.velocity, recorded: false };
     this.bindGesture();
   }
@@ -268,7 +371,9 @@ class PianoRoll {
     if (gesture.kind === 'draw') note.length = clamp(delta + 1, 1, STEPS - note.start);
     if (gesture.kind === 'move') {
       note.start = clamp(gesture.originStart + delta, 0, STEPS - note.length);
-      note.midi = clamp(gesture.originMidi + Math.round((gesture.originY - event.clientY) / 22), FIRST_MIDI, LAST_MIDI);
+      const originPitchIndex = ROLL_MIDI_NOTES.indexOf(gesture.originMidi);
+      const rowDelta = Math.round((event.clientY - gesture.originY) / 22);
+      note.midi = ROLL_MIDI_NOTES[clamp(originPitchIndex + rowDelta, 0, ROLL_MIDI_NOTES.length - 1)];
     }
     if (gesture.kind === 'resize-right') note.length = clamp(gesture.originLength + delta, 1, STEPS - note.start);
     if (gesture.kind === 'resize-left') {
@@ -276,7 +381,7 @@ class PianoRoll {
       note.start = clamp(gesture.originStart + delta, 0, end - 1);
       note.length = end - note.start;
     }
-    if (gesture.kind === 'velocity') note.velocity = clamp(gesture.originVelocity + (gesture.originY - event.clientY) / 120, 0.05, 1);
+    if (gesture.kind === 'velocity') note.velocity = clamp(gesture.originVelocity + (gesture.originY - event.clientY) / 120, VELOCITY_GAIN_MIN, VELOCITY_GAIN_MAX);
     this.renderNotes();
   }
 
@@ -316,15 +421,11 @@ class PianoRoll {
     this.step = 0;
     this.root.querySelector('[data-action="play"]').innerHTML = '<i class="bi bi-pause-fill"></i> Pause';
     const tick = () => {
-      const bpm = clamp(Number(this.root.querySelector('input[type="number"]').value) || 110, 60, 180);
+      const bpm = clamp(Number(this.root.querySelector('input[type="number"]').value) || 160, 60, 180);
       const secondsPerStep = 60 / (bpm * 4);
       this.setPlayhead(this.step);
-      const note = this.notes.find(item => item.start === this.step);
-      if (note && (this.mode === 'original' || extendedParams.noteOn)) {
-        this.voices.forEach(voice => voice.stop());
-        this.voices = [];
-        this.trigger(note, note.length * secondsPerStep);
-      }
+      const notesAtStep = this.notes.filter(item => item.start === this.step);
+      if (this.mode === 'original' || extendedParams.noteOn) notesAtStep.forEach(note => this.trigger(note, note.length * secondsPerStep));
       this.step = (this.step + 1) % STEPS;
       this.timer = setTimeout(tick, secondsPerStep * 1000);
     };
@@ -332,16 +433,18 @@ class PianoRoll {
   }
 
   trigger(note, duration) {
+    while (this.voices.length >= MAX_VOICES) this.voices.shift().stop();
     const fs = audioContext.sampleRate;
     const frequency = midiToFreq(note.midi);
     const period = fs / frequency;
-    const maxDelay = Math.floor(fs / KSA_F0_MIN);
-    const delay = new Float64Array(maxDelay);
-    let write = 0, originalPrevious = 0, alive = true, off = false;
+    let alive = true, off = false;
+    const originalProcessor = new OriginalKsaProcessor(fs, frequency);
     const extendedProcessor = new ExtendedKsaProcessor(fs, frequency);
     const processor = audioContext.createScriptProcessor(512, 0, 1);
     const gain = audioContext.createGain();
-    const burstLength = Math.floor(period);
+    // The excitation is one delay-line period long. In original mode that is the
+    // quantised N the loop actually uses, so burst and loop stay commensurate.
+    const burstLength = this.mode === 'original' ? originalProcessor.delayLength : Math.floor(period);
     const burst = new Float64Array(burstLength);
     let burstMax = 0;
     for (let i = 0; i < burstLength; i += 1) { burst[i] = Math.random(); burstMax = Math.max(burstMax, burst[i]); }
@@ -355,13 +458,7 @@ class PianoRoll {
         if (!original && extendedParams.noteOff && audioContext.currentTime + i / fs >= offAt) off = true;
         let excitation = burstIndex < burstLength ? burst[burstIndex++] : 0;
         if (original) {
-          const delayed = delay[modulo(write - burstLength, delay.length)];
-          const filtered = 0.996 * 0.5 * (delayed + originalPrevious);
-          originalPrevious = delayed;
-          const outputSample = excitation + filtered;
-          delay[write] = outputSample;
-          write = (write + 1) % delay.length;
-          out[i] = alive ? outputSample : 0;
+          out[i] = alive ? originalProcessor.process(excitation) : 0;
           continue;
         }
         const damping = off ? Math.min(1, extendedParams.damping * 1.1) : extendedParams.damping;
@@ -385,7 +482,7 @@ class PianoRoll {
 
   setPlayhead(step) {
     this.root.querySelectorAll('.roll-lane').forEach(lane => lane.style.setProperty('--playhead', `${step * STEP_WIDTH}px`));
-    this.root.querySelector('[data-readout]').textContent = `${Math.floor(step / 16) + 1}.${Math.floor((step % 16) / 4) + 1}.${step % 4 + 1}`;
+    this.root.querySelector('[data-readout]').textContent = `${Math.floor(step / BAR_STEPS) + 1}.${Math.floor((step % BAR_STEPS) / 4) + 1}.${step % 4 + 1}`;
   }
 
   stop() {

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Page behaviour checks</title>
+</head>
+<body>
+<pre id="out">running…</pre>
+<script type="module">
+// Drives the page modules the way a reader would, without needing a real
+// browsing session. Run with:
+//   Chrome --headless --virtual-time-budget=20000 --dump-dom tests/page-check.html
+import { OriginalKsaProcessor } from '../assets/js/interactive-ks.js';
+import { sampleResponse } from '../assets/js/ks-response.js';
+
+const lines = [];
+let failures = 0;
+const report = (name, ok, detail = '') => {
+  if (!ok) failures += 1;
+  lines.push(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  ${detail}` : ''}`);
+};
+
+// ── Quantisation is audible at the top of the range, negligible at the bottom.
+{
+  const fs = 48000;
+  const cents = f0 => {
+    const n = OriginalKsaProcessor.delayLengthFor(f0, fs);
+    return Math.abs(1200 * Math.log2(OriginalKsaProcessor.soundingFrequency(n, fs) / f0));
+  };
+  // Worst case over a semitone sweep near each end.
+  const sweep = (lo, hi) => {
+    let worst = 0;
+    for (let f = lo; f <= hi; f += 0.25) worst = Math.max(worst, cents(f));
+    return worst;
+  };
+  const low = sweep(80, 120);
+  const high = sweep(1000, 1200);
+  // ~5 cents is the usual pitch JND, so the claim is: inaudible down low,
+  // clearly audible up high. Both must hold for Section 1.1's argument to land.
+  report('low notes tune below the JND', low < 5.0, `worst ${low.toFixed(2)} cents`);
+  report('high notes quantise audibly', high > 10.0, `worst ${high.toFixed(2)} cents`);
+}
+
+// ── The analytic response actually responds to each knob. ───────────────────
+{
+  const fs = 48000;
+  const base = { f0: 220, decay: 0.99, damping: 0.28, pluck: 0.25, dynamic: 0.6 };
+  const curveOf = over => sampleResponse({ ...base, ...over }, { fs, points: 512 });
+  const diff = (a, b) => {
+    let d = 0;
+    for (let i = 0; i < a.length; i += 1) d = Math.max(d, Math.abs(a[i] - b[i]));
+    return d;
+  };
+  const reference = curveOf({});
+  for (const [name, over] of [
+    ['decay', { decay: 0.999 }],
+    ['damping', { damping: 0.7 }],
+    ['pluck position', { pluck: 0.5 }],
+    ['dynamics', { dynamic: 0.1 }],
+    ['f0', { f0: 440 }],
+  ]) {
+    const d = diff(reference, curveOf(over));
+    report(`analytic curve responds to ${name}`, d > 0.5, `max Δ ${d.toFixed(1)} dB`);
+  }
+}
+
+// ── Comb spacing equals the sounding fundamental. ───────────────────────────
+{
+  const fs = 48000;
+  const f0 = 220;
+  const points = 8192;
+  const n = OriginalKsaProcessor.delayLengthFor(f0, fs);
+  const sounding = OriginalKsaProcessor.soundingFrequency(n, fs);
+  const curve = sampleResponse({ delayLength: n, decayGain: 0.996 },
+    { fs, points, mode: 'original' });
+  // Local maxima above -30 dB are the comb teeth.
+  const peaks = [];
+  for (let i = 1; i < curve.length - 1; i += 1) {
+    if (curve[i] > curve[i - 1] && curve[i] >= curve[i + 1] && curve[i] > -30) {
+      peaks.push((i / (points - 1)) * (fs / 2));
+    }
+  }
+  let worst = 0;
+  for (let k = 1; k < Math.min(peaks.length, 12); k += 1) {
+    worst = Math.max(worst, Math.abs((peaks[k] - peaks[k - 1]) - sounding));
+  }
+  report('comb spacing equals fs/(N + 1/2)', peaks.length >= 5 && worst < sounding * 0.05,
+    `${peaks.length} teeth, spacing error ≤ ${worst.toFixed(1)} Hz vs f0 ${sounding.toFixed(1)} Hz`);
+}
+
+document.getElementById('out').textContent =
+  lines.join('\n') + `\n\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`;
+</script>
+</body>
+</html>

@@ -370,5 +370,19 @@ export function initAudioExamples() {
     state.real.ids = rand(allFileIDs, EXAMPLES_TO_SHOW);
     renderTable('#table-nsynth', NSYNTH_MODELS, state.real);
   };
-  renderAll();
+
+  // These tables build ~30 WaveSurfer instances between them. That was fine
+  // behind a tab, but they now sit at the foot of a long scroll, so defer the
+  // build until the reader is actually approaching them.
+  const anchor = document.getElementById('table-synth');
+  if (anchor && 'IntersectionObserver' in window) {
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return;
+      observer.disconnect();
+      renderAll();
+    }, { rootMargin: '600px' });
+    observer.observe(anchor);
+  } else {
+    renderAll();
+  }
 }

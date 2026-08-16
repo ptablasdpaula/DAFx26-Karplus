@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>DSP self-checks</title>
+</head>
+<body>
+<pre id="out">running…</pre>
+<script type="module">
+import { ExtendedKsaProcessor, OriginalKsaProcessor } from '../assets/js/interactive-ks.js';
+import { extendedResponse, originalResponse } from '../assets/js/ks-response.js';
+import { fftInPlace, irfft, magnitudeSpectrum } from '../assets/js/fft.js';
+import { frequencySamplingImpulseResponse } from '../assets/js/ksa-freq.js';
+
+const lines = [];
+let failures = 0;
+const report = (name, ok, detail) => {
+  if (!ok) failures += 1;
+  lines.push(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  ${detail}` : ''}`);
+};
+
+// ── 1. FFT round-trips ──────────────────────────────────────────────────────
+{
+  const n = 256;
+  const re = new Float64Array(n);
+  const im = new Float64Array(n);
+  for (let i = 0; i < n; i += 1) re[i] = Math.sin(i * 0.37) + 0.3 * Math.cos(i * 1.1);
+  const original = Float64Array.from(re);
+  const halfRe = new Float64Array(n / 2 + 1);
+  const halfIm = new Float64Array(n / 2 + 1);
+  fftInPlace(re, im);
+  for (let k = 0; k <= n / 2; k += 1) { halfRe[k] = re[k]; halfIm[k] = im[k]; }
+  const back = irfft(halfRe, halfIm, n);
+  let err = 0;
+  for (let i = 0; i < n; i += 1) err = Math.max(err, Math.abs(back[i] - original[i]));
+  report('fft/irfft round-trip', err < 1e-9, `max err ${err.toExponential(2)}`);
+}
+
+// ── 2. Original KSA tuning: N = round(fs/f0 - 1/2), sounding fs/(N + 1/2) ────
+{
+  const fs = 48000;
+  let worst = 0;
+  for (const f0 of [82.41, 110, 220, 440, 880, 1760]) {
+    const n = OriginalKsaProcessor.delayLengthFor(f0, fs);
+    const sounding = OriginalKsaProcessor.soundingFrequency(n, fs);
+    const cents = Math.abs(1200 * Math.log2(sounding / f0));
+    // The grid is one integer sample wide, so error must stay under half a step.
+    const bound = Math.abs(1200 * Math.log2((n + 0.5) / (n + 1.0))) + 1e-9;
+    if (cents > bound) worst = Math.max(worst, cents);
+  }
+  report('original tuning within half a sample', worst === 0, worst ? `${worst.toFixed(2)} cents` : '');
+}
+
+// ── 3. Measured impulse response matches the analytic |H| ───────────────────
+function measure(processor, params, n) {
+  const y = new Float64Array(n);
+  for (let i = 0; i < n; i += 1) {
+    y[i] = params ? processor.process(i === 0 ? 1 : 0, params) : processor.process(i === 0 ? 1 : 0);
+  }
+  return y;
+}
+
+/**
+ * How many samples the impulse response needs before it has effectively died.
+ * The loop loses `-20 log10(g)` dB per round trip of `fs/f0` samples, so a
+ * shorter measurement than this truncates a still-ringing string and smears the
+ * comb — which would look like a mismatch against the analytic curve but is
+ * only a window that was too short.
+ */
+function decayLength(fs, f0, loopGain, marginDb = 100) {
+  const perRoundTripDb = -20 * Math.log10(loopGain);
+  const roundTrips = marginDb / perRoundTripDb;
+  const needed = roundTrips * (fs / f0);
+  return Math.min(1 << 20, 1 << Math.ceil(Math.log2(Math.max(needed, 4096))));
+}
+
+/** Fraction of total energy left in the last eighth of the measurement. */
+function tailFraction(signal) {
+  let total = 0, tail = 0;
+  const from = Math.floor(signal.length * 0.875);
+  for (let i = 0; i < signal.length; i += 1) {
+    const e = signal[i] * signal[i];
+    total += e;
+    if (i >= from) tail += e;
+  }
+  return total > 0 ? tail / total : 0;
+}
+
+function compareToAnalytic(label, measured, analyticAt, fftSize, tolDb) {
+  const mag = magnitudeSpectrum(measured, fftSize);
+  let peakM = 1e-12;
+  const analytic = new Float64Array(mag.length);
+  let peakA = 1e-12;
+  for (let k = 0; k < mag.length; k += 1) {
+    const omega = (k / (mag.length - 1)) * Math.PI;
+    const h = analyticAt(omega);
+    analytic[k] = Math.hypot(h.re, h.im);
+    peakA = Math.max(peakA, analytic[k]);
+    peakM = Math.max(peakM, mag[k]);
+  }
+  let worst = 0;
+  let counted = 0;
+  for (let k = 1; k < mag.length - 1; k += 1) {
+    const a = 20 * Math.log10(analytic[k] / peakA);
+    const m = 20 * Math.log10(mag[k] / peakM);
+    if (a < -35) continue; // deep nulls move under truncation; compare the peaks
+    counted += 1;
+    worst = Math.max(worst, Math.abs(a - m));
+  }
+  report(label, worst < tolDb && counted > 50,
+    `max |Δ| ${worst.toFixed(2)} dB over ${counted} bins`);
+}
+
+{
+  const fs = 8000;
+  const f0 = 220;
+  const proc = new OriginalKsaProcessor(fs, f0);
+  const n = decayLength(fs, f0, proc.decayGain);
+  const measured = measure(proc, null, n);
+  report('original IR has decayed inside the window', tailFraction(measured) < 1e-6,
+    `tail ${tailFraction(measured).toExponential(1)} of energy, n=${n}`);
+  compareToAnalytic('original |H| analytic vs measured',
+    measured,
+    omega => originalResponse(omega, { delayLength: proc.delayLength, decayGain: proc.decayGain }),
+    n, 1.5);
+}
+
+{
+  const fs = 8000;
+  for (const [f0, decay, damping, pluck, dynamic] of [
+    [220, 0.99, 0.3, 0.25, 0.6],
+    [110, 0.995, 0.15, 0.4, 0.9],
+    [440, 0.98, 0.5, 0.12, 0.3],
+  ]) {
+    const params = { pluck, dynamic, damping, decay };
+    const proc = new ExtendedKsaProcessor(fs, f0);
+    const n = decayLength(fs, f0, decay);
+    const measured = measure(proc, params, n);
+    report(`extended IR decayed (f0=${f0}, g=${decay})`, tailFraction(measured) < 1e-6,
+      `tail ${tailFraction(measured).toExponential(1)}, n=${n}`);
+    compareToAnalytic(`extended |H| analytic vs measured (f0=${f0}, g=${decay}, a=${damping})`,
+      measured,
+      omega => extendedResponse(omega, { f0, fs, decay, damping, pluck, dynamic }),
+      n, 1.5);
+  }
+}
+
+// ── 4. Frequency-sampling KSA time-aliases when the frame is short ──────────
+{
+  const fs = 4000;
+  const f0 = 110;
+
+  // A g = 0.999 decay runs for ~250k samples, so 512 is hopelessly short: the
+  // tail must wrap and pile onto the head of the frame.
+  const ringing = { f0, fs, decay: 0.999, damping: 0.2, pluck: 0.25, dynamic: 0.9 };
+  const shortFrame = frequencySamplingImpulseResponse({ ...ringing, nFft: 512 });
+  const reference = frequencySamplingImpulseResponse({ ...ringing, nFft: 1 << 18 });
+  const energy = (buf, from, to) => buf.slice(from, to).reduce((a, v) => a + v * v, 0);
+  report('fKSA short frame shows wrap-around energy',
+    energy(shortFrame, 400, 512) > energy(reference, 400, 512) * 1.05,
+    `late-frame energy ${energy(shortFrame, 400, 512).toExponential(2)} vs ` +
+    `${energy(reference, 400, 512).toExponential(2)} alias-free`);
+
+  // With a decay that does fit inside the frame, frequency sampling and the
+  // time-domain loop must produce the same impulse response.
+  const fitting = { f0, fs, decay: 0.95, damping: 0.2, pluck: 0.25, dynamic: 0.9 };
+  const nFft = 16384;
+  const longFrame = frequencySamplingImpulseResponse({ ...fitting, nFft });
+  const proc = new ExtendedKsaProcessor(fs, f0);
+  const measured = measure(proc, { pluck: 0.25, dynamic: 0.9, damping: 0.2, decay: 0.95 }, nFft);
+  let num = 0, den = 0;
+  for (let i = 0; i < nFft; i += 1) {
+    num += Math.abs(longFrame[i] - measured[i]);
+    den += Math.abs(measured[i]);
+  }
+  report('fKSA long frame matches time-domain', num / den < 0.02,
+    `relative L1 ${(num / den).toExponential(2)}`);
+}
+
+document.getElementById('out').textContent =
+  lines.join('\n') + `\n\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`;
+</script>
+</body>
+</html>

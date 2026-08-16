@@ -5,3 +5,4 @@ tmp/
 # Paper drafts kept locally alongside the page; the site links the published PDF.
 *.pdf
 !assets/figures/*.pdf
+__pycache__/

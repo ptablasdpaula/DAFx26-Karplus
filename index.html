@@ -50,78 +50,171 @@
 
   <main class="app-shell">
     <nav class="side-tabs" aria-label="Project sections">
-      <button class="tab-button active" type="button" data-tab-target="intro">The story</button>
-      <button class="tab-button" type="button" data-tab-target="results">Results</button>
-      <button class="tab-button" type="button" data-tab-target="audio">Audio Examples</button>
+      <button class="tab-button active" type="button" data-tab-target="story">The story</button>
+      <button class="tab-button" type="button" data-tab-target="synth">Playable synth</button>
     </nav>
 
     <div class="tab-content">
-      <section class="tab-panel active" id="tab-intro">
-        <div class="section mb-5">
-          <p class="eyebrow">From a one-line idea to event-based sound matching</p>
-          <h2>Why Karplus-Strong?</h2>
+      <section class="tab-panel active" id="tab-story">
+
+        <!-- ══ 1. The Karplus-Strong Algorithm ══════════════════════════ -->
+        <section class="chapter" id="ch-ksa">
+          <p class="eyebrow">Chapter one</p>
+          <h2>The Karplus-Strong Algorithm</h2>
           <hr>
-          <p class="story-lead">The Karplus-Strong algorithm turns a tiny burst of noise into a convincing plucked string. A delay line stores one period of the waveform; a two-point moving average removes a little high-frequency energy on every trip around the loop. The result is both an instrument and a compact physical explanation: pitch comes from the round-trip delay, while the gradual loss of energy creates the decay.</p>
-          <div class="story-figure algorithm-figure">
-            <img src="fig_0.jpg" alt="Original Karplus-Strong delay loop with a two-point moving-average filter">
-            <p><strong>Original KSA.</strong> At note-on, the excitation is exactly one delay-line period long: $N = f_s/f_0$ samples. Note duration is deliberately ignored; after the burst, the loop simply rings down.</p>
-          </div>
 
-          <div class="synth-chapter" data-synth-mode="original">
-            <div class="chapter-copy">
-              <span class="chapter-number">01</span>
-              <div><h3>The original algorithm</h3><p>Draw notes of any length and press play. Every onset injects a fresh $f_s/f_0$-sample noise burst into the delay loop. Because the 1983 algorithm has no note-off mechanism, changing a block's length does not change its sound.</p></div>
+          <div class="scrolly" data-ksa-steps>
+            <div class="scrolly-figure">
+              <div class="ksa-figure" data-ksa-figure>
+                <div class="figure-head">
+                  <div class="mode-switch" role="group" aria-label="Algorithm">
+                    <button type="button" data-ksa-mode="original" class="active">Original (1983)</button>
+                    <button type="button" data-ksa-mode="extended">Extended</button>
+                  </div>
+                  <button class="btn btn-sm btn-dark" type="button" data-action="pluck"><i class="bi bi-play-fill"></i> Pluck</button>
+                </div>
+                <canvas class="response-canvas" height="260"></canvas>
+                <p class="figure-legend">
+                  <span class="swatch analytic"></span> analytic $|H(e^{j\omega})|$ from the z-domain — moves with the knobs, never with the audio
+                  <span class="swatch measured"></span> measured output spectrum, decaying after the pluck
+                </p>
+                <div class="knob-panel">
+                  <label>Pluck frequency $f_0$
+                    <input type="range" data-ksa-param="f0" min="60" max="1200" step="0.5" value="220">
+                    <output data-readout="f0"></output>
+                  </label>
+                  <label>Delay length $N$
+                    <input type="range" data-ksa-param="delay" min="4" max="800" step="1" value="218">
+                    <output data-readout="delay"></output>
+                  </label>
+                  <div class="tuning-readout">
+                    sounding <b data-readout="sounding"></b> · error <b data-readout="cents"></b>
+                  </div>
+                  <label data-ksa-extended hidden>Decay $g$
+                    <input type="range" data-ksa-param="decay" min="0.90" max="0.9999" step="0.0001" value="0.99">
+                    <output data-readout="decay"></output>
+                  </label>
+                  <label data-ksa-extended hidden>Damping $a_1$
+                    <input type="range" data-ksa-param="damping" min="0.001" max="0.85" step="0.001" value="0.28">
+                    <output data-readout="damping"></output>
+                  </label>
+                  <label data-ksa-extended hidden>Pluck position $p$
+                    <input type="range" data-ksa-param="pluck" min="0.01" max="0.5" step="0.01" value="0.25">
+                    <output data-readout="pluck"></output>
+                  </label>
+                  <label data-ksa-extended hidden>Dynamics
+                    <input type="range" data-ksa-param="dynamic" min="0" max="1" step="0.01" value="0.6">
+                    <output data-readout="dynamic"></output>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="scrolly-steps">
+              <div class="scrolly-step" data-step="original">
+                <h3>1.1 &nbsp;Origins</h3>
+                <p>In 1983 Kevin Karplus and Alex Strong published an algorithm that turns a short burst of noise into a convincing plucked string, using almost no arithmetic. Fill a buffer with random numbers, play it out in a loop, and on every pass replace each sample with the average of itself and the one before it. No multiplies at all.</p>
+                <p>It is worth being precise about what they thought they had built. As the authors describe it, this was <em>wavetable synthesis</em> with a self-modifying wavetable — not physical modelling. The physical reading came afterwards, when Alex Strong showed it to David Jaffe, who brought it to Julius Smith; Smith recast the loop as a delay line with an explicit additive input and recognised the moving average as a point-to-point transfer function on an ideal string. Only then did the delay line become a string and the averager become propagation loss.</p>
+                <p>In that recasting the whole algorithm is one equation:</p>
+                <p class="equation">$$H(z) = \frac{1}{1 - \tfrac{g}{2}\, z^{-N}\left(1 + z^{-1}\right)}$$</p>
+                <figure class="inline-diagram"><img src="fig_0.jpg" alt="Original Karplus-Strong delay loop with a two-point moving-average filter"><figcaption>The 1983 loop as Smith recast it: a delay line with explicit additive input, feeding back through a two-point moving average.</figcaption></figure>
+                <p>The curve above is that expression, evaluated on the unit circle. Its teeth are the string's harmonics, and the loop filter $H_L(z) = \tfrac12(1 + z^{-1})$ sets how fast each one dies: its magnitude is $|\cos(\omega/2)|$, so energy near Nyquist is removed almost entirely on every trip round the loop while low partials survive. That single fact is the whole timbre of the algorithm — bright at the attack, mellow as it rings.</p>
+                <p><strong>Now the catch.</strong> That two-point average is linear phase with a delay of exactly half a sample at every frequency, so the loop does not ring at $f_s/N$ — it rings at $f_s/(N + \tfrac12)$. Karplus and Strong's own tuning rule is therefore</p>
+                <p class="equation">$$N = \frac{f_s}{f_0} - \frac{1}{2}$$</p>
+                <p>and $N$ has to be a whole number of samples, because there is no interpolation filter here to absorb the remainder. Drag either knob above and watch the other follow: the pitch you ask for and the pitch you get come apart, and the error readout shows by how much. At low notes the delay line is long and the grid is fine, so the error is negligible. Push up towards the top of the range and the delay line gets short, the grid gets coarse, and the tuning goes badly wrong — tens of cents, plainly audible.</p>
+                <p>Fixing that is where the story goes next.</p>
+              </div>
+
+              <div class="scrolly-step" data-step="extended">
+                <h3>1.2 &nbsp;Extensions</h3>
+                <p>The figure has changed. Four new knobs appeared, and the transfer function behind the curve is now the extended algorithm we use throughout the paper:</p>
+                <p class="equation">$$H_{tKSA}(z) = \frac{H_D(z)\,H_P(z)}{1 - H_L(z)\,H_I(z)\,z^{-L_{int}}}$$</p>
+                <figure class="inline-diagram"><img class="paper-figure" src="assets/images/fig_1.png" alt="Extended Karplus-Strong signal-flow diagram"><a class="figure-source" href="assets/figures/fig_1.pdf">Open PDF</a><figcaption>The extended algorithm. The excitation passes through the pluck-position and dynamics filters; the loop carries the interpolator and the one-pole loss filter.</figcaption></figure>
+                <p>Each new factor separates something the original moving average had entangled.</p>
+                <p><strong>Tuning.</strong> The interpolation filter $H_I(z)$ is a fifth-order Lagrange interpolator, whose fractional delay is far more uniform across frequency than the allpass filters used originally. It absorbs both the non-integer remainder of $L = f_s/f_0$ and the loop filter's own phase delay:</p>
+                <p class="equation">$$D = L - \lfloor L \rfloor - P_L(f_0), \qquad P_L(f_0) = -\frac{\angle H_L(e^{j\omega_0})}{\omega_0}$$</p>
+                <p>The quantisation error you just heard is gone: $f_0$ no longer has to land on an integer number of samples.</p>
+                <p><strong>Decay and damping, separately.</strong> The moving average gives you one fixed brightness curve and one fixed decay rate. Välimäki and colleagues replaced it with a one-pole filter,</p>
+                <p class="equation">$$H_L(z) = g\,\frac{1 - a_1}{1 - a_1 z^{-1}}$$</p>
+                <p>whose DC gain is exactly $g$. So $g$ sets how long the note rings overall, and $a_1$ sets how much faster the high partials die than the low ones — two knobs for two physically distinct things. Sweep <em>decay</em> and the whole comb rises or falls together; sweep <em>damping</em> and watch the top of the spectrum tilt while the fundamental stays put.</p>
+                <p><strong>Where you pluck.</strong> Plucking a real string at a fraction $p$ of its length suppresses every harmonic with a node at that point. Jaffe and Smith captured this with a feedforward comb, $H_P(z) = 1 - z^{-p}$, applied once to the excitation. Sweep <em>pluck position</em> and you can see the notches march through the harmonic series — set it to $0.25$ and the fourth harmonic and its multiples drop out.</p>
+                <p><strong>How hard you pluck.</strong> A harder pluck is not just louder, it is brighter. The dynamics filter $H_D(z) = \frac{1-R}{1-Rz^{-1}}$ models intensity as a change in spectral tilt rather than a change in gain, which is what the ear actually uses to judge playing strength.</p>
+                <p>Together these turn a resonator into an instrument — and, more to the point for what follows, into a synthesiser with six meaningful, physically interpretable parameters per note. The rest of this page is about whether a neural network can be made to recover them.</p>
+              </div>
             </div>
           </div>
-          <div class="inline-roll light-roll" data-roll="original" aria-label="Original Karplus-Strong piano roll"></div>
 
-          <div class="story-divider"><span>One loop, more expressive controls</span></div>
-          <h2>From a pluck to a playable string</h2>
-          <p>Later extensions separated the physical causes that the moving average entangles. Jaffe and Smith added pluck-position and dynamics filters; Välimäki and colleagues introduced independent controls for overall decay and frequency-dependent damping. We use these ideas with a fractional delay, so $f_0$ need not land on an integer number of samples.</p>
-          <div class="story-figure algorithm-figure">
-            <figure><img class="paper-figure" src="assets/images/fig_1.png" alt="Extended Karplus-Strong signal-flow diagram"><a class="figure-source" href="assets/figures/fig_1.pdf">Open PDF</a></figure>
-            <p><strong>Extended KSA.</strong> A fractional round-trip delay controls pitch; damping, decay, pluck position, and dynamics separate the string's timbral properties; explicit note-on excitation and note-off damping turn a resonator into a playable instrument.</p>
-          </div>
+          <p class="aside">Want to play it rather than read about it? The <button class="link-button" type="button" data-goto-tab="synth">playable synthesiser</button> has both algorithms on a piano roll.</p>
+        </section>
 
-          <div class="synth-chapter" data-synth-mode="extended">
-            <div class="chapter-copy">
-              <span class="chapter-number">02</span>
-              <div><h3>Our extended algorithm</h3><p>Now note length matters. At the exact note onset the delay changes immediately to the new $f_0$ - no glide. At note-off, damping increases by 10% and decay decreases by 10%, creating a simple palm-mute gesture.</p></div>
-            </div>
-          </div>
-          <div class="parameter-panel" aria-label="Extended Karplus-Strong parameters">
-            <label>Dynamics <input type="range" min="0" max="1" step="0.01" value="0.62" data-ks-param="dynamic"><output>0.62</output></label>
-            <label>Pluck position <input type="range" min="0.01" max="0.5" step="0.01" value="0.22" data-ks-param="pluck"><output>0.22</output></label>
-            <label>Decay <input type="range" min="0" max="1" step="0.001" data-ks-param="decay" data-scale="reverse-log" data-physical-min="0.00001" data-physical-max="0.99999" data-initial="0.994"><output>0.99400</output></label>
-            <label>Damping <input type="range" min="0" max="1" step="0.001" data-ks-param="damping" data-scale="log" data-physical-min="0.00001" data-physical-max="1" data-initial="0.34"><output>0.34000</output></label>
-            <div class="event-toggles"><label><input type="checkbox" data-event-toggle="on" checked> Note-on</label><label><input type="checkbox" data-event-toggle="off" checked> Note-off palm mute</label></div>
-          </div>
-          <div class="inline-roll light-roll" data-roll="extended" aria-label="Extended Karplus-Strong piano roll"></div>
+        <!-- ══ 2. Instrument Modelling & Gradient Descent ═══════════════ -->
+        <section class="chapter" id="ch-gradients">
+          <p class="eyebrow">Chapter two</p>
+          <h2>Instrument Modelling &amp; Gradient Descent</h2>
+          <hr>
 
-          <div class="story-divider"><span>Why predict events?</span></div>
-          <h2>A guitar note is an event, not a frame</h2>
-          <p>In real guitar recordings, a string is excited and later stopped by the player. The example below is plucked and muted at approximately 3 seconds. This discrete structure motivates a model that predicts a set of events - each with its own onset, $f_0$, duration, and timbral properties - rather than unnecessarily predicting the same parameters frame by frame.</p>
+          <h3>2.1 &nbsp;A guitar note is an event, not a frame</h3>
+          <p>Everything so far assumed we already knew the parameters. Sound matching is the inverse problem: given a recording, recover the parameters that reproduce it. For a physical model like the KSA this is unusually appealing, because the parameters that come back out are interpretable — they tell you something about the string.</p>
+          <p>Listen to a real recording first. This is an acoustic guitar note from NSynth, plucked once and palm-muted at around three seconds.</p>
           <div class="featured-audio cell" data-featured-audio="assets/audio/real/target/010.ogg"><div class="featured-label"><span>NSynth acoustic guitar</span><strong>Target 10 · palm mute near 3 s</strong></div><div class="media-stack"><div class="waveform"></div><div class="spectrogram"></div><button class="overlay-play" aria-label="Play target 10"><i class="fas fa-play"></i></button></div></div>
-          <figure class="architecture-figure"><img class="paper-figure" src="assets/images/fig_2.png" alt="Event-based sound-matching model architecture"><a class="figure-source" href="assets/figures/fig_2.pdf">Open PDF</a><figcaption>Our dual frontend feeds a set-prediction transformer: it asks which events exist, when they occur, their pitch, and their timbre, then resynthesises them through the differentiable KSA.</figcaption></figure>
+          <p>Two things happen in that clip, and both are <em>events</em>: an excitation and a termination. Nothing about the string changes in between. This matters for how a model should be shaped. Most DDSP systems predict parameters on a fixed frame grid — a new $f_0$, a new decay, a new damping every few milliseconds. For a plucked string that is both wasteful and actively harmful: the KSA is a recursive, energy-dissipating system, so an error in a frame-wise decay estimate accumulates through the feedback loop instead of staying local.</p>
+          <p>So we predict a <em>set of events</em> instead. Each event carries an onset time, an $f_0$, and the timbral parameters from Chapter 1, held constant for the note's duration. Provided no extended techniques are present — no vibrato, no pitch bends — this is not an approximation, it is simply the right representation.</p>
+          <figure class="architecture-figure"><img class="paper-figure" src="assets/images/fig_2.png" alt="Event-based sound-matching model architecture"><a class="figure-source" href="assets/figures/fig_2.pdf">Open PDF</a><figcaption>The pipeline. A dual frontend feeds a set-prediction transformer, which asks which events exist, when they occur, their pitch, and their timbre, then resynthesises them through the differentiable KSA.</figcaption></figure>
+          <p>Training that by backpropagating an audio loss requires the synthesiser itself to be differentiable. There are two ways to do it, and the difference between them turns out to matter a great deal.</p>
 
-          <div class="story-divider"><span>Making the loop differentiable</span></div>
-          <h2>Two routes through the same recursive system</h2>
-          <p>DDSP learns synthesis controls by backpropagating an audio reconstruction loss through the synthesiser. Prior work used a <a href="https://intro2ddsp.github.io/physical-modeling/wave_equation.html" target="_blank">frequency-domain formulation</a> with multi-scale spectral loss; our earlier <cite>Differentiable Karplus-Strong</cite> work used a fully time-domain implementation. Their relative behaviour had not been compared.</p>
-          <div class="method-comparison"><article><span>Frequency sampling</span><h3>Fast, smooth fractional delays</h3><p>The delay becomes a continuous phase shift. But the required Hermitian spectrum produces a finite, circular impulse response: if a resonant decay exceeds the FFT frame, its tail wraps around in time.</p></article><article><span>Time-domain interpolation</span><h3>Native decay, no wrap-around</h3><p>Fifth-order Lagrange interpolation makes delay length differentiable sample by sample. It avoids frame-based time aliasing and gives gradient accuracy comparable to frequency sampling.</p></article></div>
-          <div class="figure-grid narrative-figures"><figure class="figure-frame"><img class="paper-figure" src="assets/images/fig_3.png" alt="Karplus-Strong RT60 across fundamental frequency, damping, and decay"><a class="figure-source" href="assets/figures/fig_3.pdf">Open PDF</a><figcaption>With fixed loop coefficients, RT60 changes with $f_0$: higher notes traverse the loss filter more often per second. Return to the instrument above and hear how pitch and decay interact.</figcaption></figure><figure class="figure-frame"><img class="paper-figure" src="assets/images/fig_4.png" alt="Comparison of real guitar and time- and frequency-domain KSA responses"><a class="figure-source" href="assets/figures/fig_4.pdf">Open PDF</a><figcaption>Frequency sampling becomes time-aliased when the physical response outlasts its FFT frame; the time-domain implementation preserves the full decay.</figcaption></figure></div>
+          <h3 style="margin-top:2.5rem">2.2 &nbsp;Frequency sampling versus the time domain</h3>
+          <p>A naive time-domain implementation of a recursive filter computes sample by sample, which builds a computational graph 64,000 nodes deep. Two approaches restore parallelism.</p>
+          <p>The <strong>frequency sampling</strong> method evaluates the filter response on a grid of $M$ frequencies,</p>
+          <p class="equation">$$z_M = \left[e^{j\pi\frac{0}{M-1}}, e^{j\pi\frac{1}{M-1}}, \ldots, e^{j\pi}\right]$$</p>
+          <p>turning the recursion into an elementwise division, with fractional delays becoming a smooth closed-form phase shift $z_M^{-D} = e^{-j2\pi k M^{-1} D}$. The extended algorithm becomes</p>
+          <p class="equation">$$H_{fKSA}(z_M) = \frac{H_D(z_M) H_P(z_M)}{1 - H_L(z_M) H_I(z_M) z_M^{-L}}$$</p>
+          <p>This is fast and clean, and it has one serious problem. A Hermitian symmetry constraint forces a real impulse response of length $N_{FFT}$. If the true impulse response is longer than that, the tail does not get truncated — it wraps around and adds to the beginning of the frame. The string's decay folds back onto its own attack.</p>
+          <p><strong>Time-domain interpolation</strong> avoids this entirely by computing exact analytic gradients through the recursive filter via the adjoint method, with fractional delay handled by the Lagrange interpolator directly. No frames, so no wrap-around.</p>
+          <p>The demonstration below makes the consequence concrete. A target is rendered with $g = 0.99$, $a_1 = 0.2$; both implementations start from the same point and descend the real loss surface $\mathcal{L} = 0.05\,\mathcal{L}_{MSS} + \mathcal{L}_{SOT}$, sampled offline with the paper's own code at 4 kHz. Choose the FFT size, choose whether the pluck happens at the start of the clip or three seconds in, and drag anywhere on the map to move the starting point.</p>
 
-          <div class="story-divider"><span>The learning problem</span></div>
-          <h2>Spectral similarity does not tell an onset which way to move</h2>
-          <p>Our gradient analysis reveals the central obstacle. Multi-scale spectral loss is useful for timbre, but a shifted event often receives no meaningful directional onset gradient: it cannot reliably say “earlier” or “later.” Joint audio-and-parameter training therefore collapses unless onset and $f_0$ gradients are detached. Parameter supervision works well on synthetic events but does not yet cross the sim-to-real gap; on real audio, classical external onset and pitch detectors combined with audio losses remain the strongest KSA strategy. The tables and listening examples below let you inspect that trade-off.</p>
-          <details class="story-references"><summary>References behind this story</summary><ol><li>K. Karplus and A. Strong, “Digital Synthesis of Plucked-String and Drum Timbres,” <i>Computer Music Journal</i>, 1983.</li><li>D. A. Jaffe and J. O. Smith, “Extensions of the Karplus-Strong Plucked-String Algorithm,” <i>Computer Music Journal</i>, 1983.</li><li>V. Välimäki et al., “Physical Modeling of Plucked String Instruments with Application to Real-Time Sound Synthesis,” <i>JAES</i>, 1996.</li><li>J. Engel et al., “DDSP: Differentiable Digital Signal Processing,” ICLR, 2020.</li><li>B. Hayes et al., “A Review of Differentiable Digital Signal Processing for Music and Speech Synthesis,” 2024, with its <a href="https://intro2ddsp.github.io/physical-modeling/wave_equation.html" target="_blank">physical-modelling supplement</a>.</li><li>P. Tablas de Paula, D. Marttila, and J. D. Reiss, “Differentiable Karplus-Strong,” DMRN+20, 2025.</li></ol></details>
-        </div>
-      </section>
+          <div class="demo" data-demo="a">
+            <div class="demo-controls">
+              <label>FFT size
+                <select data-fft>
+                  <option value="512">512</option>
+                  <option value="1024">1024</option>
+                  <option value="2048" selected>2048</option>
+                  <option value="4096">4096</option>
+                </select>
+              </label>
+              <label>Onset
+                <select data-onset>
+                  <option value="0s" selected>0 s</option>
+                  <option value="3s">3 s</option>
+                </select>
+              </label>
+              <button class="btn btn-sm btn-dark" type="button" data-action="play">Run descent</button>
+              <button class="btn btn-sm btn-outline-dark" type="button" data-action="step">Step</button>
+              <button class="btn btn-sm btn-outline-dark" type="button" data-action="reset">Reset</button>
+            </div>
+            <div class="demo-body">
+              <figure class="landscape">
+                <canvas data-landscape width="440" height="440"></canvas>
+                <figcaption>Loss over decay $g$ (horizontal) and damping $a_1$ (vertical), normalised to this surface's own range — bright is low. The cross is the true answer. Click or drag to set the starting point.</figcaption>
+              </figure>
+              <div class="spec-stack">
+                <figure><canvas data-spec="target" width="300" height="120"></canvas><figcaption>Target</figcaption></figure>
+                <figure><canvas data-spec="tksa" width="300" height="120"></canvas><figcaption>tKSA prediction</figcaption></figure>
+                <figure><canvas data-spec="fksa" width="300" height="120"></canvas><figcaption>fKSA prediction</figcaption></figure>
+              </div>
+            </div>
+            <p class="demo-readout" data-readout="status">Loading landscapes…</p>
+          </div>
 
-      <section class="tab-panel" id="tab-results">
-        <div class="section mb-5">
-          <h2>Results</h2>
-          <hr>
+          <p>Two things are worth doing here. First, set the onset to 3 s and step through: the time-domain marker walks to the cross, and the frequency-sampling marker does not. Second, look at the loss ranges. The tKSA surface spans a factor of two hundred between its best and worst point; the fKSA surface at a short FFT is almost flat. That flatness is the real damage — it is not that frequency sampling points the wrong way so much as that time-aliasing has erased the signal it needed to point with. A model trained this way overestimates $g$ and underestimates $a_1$, exactly the excess sustain visible in the paper's Figure 4.</p>
+          <div class="figure-grid narrative-figures"><figure class="figure-frame"><img class="paper-figure" src="assets/images/fig_4.png" alt="Comparison of real guitar and time- and frequency-domain KSA responses"><a class="figure-source" href="assets/figures/fig_4.pdf">Open PDF</a><figcaption>The same effect in the paper: an NSynth target, the two reconstructions at inference, and the frequency-sampling forward pass used in training, where circular convolution at $N_{FFT} = 2^{14}$ truncates long decays.</figcaption></figure></div>
+          <p>The headline result is that time-domain Lagrange interpolation matches frequency sampling on gradient accuracy while avoiding this artefact — which makes it a viable, artefact-free alternative for differentiable physical models with time-varying, highly resonant behaviour.</p>
 
+          <h3 style="margin-top:2.5rem">2.3 &nbsp;Onset time and $f_0$</h3>
+          <p>Timbre parameters, then, are recoverable. Pitch and timing are a different story, and this is the part of the work that surprised us.</p>
+          <p>To measure it we ask a deliberately minimal question of each gradient — not how large it is, but whether it even points the right way:</p>
+          <p class="equation">$$\mathrm{sgn}\left(\frac{\partial \mathcal{L}(\hat{x}f[n], x[n])}{\partial f}\right) = \mathrm{sgn}(f - f_x)$$</p>
+          <p>A parameter scoring 50% is indistinguishable from a coin flip. <em>Coarse</em> gradient accuracy initialises across the whole parameter range; <em>fine</em> accuracy initialises within $\pm 10\%$ of the target, asking whether the gradient is still trustworthy once you are already close.</p>
           <h3 style="margin-top:2rem">Single-Event Gradient Accuracy</h3>
           <div class="results-scroll">
             <table class="results-table">
@@ -143,6 +236,7 @@
           </div>
           <p class="results-caption">Single-event gradient accuracy (%) comparing $\mathcal{L}_{MSS}$ and $\mathcal{L}_{SOT}$ across tKSA and fKSA.</p>
 
+          <p>The numbers are stark. Every timbral parameter is reliable under $\mathcal{L}_{MSS}$ — decay and damping score at or near 100%, dropping only to 94.8% for fKSA in the fine regime. Onset time sits at 51–56%: a coin flip. $f_0$ manages 58–70%, better than chance but nowhere near usable.</p>
           <h3 style="margin-top:2.5rem">Multi-Event Onset Gradient Accuracy</h3>
           <div class="results-scroll">
             <table class="results-table">
@@ -161,6 +255,63 @@
           </div>
           <p class="results-caption">Multi-event onset time gradient accuracy (%) for $K$ equally spaced plucks. fKSA uses $N_{FFT}=16384$, hop=256. <em>Any</em>: at least one gradient points toward a target; <em>Joint</em>: all $K$ simultaneously toward their Hungarian-matched targets.</p>
 
+          <p>And it gets worse with more notes. The <em>Joint</em> column asks whether <em>all</em> $K$ onsets point toward their matched targets simultaneously — which is what actually has to happen for joint training to work. At five events it has collapsed to at most 4.1%. There is, in practice, no usable onset gradient for a multi-event signal.</p>
+          <p>You can watch the failure happen. Below, the landscape is over onset time (horizontal) and $f_0$ (vertical), with the target's spectrogram in <span class="ink-red">red</span> and the prediction's in <span class="ink-blue">blue</span> — where they agree, the overlay goes dark.</p>
+
+          <div class="demo" data-demo="b">
+            <div class="demo-controls">
+              <label>Target
+                <select data-target-choice></select>
+              </label>
+              <button class="btn btn-sm btn-dark" type="button" data-action="play">Run descent</button>
+              <button class="btn btn-sm btn-outline-dark" type="button" data-action="step">Step</button>
+              <button class="btn btn-sm btn-outline-dark" type="button" data-action="reset">Reset</button>
+            </div>
+            <div class="demo-body">
+              <figure class="landscape">
+                <canvas data-landscape width="440" height="440"></canvas>
+                <figcaption>Loss over onset time (horizontal) and $f_0$ (vertical). Click or drag to set the starting point.</figcaption>
+              </figure>
+              <div class="spec-stack">
+                <figure><canvas data-spec="overlay" width="300" height="260"></canvas><figcaption>Target (red) over prediction (blue)</figcaption></figure>
+              </div>
+            </div>
+            <p class="demo-readout" data-readout="status">Loading landscapes…</p>
+          </div>
+
+          <p>Start the marker to the right of the target and run it. The vertical axis behaves: pitch is pulled toward the target, because $f_0$ errors show up as energy in the wrong frequency bins and both losses compare frequency bins. The horizontal axis does not. The marker slides sideways almost at random, and the loss barely changes as it does — because <em>neither loss looks across time at all</em>.</p>
+          <p>That is the crux. $\mathcal{L}_{MSS}$ is a <em>vertical</em>, point-wise distance: it compares each time-frequency bin with the same bin in the target, so a correctly shaped note in the wrong place is simply wrong twice — once where it is, once where it should be — with no indication of which direction closes the gap. $\mathcal{L}_{SOT}$ is <em>horizontal</em> in the other sense: it transports magnitude along the frequency axis <em>within</em> each STFT frame, which is exactly why it helps with pitch, but it never transports energy <em>between</em> frames. Neither operator can express the sentence "this note should move earlier."</p>
+          <p>There is a second, sneakier problem, and this figure explains it:</p>
+          <div class="figure-grid narrative-figures"><figure class="figure-frame"><img class="paper-figure" src="assets/images/fig_3.png" alt="Karplus-Strong RT60 across fundamental frequency, damping, and decay"><a class="figure-source" href="assets/figures/fig_3.pdf">Open PDF</a><figcaption>RT60 across $f_0$, damping and decay. At the most resonant setting the decay lasts 86 s at 80 Hz but only 4.5 s at 1280 Hz — from the same loop coefficients.</figcaption></figure></div>
+          <p>Pitch and decay are not independent in this algorithm. A signal at harmonic $k$ passes through the loop filter exactly $f_0$ times per second, so</p>
+          <p class="equation">$$\mathrm{RT60}_k = \frac{-3}{f_0 \log_{10}\lvert H_L(e^{j\omega_k})\rvert}$$</p>
+          <p>Move $f_0$ and you move the decay time with it. So a gradient step that improves pitch also, unavoidably, changes how long the note rings — and the loss sees both changes mixed together. This is why we supervise the joint analytical decay time RT60 rather than $g$ and $a_1$ independently: it is the quantity that is actually perceptually coherent.</p>
+          <p>Two failures, then, and they compound: no directional information for onset, and a pitch axis entangled with decay. Together they explain why joint audio-and-parameter training collapses, which is what Chapter 3 is about.</p>
+        </section>
+
+        <!-- ══ 3. Neural Network Training ═══════════════════════════════ -->
+        <section class="chapter" id="ch-training">
+          <p class="eyebrow">Chapter three</p>
+          <h2>Neural Network Training</h2>
+          <hr>
+
+          <h3>3.1 &nbsp;Three ways to supervise</h3>
+          <p>Chapter 2 leaves us with a specific problem. Audio losses are excellent for timbre and useless for onsets. If we train end-to-end on audio alone, the onset and $f_0$ heads receive gradients that are barely better than noise, and — because they share an encoder with everything else — they drag the rest of the model down with them.</p>
+          <p>There are two ways out, and we test both, plus their combination.</p>
+          <p>The first is to <strong>stop using audio for those parameters</strong>. Because we can generate synthetic data with known ground truth, we can supervise the parameters directly. Following the set-prediction literature, Hungarian matching assigns each of the $N = 10$ predicted event slots to a ground-truth event, and the matched loss is</p>
+          <p class="equation">$$\mathcal{P}_{Loss} = w_e \mathcal{L}_e + w_t \mathcal{L}_t + w_{f_0} \mathcal{L}_{f_0} + w_g \mathcal{L}_g + w_{\mathrm{nt60}} \mathcal{L}_{\mathrm{nt60}} + w_p \mathcal{L}_p + w_d \mathcal{L}_d$$</p>
+          <p>with existence handled by a sigmoid focal loss to cope with class imbalance, and $f_0$ by negative log-likelihood over 128 log-spaced bins rather than a regression — pitch is better posed as a classification.</p>
+          <p>The second is to <strong>hand those two parameters to something that already works</strong>: CREPE for $f_0$, spectral flux with backtracking for onsets. The differentiable synthesiser then only has to learn timbre, which is precisely what audio losses are good at.</p>
+          <p>That gives us three regimes:</p>
+          <div class="regime-grid">
+            <article><span>$\mathcal{P}$-Only</span><h4>Parameters, no audio</h4><p>A non-differentiable tKSA trained purely on $\mathcal{P}_{Loss}$ against synthetic ground truth. No audio loss anywhere. Establishes what parameter supervision alone can do.</p></article>
+            <article><span>$\mathcal{P}$+Audio</span><h4>Both, end-to-end</h4><p>A differentiable decoder trained with $\mathcal{P}_{Loss}$ <em>and</em> $\mathcal{L}_{MSS} + \mathcal{L}_{SOT}$, predicting every parameter jointly. The regime Chapter 2 predicts will struggle.</p></article>
+            <article><span>Audio-Only</span><h4>Audio, with external detectors</h4><p>Audio losses alone, with the existence, onset and $f_0$ heads replaced by classical detectors. The model optimises timbre and nothing else.</p></article>
+          </div>
+          <p>To isolate the mechanism we also run stop-gradient ablations on $\mathcal{P}$+Audio: detach the audio-loss gradient from the onset head, from the $f_0$ head, or from both, leaving them supervised only by $\mathcal{P}_{Loss}$. If Chapter 2 is right, detaching should <em>help</em> — which is a strange thing to expect from removing a training signal.</p>
+
+          <h3 style="margin-top:2.5rem">3.2 &nbsp;What happened</h3>
+          <p>Two datasets. <strong>Synth</strong> is 4-second mono clips at 16 kHz containing 1–10 plucks at constant $f_0$ over D1–D6, parameters drawn from Beta distributions with a 30% palm-mute probability, reseeded every epoch — 8,360 training samples. <strong>Real</strong> is the acoustic guitar subset of NSynth, restricted to non-reverberant samples in the same D1–D6 range, split 8,360 / 930 / 290.</p>
           <h3 style="margin-top:2.5rem">Synthetic Parameter Recovery</h3>
           <div class="results-scroll">
             <table class="results-table">
@@ -184,6 +335,8 @@
           </div>
           <p class="results-caption">Synthetic parameter recovery. All models are trained and evaluated on synthetic data. $\mathcal{P}$-Only uses tKSA with $\mathcal{P}_{\text{Loss}}$ supervision; $\mathcal{P}$+Audio models use differentiable decoders trained end-to-end with both $\mathcal{P}_{\text{Loss}}$ and audio losses (MSS, SOT); Audio-Only models use differentiable decoders with audio losses and external detectors for onsets and $f_0$. Rows beneath each $\mathcal{P}$+Audio model are stop-gradient ablations that detach the audio-loss gradient from the named head ($f_0$, onset, or both), leaving it supervised only by $\mathcal{P}_{\text{Loss}}$. Per column, the best, second-best, and third-best values are shown in <b>bold</b>, <u>underline</u>, and <i>italic</i> respectively.</p>
 
+          <p>The prediction from Chapter 2 holds, and more sharply than we expected. $\mathcal{P}$+Audio does not merely underperform — it <em>collapses</em>. Precision, recall and F1 all fall to 0.01, and RMS to 0.33: the model is emitting near-silence. Detaching the onset head alone lifts F1 from 0.01 to 0.31; detaching both onset and $f_0$ takes it to 0.83 and brings $\Delta$Cents from 117 down to 12.7. Removing a training signal makes the model dramatically better, which only makes sense if that signal was actively misleading — exactly what a 51% directional accuracy means.</p>
+          <p>$\mathcal{P}$-Only wins nearly everything on synthetic data, including timbre. Beyond having a clean path to the optimum, it benefits from the RT60 reparameterisation, which supervises damping and decay jointly instead of pretending they are independent.</p>
           <h3 style="margin-top:2.5rem">Real-World Instrument Modelling</h3>
           <div class="results-scroll">
             <table class="results-table">
@@ -208,13 +361,13 @@
             </table>
           </div>
           <p class="results-caption">Real-world instrument modeling results evaluated on the NSynth acoustic guitar test set. $\mathcal{P}$-Only uses tKSA trained on synthetic data with $\mathcal{P}_{\text{Loss}}$ only; $\mathcal{P}$+Audio models are trained with both $\mathcal{P}_{\text{Loss}}$ and audio losses; Audio-Only models are trained with audio losses and external detectors. HpN and HpN+ are Harmonics-plus-Noise baselines using the original DDSP encoder and our TCN encoder respectively. KAD is reported in CLAP and EnCodec embedding spaces. Rows beneath each $\mathcal{P}$+Audio model are stop-gradient ablations that detach the audio-loss gradient from the named head. Per column, the best, second-best, and third-best values are shown in <b>bold</b>, <u>underline</u>, and <i>italic</i> respectively.</p>
-        </div>
-      </section>
 
-      <section class="tab-panel" id="tab-audio">
-        <div class="section mb-5">
-          <h2>Synthetic Parameter Recovery</h2>
-          <hr>
+          <p>On real audio the ordering changes. $\mathcal{P}_{Loss}$ generalises poorly — it frequently misses onsets, most likely because the CNN overfits to synthetic transients and predicts $f_0$ erratically on real ones. Audio-Only with external detectors is the strongest KSA configuration on real recordings, and notably it beats both Harmonics-plus-Noise baselines on CLAP distance, which we attribute to the KSA's natural modelling of sharp transients.</p>
+          <p>We should be straightforward about the rest: HpN and HpN+ achieve better reconstruction fidelity on most metrics. That gap is structural rather than incidental. A single feedback loop captures neither the resonant guitar body, nor the interaction between the string and the player's hands, nor string–fret collisions — all contributions an HpN model can absorb directly. What the KSA offers instead is a handful of physically interpretable parameters and a faithful transient. No formal listening test was conducted, so we would rather you judged the trade-off yourself, below.</p>
+
+          <h3 style="margin-top:2.5rem">3.3 &nbsp;Listen</h3>
+          <p>Every model in both tables, on the same examples. Use the toggles to isolate an implementation, reveal the stop-gradient ablations, or bring in the Harmonics-plus-Noise baselines.</p>
+          <h4 class="audio-heading">Synthetic parameter recovery</h4>
           <div class="audio-options" aria-label="Audio example display options">
             <div class="audio-toggle" role="group" aria-label="KSA implementation filter">
               <button type="button" data-section="synth" data-view="freq">Show freq.</button>
@@ -231,8 +384,7 @@
             <table class="audio-table" id="table-synth"><thead></thead><tbody></tbody></table>
           </div>
 
-          <h2 style="margin-top:2.5rem">Real-World Instrument Modelling</h2>
-          <hr>
+          <h4 class="audio-heading" style="margin-top:2.5rem">Real-world instrument modelling</h4>
           <div class="audio-options" aria-label="Real audio example display options">
             <div class="audio-toggle" role="group" aria-label="KSA implementation filter">
               <button type="button" data-section="real" data-view="freq">Show freq.</button>
@@ -251,6 +403,25 @@
           <button class="btn btn-outline-dark" id="shuffle-nsynth" style="display:block; margin:0.75rem auto 0; border-radius:20px"><i class="bi bi-shuffle"></i> Shuffle</button>
           <div class="table-wrapper">
             <table class="audio-table" id="table-nsynth"><thead></thead><tbody></tbody></table>
+          </div>
+
+          <details class="story-references"><summary>References behind this story</summary><ol><li>K. Karplus and A. Strong, &ldquo;Digital Synthesis of Plucked-String and Drum Timbres,&rdquo; <i>Computer Music Journal</i>, 1983.</li><li>D. A. Jaffe and J. O. Smith, &ldquo;Extensions of the Karplus-Strong Plucked-String Algorithm,&rdquo; <i>Computer Music Journal</i>, 1983.</li><li>V. V&auml;lim&auml;ki et al., &ldquo;Physical Modeling of Plucked String Instruments with Application to Real-Time Sound Synthesis,&rdquo; <i>JAES</i>, 1996.</li><li>P. Tablas de Paula, J. O. Smith III, V. V&auml;lim&auml;ki and J. D. Reiss, &ldquo;Four Decades of Digital Waveguides,&rdquo; <i>J. Audio Eng. Soc.</i>, 2026, in press.</li><li>J. Engel et al., &ldquo;DDSP: Differentiable Digital Signal Processing,&rdquo; ICLR, 2020.</li><li>B. Hayes et al., &ldquo;A Review of Differentiable Digital Signal Processing for Music and Speech Synthesis,&rdquo; 2024.</li><li>S. Schw&auml;r and M. M&uuml;ller, &ldquo;Multi-scale Spectral Loss Revisited,&rdquo; <i>IEEE Signal Processing Letters</i>, 2023.</li><li>B. Torres, G. Peeters and G. Richard, &ldquo;Unsupervised Harmonic Parameter Estimation Using Differentiable DSP and Spectral Optimal Transport,&rdquo; ICASSP, 2024.</li><li>C.-Y. Yu and G. Fazekas, &ldquo;Singing Voice Synthesis Using Differentiable LPC and Glottal-Flow-Inspired Wavetables,&rdquo; and &ldquo;Accelerating Automatic Differentiation of Direct Form Digital Filters,&rdquo; 2025.</li><li>P. Tablas de Paula, D. Marttila and J. D. Reiss, &ldquo;Differentiable Karplus-Strong,&rdquo; DMRN+20, 2025.</li></ol></details>
+        </section>
+      </section>
+      <section class="tab-panel" id="tab-synth">
+        <div class="section mb-5">
+          <p class="eyebrow">Play it</p>
+          <h2>The playable string</h2>
+          <hr>
+          <p>Both algorithms from Chapter 1, on a piano roll. Switch between them with the toggle: the original has no note-off and no parameters beyond pitch, so block length changes nothing you can hear. The extended algorithm responds to note length, and the four knobs below are the ones the network has to recover.</p>
+          <p class="roll-note">Notes are constrained to C major so it stays musical while you experiment. Bass voices are shown in brown.</p>
+          <div class="inline-roll light-roll" data-roll="extended" aria-label="Karplus-Strong piano roll"></div>
+          <div class="parameter-panel" aria-label="Extended Karplus-Strong parameters" data-extended-only>
+            <label>Dynamics <input type="range" min="0" max="1" step="0.01" value="0.62" data-ks-param="dynamic"><output>0.62</output></label>
+            <label>Pluck position <input type="range" min="0.01" max="0.5" step="0.01" value="0.22" data-ks-param="pluck"><output>0.22</output></label>
+            <label>Decay <input type="range" min="0" max="1" step="0.001" data-ks-param="decay" data-scale="reverse-log" data-physical-min="0.00001" data-physical-max="0.99999999" data-initial="0.99999999"><output>0.99999999</output></label>
+            <label>Damping <input type="range" min="0" max="1" step="0.001" data-ks-param="damping" data-scale="reverse-log" data-physical-min="0.00001" data-physical-max="1" data-initial="0.7"><output>0.70000</output></label>
+            <div class="event-toggles"><label><input type="checkbox" data-event-toggle="on" checked> Note-on</label><label><input type="checkbox" data-event-toggle="off" checked> Note-off palm mute</label></div>
           </div>
         </div>
       </section>
@@ -278,6 +449,6 @@
     &copy; 2026 Sound Matching with a Differentiable Karplus-Strong Algorithm
   </footer>
 
-  <script type="module" src="assets/js/app.js?v=story-13"></script>
+  <script type="module" src="assets/js/app.js?v=story-30"></script>
 </body>
 </html>
