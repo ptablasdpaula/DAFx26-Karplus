@@ -48,9 +48,11 @@ from src.synths.ddsp import Implementation  # noqa: E402
 from src.synths.synth import Synth, SynthConfig  # noqa: E402
 
 # ── Signal configuration ────────────────────────────────────────────────────
-# 4 kHz keeps every forward pass cheap while leaving the D1-D6 range of the
-# paper's dataset comfortably below Nyquist.
-FS = 4000
+# The paper's rate. It matters: at 4 kHz a 110 Hz string has only 18 harmonics
+# below Nyquist against 72 here, and a bin-wise loss needs those harmonics to
+# locate pitch. Sampled at 4 kHz the f0 gradient measures near chance for both
+# losses, which contradicts Table 1; at 16 kHz it reproduces it.
+FS = 16000
 DURATION_S = 4.0
 NUM_SAMPLES = int(FS * DURATION_S)
 
@@ -62,9 +64,10 @@ W_SOT = 1.0
 # {f0, t, a1, g, p, dyn} = {110 Hz, 2 s, 0.2, 0.99, 0.25, 0.9}.
 TARGET = dict(f0=110.0, decay=0.99, a1=0.2, pluck_position=0.25, dynamic_level=0.9)
 
-# fKSA frame sizes. At 4 kHz, 512 samples is 128 ms and 4096 is 1.02 s, so the
-# sweep straddles the point where the frame stops containing the decay.
-FFT_SIZES = [512, 1024, 2048, 4096]
+# fKSA frame sizes. At 16 kHz these span 128 ms to 1.02 s, straddling the point
+# where the frame stops containing the decay. The largest matches the N_FFT the
+# paper uses.
+FFT_SIZES = [2048, 4096, 8192, 16384]
 # For landscape B we want fKSA to be effectively alias-free, mirroring the
 # N_FFT = 16384 the paper uses for its multi-event onset experiments.
 FFT_LONG = 16384

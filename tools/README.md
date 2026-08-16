@@ -26,8 +26,7 @@ KARPLUS_REPO=../DAFx26-Karplus-main \
 ```
 
 `KARPLUS_REPO` defaults to a sibling directory named `DAFx26-Karplus-main`, so
-if you clone it there the variable can be omitted. Everything runs forward-only
-on CPU; expect roughly 40 minutes.
+if you clone it there the variable can be omitted. Everything runs forward-only on CPU; expect roughly 2.5 hours.
 
 ### Output
 
@@ -40,7 +39,14 @@ Landscape A is decay x damping, 96 x 96, for tKSA plus fKSA at four FFT sizes,
 at onsets of 0 s and 3 s. Landscape B is onset time x f0, 96 x 96, for tKSA and
 fKSA, against a 3 x 3 lattice of target positions — the surface is defined
 relative to a target, so a freely draggable target is not precomputable and the
-demo snaps to that lattice.
+demo snaps to that lattice. Landscape B stores L_MSS and L_SOT as separate
+grids so the page can reweight them live.
+
+Everything runs at the paper's 16 kHz. This is not negotiable for the f0 story:
+sampled at 4 kHz a 110 Hz string keeps only 18 harmonics below Nyquist against
+72 here, and the f0 gradient then measures near chance for *both* losses,
+contradicting Table 1. At 16 kHz, L_MSS recovers 70-79% on a one-parameter
+sweep, in line with the paper.
 
 ### Sanity checks
 
