@@ -27,6 +27,7 @@ const state = {
   damping: 0.28,
   pluck: 0.25,
   dynamic: 0.6,
+  repluck: 0.7,
 };
 
 let audioContext = null;
@@ -59,17 +60,48 @@ const F0_MAX = 1200;
 const sliderToF0 = v => F0_MIN * (F0_MAX / F0_MIN) ** v;
 const f0ToSlider = f => Math.log(f / F0_MIN) / Math.log(F0_MAX / F0_MIN);
 
+// Plucks per second. Logarithmic, for the same reason as the pitch control.
+const REPLUCK_MIN = 0.15;
+const REPLUCK_MAX = 8;
+const sliderToRepluck = v => REPLUCK_MIN * (REPLUCK_MAX / REPLUCK_MIN) ** v;
+const repluckToSlider = r => Math.log(r / REPLUCK_MIN) / Math.log(REPLUCK_MAX / REPLUCK_MIN);
+
 /**
- * In original mode the only reachable pitches are fs/(N + 1/2) for whole N, so
- * snap to the nearest one and push it back to the slider. The thumb then steps
- * between reachable values instead of gliding over unreachable ones — you can
- * feel the quantisation widen as the delay line gets shorter. The extended
- * algorithm interpolates, so there it stays continuous.
+ * Reconfigure the pitch slider for the algorithm on screen.
+ *
+ * In original mode the reachable pitches are exactly fs/(N + 1/2) for whole N,
+ * so the slider is put into index space: one position per reachable delay
+ * length, step 1. The thumb then physically cannot rest on a pitch the
+ * algorithm cannot produce — you feel the grid rather than being told about it,
+ * and you feel it widen as the delay line shortens. The extended algorithm
+ * interpolates, so there the slider returns to a fine logarithmic sweep.
  */
-function snapF0(f0, fs, mode) {
-  if (mode !== 'original') return f0;
-  return OriginalKsaProcessor.soundingFrequency(
-    OriginalKsaProcessor.delayLengthFor(f0, fs), fs);
+function longestDelay(fs) { return OriginalKsaProcessor.delayLengthFor(F0_MIN, fs); }
+function shortestDelay(fs) { return OriginalKsaProcessor.delayLengthFor(F0_MAX, fs); }
+
+function configureF0Slider(input, mode, fs, f0) {
+  if (mode === 'original') {
+    const longest = longestDelay(fs);
+    input.min = '0';
+    input.max = String(longest - shortestDelay(fs));
+    input.step = '1';
+    input.value = String(longest - OriginalKsaProcessor.delayLengthFor(f0, fs));
+  } else {
+    input.min = '0';
+    input.max = '1';
+    input.step = '0.0005';
+    input.value = String(f0ToSlider(f0));
+  }
+}
+
+/** Pitch implied by the slider's current position, in the current mode. */
+function readF0Slider(input, mode, fs) {
+  if (mode === 'original') {
+    const delayLength = longestDelay(fs) - Number(input.value);
+    return { f0: OriginalKsaProcessor.soundingFrequency(delayLength, fs), delayLength };
+  }
+  const f0 = sliderToF0(Number(input.value));
+  return { f0, delayLength: null };
 }
 
 function ensureAudio() {
@@ -91,12 +123,10 @@ function ensureAudio() {
  *
  * One persistent node rather than a voice per click: every control is read
  * inside the audio callback, so dragging a slider retunes or reshapes the
- * string as you move it. The burst is regenerated on each repluck, which is
- * also when a change of delay length or pluck strength takes hold — everything
+ * string as you move it. The burst is regenerated at the pluck rate, which is
+ * also when a change of burst length or pluck strength takes hold — everything
  * else applies immediately.
  */
-const REPLUCK_SECONDS = 1.5;
-
 function startEngine() {
   const context = ensureAudio();
   if (context.state === 'suspended') context.resume();
@@ -128,7 +158,8 @@ function startEngine() {
     const level = original ? 1 : excitationGain(state.dynamic);
     for (let i = 0; i < length; i += 1) burst[i] = (burst[i] - mean) * level;
     index = 0;
-    countdown = Math.round(REPLUCK_SECONDS * fs);
+    // Read the rate at each repluck, so the control takes effect immediately.
+    countdown = Math.round(fs / Math.max(state.repluck, REPLUCK_MIN));
   };
   repluck();
 
@@ -322,23 +353,30 @@ function updateReadouts() {
   // Show the arithmetic, not just the answer: sample rate divided by the
   // requested pitch, rounded to whole samples, and the pitch that really comes
   // back out. The gap between the two is the whole point of Section 1.1.
-  const requested = state.f0Requested ?? state.f0;
-  const exact = fs / requested;
-  const cents = centsError(requested, sounding);
   const substitution = root.querySelector('[data-readout="substitution"]');
   if (substitution) {
-    const sign = cents >= 0 ? '+' : '';
-    const off = Math.abs(cents) > 5 ? ' off-pitch' : '';
-    substitution.innerHTML = state.mode === 'original'
-      ? `<span class="sub-line">${fs} &divide; ${requested.toFixed(1)} = ` +
-        `${exact.toFixed(2)} &rarr; rounded to <b>${n} samples</b></span>` +
-        `<span class="sub-line">sounds at <b>${sounding.toFixed(2)} Hz</b>` +
-        `<b class="cents${off}">${sign}${cents.toFixed(1)} cents</b></span>`
-      : `<span class="sub-line">${fs} &divide; ${state.f0.toFixed(1)} = ` +
-        `<b>${exact.toFixed(2)} samples</b>, fractional delay and all</span>` +
-        `<span class="sub-line">sounds at <b>${state.f0.toFixed(2)} Hz</b>` +
-        `<b class="cents">exact</b></span>`;
+    if (state.mode === 'original') {
+      // Every slider position is reachable, so there is no rounding error to
+      // report. What matters instead is how far it is to the next reachable
+      // pitch — the grid you can hear widening as the delay line shortens.
+      const stepCents = Math.abs(centsError(
+        OriginalKsaProcessor.soundingFrequency(n, fs),
+        OriginalKsaProcessor.soundingFrequency(n - 1, fs)));
+      substitution.innerHTML =
+        `<span class="sub-line"><span><i>N</i> = <b>${n}</b> samples + &frac12; (averager)</span>` +
+        `<span>${fs} &divide; ${(n + 0.5).toFixed(1)} = <b>${sounding.toFixed(2)} Hz</b></span></span>` +
+        `<span class="sub-line"><span>next reachable pitch</span>` +
+        `<b class="cents${stepCents > 5 ? ' off-pitch' : ''}">${stepCents.toFixed(1)} cents away</b></span>`;
+    } else {
+      const exact = fs / state.f0;
+      substitution.innerHTML =
+        `<span class="sub-line"><span><i>N</i> = <b>${exact.toFixed(2)}</b> samples, fraction and all</span>` +
+        `<span>${fs} &divide; ${exact.toFixed(2)} = <b>${state.f0.toFixed(2)} Hz</b></span></span>` +
+        `<span class="sub-line"><span>interpolated delay</span>` +
+        `<b class="cents">any pitch reachable</b></span>`;
+    }
   }
+  set('repluck', `${state.repluck.toFixed(2)} Hz`);
   set('decay', state.decay.toFixed(4));
   set('damping', state.damping.toFixed(3));
   set('pluck', state.pluck.toFixed(2));
@@ -350,9 +388,10 @@ const applyHandlers = [];
 function setMode(mode) {
   if (mode === state.mode || !root) return;
   state.mode = mode;
-  // Re-run the controls so the frequency snaps on entering original mode and
-  // relaxes on leaving it.
-  setTimeout(() => applyHandlers.forEach(fn => fn()), 0);
+  // The pitch slider changes shape between algorithms: discrete positions for
+  // the original, a fine sweep for the extended one. Carry the pitch across.
+  const f0Input = root.querySelector('[data-ksa-param="f0"]');
+  if (f0Input) configureF0Slider(f0Input, mode, sampleRate(), state.f0);
   root.dataset.mode = mode;
   // Scrolling drives this too, so the controls have to follow — otherwise the
   // toggle claims one algorithm while the curve shows the other.
@@ -381,16 +420,16 @@ export function initKsaFigure() {
     console.warn('ksa figure: no AudioContext', error);
   }
 
+  const f0Input = root.querySelector('[data-ksa-param="f0"]');
+  if (f0Input) configureF0Slider(f0Input, state.mode, sampleRate(), state.f0);
+
   root.querySelectorAll('[data-ksa-param]').forEach(input => {
     const key = input.dataset.ksaParam;
     const apply = () => {
       if (key === 'f0') {
-        const requested = sliderToF0(Number(input.value));
-        const snapped = snapF0(requested, sampleRate(), state.mode);
-        state.f0 = snapped;
-        state.f0Requested = requested;
-        // Write the snapped value back so the thumb visibly lands on it.
-        if (state.mode === 'original') input.value = f0ToSlider(snapped);
+        state.f0 = readF0Slider(input, state.mode, sampleRate()).f0;
+      } else if (key === 'repluck') {
+        state.repluck = sliderToRepluck(Number(input.value));
       } else {
         state[key] = Number(input.value);
       }

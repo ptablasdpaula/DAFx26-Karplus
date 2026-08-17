@@ -95,25 +95,35 @@ const report = (name, ok, detail = '') => {
   const fs = 48000;
   const F0_MIN = 60, F0_MAX = 1200;
   const sliderToF0 = v => F0_MIN * (F0_MAX / F0_MIN) ** v;
-  const snap = f0 => OriginalKsaProcessor.soundingFrequency(
-    OriginalKsaProcessor.delayLengthFor(f0, fs), fs);
+  const longest = OriginalKsaProcessor.delayLengthFor(F0_MIN, fs);
+  const shortest = OriginalKsaProcessor.delayLengthFor(F0_MAX, fs);
 
-  // Equal slider travel must be equal musical interval.
+  // Equal slider travel must be equal musical interval, in extended mode.
   const intervals = [];
   for (let v = 0; v < 1; v += 0.1) {
     intervals.push(1200 * Math.log2(sliderToF0(v + 0.1) / sliderToF0(v)));
   }
   const spread = Math.max(...intervals) - Math.min(...intervals);
-  report('frequency slider is logarithmic', spread < 1e-6,
+  report('extended frequency slider is logarithmic', spread < 1e-6,
     `${intervals[0].toFixed(1)} cents per 10% of travel, spread ${spread.toExponential(1)}`);
 
-  // Sweeping the slider must land on a finite set of values, and that set must
-  // thin out towards the top of the range — the quantisation you can feel.
-  const reached = new Set();
-  for (let v = 0; v <= 1; v += 0.0005) reached.add(snap(sliderToF0(v)).toFixed(4));
-  const steps = 2001;
-  report('original mode quantises the slider', reached.size < steps / 2,
-    `${reached.size} distinct pitches from ${steps} slider positions`);
+  // In original mode the slider is in index space: one position per reachable
+  // delay length, so an unreachable pitch cannot be selected at all.
+  const positions = longest - shortest;
+  const pitches = new Set();
+  for (let i = 0; i <= positions; i += 1) {
+    pitches.add(OriginalKsaProcessor.soundingFrequency(longest - i, fs).toFixed(6));
+  }
+  report('every original-mode slider position is reachable',
+    pitches.size === positions + 1,
+    `${positions + 1} positions, ${pitches.size} distinct pitches — one each`);
+
+  // 60 Hz is only selectable if some whole N actually produces it.
+  const nAt60 = OriginalKsaProcessor.delayLengthFor(60, fs);
+  const got60 = OriginalKsaProcessor.soundingFrequency(nAt60, fs);
+  report('the slider cannot rest on an unreachable pitch',
+    Math.abs(got60 - 60) < 1e-9 || pitches.has(got60.toFixed(6)),
+    `bottom of range lands on ${got60.toFixed(4)} Hz (N=${nAt60}), not an arbitrary 60.00`);
 
   const stepAt = f0 => {
     const n = OriginalKsaProcessor.delayLengthFor(f0, fs);
@@ -125,13 +135,7 @@ const report = (name, ok, detail = '') => {
   const high = stepAt(1100);
   report('quantisation coarsens towards high notes', high > low * 8,
     `${low.toFixed(2)} cents at 80 Hz vs ${high.toFixed(2)} cents at 1100 Hz`);
-
-  // The extended algorithm interpolates, so nothing snaps there.
-  report('extended mode leaves the frequency continuous',
-    Math.abs(sliderToF0(0.5) - sliderToF0(0.5)) === 0 && sliderToF0(0.5) !== snap(sliderToF0(0.5)),
-    `requested ${sliderToF0(0.5).toFixed(2)} Hz vs snapped ${snap(sliderToF0(0.5)).toFixed(2)} Hz`);
 }
-
 
 // ── A gentler pluck must be quieter, not merely duller. ────────────────────
 {

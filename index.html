@@ -111,13 +111,16 @@
 
                 <div class="knob-panel">
                   <label class="wide">Fundamental frequency $f_0$
+                    <span class="knob-equation">$f_0 = f_s / N$</span>
                     <input type="range" data-ksa-param="f0" min="0" max="1" step="0.0005" value="0.4368">
-                    <output data-readout="f0"></output>
                   </label>
                   <div class="tuning-readout">
-                    <div class="tuning-equation">$$f_0 = \frac{f_s}{N}$$</div>
                     <div class="tuning-substitution" data-readout="substitution"></div>
                   </div>
+                  <label class="wide">Pluck frequency
+                    <output data-readout="repluck"></output>
+                    <input type="range" data-ksa-param="repluck" min="0" max="1" step="0.001" value="0.42">
+                  </label>
                   <label data-ksa-extended hidden>Decay $g$
                     <input type="range" data-ksa-param="decay" min="0.90" max="0.9999" step="0.0001" value="0.99">
                     <output data-readout="decay"></output>
