@@ -20,7 +20,7 @@ const sub = (a, b) => ({ re: a.re - b.re, im: a.im - b.im });
 const zPow = (omega, k) => ({ re: Math.cos(omega * k), im: -Math.sin(omega * k) });
 
 /**
- * Original KSA:  H(z) = 1 / (1 - g/2 * z^-N (1 + z^-1)).
+ * Original KSA:  H(z) = 1 / (1 - 1/2 * z^-N (1 + z^-1)).
  *
  * The delay length N is an integer, so the comb teeth sit at multiples of
  * fs / (N + 1/2) — the extra half sample being the averager's phase delay.

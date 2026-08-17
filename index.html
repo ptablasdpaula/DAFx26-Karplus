@@ -51,6 +51,28 @@
   <main class="app-shell">
     <nav class="side-tabs" aria-label="Project sections">
       <button class="tab-button active" type="button" data-tab-target="story">The story</button>
+      <ol class="section-nav" data-section-nav>
+        <li><a href="#ch-ksa">1 &nbsp;Karplus-Strong</a>
+          <ol>
+            <li><a href="#sec-1-1">1.1 Origins</a></li>
+            <li><a href="#sec-1-2">1.2 Extensions</a></li>
+          </ol>
+        </li>
+        <li><a href="#ch-gradients">2 &nbsp;Gradient descent</a>
+          <ol>
+            <li><a href="#sec-2-1">2.1 Events</a></li>
+            <li><a href="#sec-2-2">2.2 Freq. vs time</a></li>
+            <li><a href="#sec-2-3">2.3 Onset and $f_0$</a></li>
+          </ol>
+        </li>
+        <li><a href="#ch-training">3 &nbsp;Training</a>
+          <ol>
+            <li><a href="#sec-3-1">3.1 Three regimes</a></li>
+            <li><a href="#sec-3-2">3.2 Results</a></li>
+            <li><a href="#sec-3-3">3.3 Listen</a></li>
+          </ol>
+        </li>
+      </ol>
       <button class="tab-button" type="button" data-tab-target="synth">Playable synth</button>
     </nav>
 
@@ -71,24 +93,30 @@
                     <button type="button" data-ksa-mode="original" class="active">Original (1983)</button>
                     <button type="button" data-ksa-mode="extended">Extended</button>
                   </div>
-                  <button class="btn btn-sm btn-dark" type="button" data-action="pluck"><i class="bi bi-play-fill"></i> Pluck</button>
+                  <button class="btn btn-sm btn-outline-dark" type="button" data-action="sound" aria-pressed="false"><i class="bi bi-volume-mute"></i> Sound off</button>
                 </div>
-                <canvas class="response-canvas" height="260"></canvas>
+
+                <figure class="figure-diagram" data-diagram="original">
+                  <img src="fig_0.jpg" alt="Original Karplus-Strong delay loop with a two-point moving-average filter">
+                </figure>
+                <figure class="figure-diagram" data-diagram="extended" hidden>
+                  <img class="paper-figure" src="assets/images/fig_1.png" alt="Extended Karplus-Strong signal-flow diagram">
+                </figure>
+
+                <canvas class="response-canvas" height="230"></canvas>
                 <p class="figure-legend">
-                  <span class="swatch analytic"></span> analytic $|H(e^{j\omega})|$ from the z-domain — moves with the knobs, never with the audio
+                  <span class="swatch analytic"></span> analytic $|H(e^{j\omega})|$ from the z-domain — moves with the controls, never with the audio
                   <span class="swatch measured"></span> measured output spectrum, decaying after the pluck
                 </p>
+
                 <div class="knob-panel">
-                  <label>Pluck frequency $f_0$
-                    <input type="range" data-ksa-param="f0" min="60" max="1200" step="0.5" value="220">
+                  <label class="wide">Fundamental frequency $f_0$
+                    <input type="range" data-ksa-param="f0" min="0" max="1" step="0.0005" value="0.4368">
                     <output data-readout="f0"></output>
                   </label>
-                  <label>Delay length $N$
-                    <input type="range" data-ksa-param="delay" min="4" max="800" step="1" value="218">
-                    <output data-readout="delay"></output>
-                  </label>
                   <div class="tuning-readout">
-                    sounding <b data-readout="sounding"></b> · error <b data-readout="cents"></b>
+                    <div class="tuning-equation">$$f_0 = \frac{f_s}{N}$$</div>
+                    <div class="tuning-substitution" data-readout="substitution"></div>
                   </div>
                   <label data-ksa-extended hidden>Decay $g$
                     <input type="range" data-ksa-param="decay" min="0.90" max="0.9999" step="0.0001" value="0.99">
@@ -102,8 +130,8 @@
                     <input type="range" data-ksa-param="pluck" min="0.01" max="0.5" step="0.01" value="0.25">
                     <output data-readout="pluck"></output>
                   </label>
-                  <label data-ksa-extended hidden>Dynamics
-                    <input type="range" data-ksa-param="dynamic" min="0" max="1" step="0.01" value="0.6">
+                  <label data-ksa-extended hidden>Dynamics $d$
+                    <input type="range" data-ksa-param="dynamic" min="0.02" max="1" step="0.01" value="0.6">
                     <output data-readout="dynamic"></output>
                   </label>
                 </div>
@@ -112,24 +140,23 @@
 
             <div class="scrolly-steps">
               <div class="scrolly-step" data-step="original">
-                <h3>1.1 &nbsp;Origins</h3>
+                <h3 id="sec-1-1">1.1 &nbsp;Origins</h3>
                 <p>In 1983 Kevin Karplus and Alex Strong published an algorithm that turns a short burst of noise into a convincing plucked string, using almost no arithmetic. Fill a buffer with random numbers, play it out in a loop, and on every pass replace each sample with the average of itself and the one before it. No multiplies at all.</p>
                 <p>It is worth being precise about what they thought they had built. As the authors describe it, this was <em>wavetable synthesis</em> with a self-modifying wavetable — not physical modelling. The physical reading came afterwards, when Alex Strong showed it to David Jaffe, who brought it to Julius Smith; Smith recast the loop as a delay line with an explicit additive input and recognised the moving average as a point-to-point transfer function on an ideal string. Only then did the delay line become a string and the averager become propagation loss.</p>
                 <p>In that recasting the whole algorithm is one equation:</p>
-                <p class="equation">$$H(z) = \frac{1}{1 - \tfrac{g}{2}\, z^{-N}\left(1 + z^{-1}\right)}$$</p>
-                <figure class="inline-diagram"><img src="fig_0.jpg" alt="Original Karplus-Strong delay loop with a two-point moving-average filter"><figcaption>The 1983 loop as Smith recast it: a delay line with explicit additive input, feeding back through a two-point moving average.</figcaption></figure>
+                <p class="equation">$$H(z) = \frac{1}{1 - \tfrac{1}{2}\, z^{-N}\left(1 + z^{-1}\right)}$$</p>
                 <p>The curve above is that expression, evaluated on the unit circle. Its teeth are the string's harmonics, and the loop filter $H_L(z) = \tfrac12(1 + z^{-1})$ sets how fast each one dies: its magnitude is $|\cos(\omega/2)|$, so energy near Nyquist is removed almost entirely on every trip round the loop while low partials survive. That single fact is the whole timbre of the algorithm — bright at the attack, mellow as it rings.</p>
-                <p><strong>Now the catch.</strong> That two-point average is linear phase with a delay of exactly half a sample at every frequency, so the loop does not ring at $f_s/N$ — it rings at $f_s/(N + \tfrac12)$. Karplus and Strong's own tuning rule is therefore</p>
-                <p class="equation">$$N = \frac{f_s}{f_0} - \frac{1}{2}$$</p>
-                <p>and $N$ has to be a whole number of samples, because there is no interpolation filter here to absorb the remainder. Drag either knob above and watch the other follow: the pitch you ask for and the pitch you get come apart, and the error readout shows by how much. At low notes the delay line is long and the grid is fine, so the error is negligible. Push up towards the top of the range and the delay line gets short, the grid gets coarse, and the tuning goes badly wrong — tens of cents, plainly audible.</p>
+                <p>Notice there is no gain term: the averaging itself is the only loss in the loop. Written exactly that way the algorithm is in fact only marginally stable, because the averager has unity gain at DC — the pole sits right on the unit circle and any DC offset in the noise burst would ring forever. Implementations keep a loop gain a hair below one, and use a zero-mean burst, as this one does.</p>
+                <p><strong>Now the catch.</strong> Pitch comes entirely from the length of the delay line, and that length is a whole number of samples — there is no interpolation filter here to absorb a remainder. Drag the frequency control above and watch the substitution beneath it: the value you ask for is divided into the sample rate, then rounded, and the pitch you actually get is whatever that rounded delay produces.</p>
+                <p>(Strictly, the two-point average is linear phase with a delay of exactly half a sample at every frequency, so the loop rings at $f_s/(N + \tfrac12)$ and Karplus and Strong's tuning rule is $N = f_s/f_0 - \tfrac12$. The readout accounts for it.)</p>
+                <p>At low notes the delay line is long and the grid is fine, so the rounding error is negligible — under a couple of cents, well below what anyone can hear. Push up towards the top of the range and the delay line gets short, the grid gets coarse, and the tuning goes badly wrong: past 1 kHz the error exceeds twenty cents, a fifth of a semitone, and plainly audible.</p>
                 <p>Fixing that is where the story goes next.</p>
               </div>
 
               <div class="scrolly-step" data-step="extended">
-                <h3>1.2 &nbsp;Extensions</h3>
+                <h3 id="sec-1-2">1.2 &nbsp;Extensions</h3>
                 <p>The figure has changed. Four new knobs appeared, and the transfer function behind the curve is now the extended algorithm we use throughout the paper:</p>
                 <p class="equation">$$H_{tKSA}(z) = \frac{H_D(z)\,H_P(z)}{1 - H_L(z)\,H_I(z)\,z^{-L_{int}}}$$</p>
-                <figure class="inline-diagram"><img class="paper-figure" src="assets/images/fig_1.png" alt="Extended Karplus-Strong signal-flow diagram"><a class="figure-source" href="assets/figures/fig_1.pdf">Open PDF</a><figcaption>The extended algorithm. The excitation passes through the pluck-position and dynamics filters; the loop carries the interpolator and the one-pole loss filter.</figcaption></figure>
                 <p>Each new factor separates something the original moving average had entangled.</p>
                 <p><strong>Tuning.</strong> The interpolation filter $H_I(z)$ is a fifth-order Lagrange interpolator, whose fractional delay is far more uniform across frequency than the allpass filters used originally. It absorbs both the non-integer remainder of $L = f_s/f_0$ and the loop filter's own phase delay:</p>
                 <p class="equation">$$D = L - \lfloor L \rfloor - P_L(f_0), \qquad P_L(f_0) = -\frac{\angle H_L(e^{j\omega_0})}{\omega_0}$$</p>
@@ -153,7 +180,7 @@
           <h2>Instrument Modelling &amp; Gradient Descent</h2>
           <hr>
 
-          <h3>2.1 &nbsp;A guitar note is an event, not a frame</h3>
+          <h3 id="sec-2-1">2.1 &nbsp;A guitar note is an event, not a frame</h3>
           <p>Everything so far assumed we already knew the parameters. Sound matching is the inverse problem: given a recording, recover the parameters that reproduce it. For a physical model like the KSA this is unusually appealing, because the parameters that come back out are interpretable — they tell you something about the string.</p>
           <p>Listen to a real recording first. This is an acoustic guitar note from NSynth, plucked once and palm-muted at around three seconds.</p>
           <div class="featured-audio cell" data-featured-audio="assets/audio/real/target/010.ogg"><div class="featured-label"><span>NSynth acoustic guitar</span><strong>Target 10 · palm mute near 3 s</strong></div><div class="media-stack"><div class="waveform"></div><div class="spectrogram"></div><button class="overlay-play" aria-label="Play target 10"><i class="fas fa-play"></i></button></div></div>
@@ -162,7 +189,7 @@
           <figure class="architecture-figure"><img class="paper-figure" src="assets/images/fig_2.png" alt="Event-based sound-matching model architecture"><a class="figure-source" href="assets/figures/fig_2.pdf">Open PDF</a><figcaption>The pipeline. A dual frontend feeds a set-prediction transformer, which asks which events exist, when they occur, their pitch, and their timbre, then resynthesises them through the differentiable KSA.</figcaption></figure>
           <p>Training that by backpropagating an audio loss requires the synthesiser itself to be differentiable. There are two ways to do it, and the difference between them turns out to matter a great deal.</p>
 
-          <h3 style="margin-top:2.5rem">2.2 &nbsp;Frequency sampling versus the time domain</h3>
+          <h3 id="sec-2-2" style="margin-top:2.5rem">2.2 &nbsp;Frequency sampling versus the time domain</h3>
           <p>A naive time-domain implementation of a recursive filter computes sample by sample, which builds a computational graph 64,000 nodes deep. Two approaches restore parallelism.</p>
           <p>The <strong>frequency sampling</strong> method evaluates the filter response on a grid of $M$ frequencies,</p>
           <p class="equation">$$z_M = \left[e^{j\pi\frac{0}{M-1}}, e^{j\pi\frac{1}{M-1}}, \ldots, e^{j\pi}\right]$$</p>
@@ -205,7 +232,7 @@
           <div class="figure-grid narrative-figures"><figure class="figure-frame"><img class="paper-figure" src="assets/images/fig_4.png" alt="Comparison of real guitar and time- and frequency-domain KSA responses"><a class="figure-source" href="assets/figures/fig_4.pdf">Open PDF</a><figcaption>The same effect in the paper: an NSynth target, the two reconstructions at inference, and the frequency-sampling forward pass used in training, where circular convolution at $N_{FFT} = 2^{14}$ truncates long decays.</figcaption></figure></div>
           <p>The headline result is that time-domain Lagrange interpolation matches frequency sampling on gradient accuracy while avoiding this artefact — which makes it a viable, artefact-free alternative for differentiable physical models with time-varying, highly resonant behaviour.</p>
 
-          <h3 style="margin-top:2.5rem">2.3 &nbsp;Onset time and $f_0$</h3>
+          <h3 id="sec-2-3" style="margin-top:2.5rem">2.3 &nbsp;Onset time and $f_0$</h3>
           <p>Timbre parameters, then, are recoverable. Pitch and timing are a different story, and this is the part of the work that surprised us.</p>
           <p>To measure it we ask a deliberately minimal question of each gradient — not how large it is, but whether it even points the right way:</p>
           <p class="equation">$$\mathrm{sgn}\left(\frac{\partial \mathcal{L}(\hat{x}f[n], x[n])}{\partial f}\right) = \mathrm{sgn}(f - f_x)$$</p>
@@ -295,7 +322,7 @@
           <h2>Neural Network Training</h2>
           <hr>
 
-          <h3>3.1 &nbsp;Three ways to supervise</h3>
+          <h3 id="sec-3-1">3.1 &nbsp;Three ways to supervise</h3>
           <p>Chapter 2 leaves us with a specific problem. Audio losses are excellent for timbre and useless for onsets. If we train end-to-end on audio alone, the onset and $f_0$ heads receive gradients that are barely better than noise, and — because they share an encoder with everything else — they drag the rest of the model down with them.</p>
           <p>There are two ways out, and we test both, plus their combination.</p>
           <p>The first is to <strong>stop using audio for those parameters</strong>. Because we can generate synthetic data with known ground truth, we can supervise the parameters directly. Following the set-prediction literature, Hungarian matching assigns each of the $N = 10$ predicted event slots to a ground-truth event, and the matched loss is</p>
@@ -310,7 +337,7 @@
           </div>
           <p>To isolate the mechanism we also run stop-gradient ablations on $\mathcal{P}$+Audio: detach the audio-loss gradient from the onset head, from the $f_0$ head, or from both, leaving them supervised only by $\mathcal{P}_{Loss}$. If Chapter 2 is right, detaching should <em>help</em> — which is a strange thing to expect from removing a training signal.</p>
 
-          <h3 style="margin-top:2.5rem">3.2 &nbsp;What happened</h3>
+          <h3 id="sec-3-2" style="margin-top:2.5rem">3.2 &nbsp;What happened</h3>
           <p>Two datasets. <strong>Synth</strong> is 4-second mono clips at 16 kHz containing 1–10 plucks at constant $f_0$ over D1–D6, parameters drawn from Beta distributions with a 30% palm-mute probability, reseeded every epoch — 8,360 training samples. <strong>Real</strong> is the acoustic guitar subset of NSynth, restricted to non-reverberant samples in the same D1–D6 range, split 8,360 / 930 / 290.</p>
           <h4 class="table-heading" style="margin-top:2.5rem">Synthetic Parameter Recovery</h4>
           <div class="results-scroll">
@@ -365,7 +392,7 @@
           <p>On real audio the ordering changes. $\mathcal{P}_{Loss}$ generalises poorly — it frequently misses onsets, most likely because the CNN overfits to synthetic transients and predicts $f_0$ erratically on real ones. Audio-Only with external detectors is the strongest KSA configuration on real recordings, and notably it beats both Harmonics-plus-Noise baselines on CLAP distance, which we attribute to the KSA's natural modelling of sharp transients.</p>
           <p>We should be straightforward about the rest: HpN and HpN+ achieve better reconstruction fidelity on most metrics. That gap is structural rather than incidental. A single feedback loop captures neither the resonant guitar body, nor the interaction between the string and the player's hands, nor string–fret collisions — all contributions an HpN model can absorb directly. What the KSA offers instead is a handful of physically interpretable parameters and a faithful transient. No formal listening test was conducted, so we would rather you judged the trade-off yourself, below.</p>
 
-          <h3 style="margin-top:2.5rem">3.3 &nbsp;Listen</h3>
+          <h3 id="sec-3-3" style="margin-top:2.5rem">3.3 &nbsp;Listen</h3>
           <p>Every model in both tables, on the same examples. Use the toggles to isolate an implementation, reveal the stop-gradient ablations, or bring in the Harmonics-plus-Noise baselines.</p>
           <h4 class="audio-heading">Synthetic parameter recovery</h4>
           <div class="audio-options" aria-label="Audio example display options">

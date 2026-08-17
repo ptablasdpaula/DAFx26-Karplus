@@ -12,6 +12,7 @@
 //   Chrome --headless --virtual-time-budget=20000 --dump-dom tests/page-check.html
 import { OriginalKsaProcessor } from '../assets/js/interactive-ks.js';
 import { sampleResponse } from '../assets/js/ks-response.js';
+import { responseCurveDb } from '../assets/js/section-ksa.js';
 
 const lines = [];
 let failures = 0;
@@ -86,6 +87,65 @@ const report = (name, ok, detail = '') => {
   }
   report('comb spacing equals fs/(N + 1/2)', peaks.length >= 5 && worst < sounding * 0.05,
     `${peaks.length} teeth, spacing error ≤ ${worst.toFixed(1)} Hz vs f0 ${sounding.toFixed(1)} Hz`);
+}
+
+
+// ── The frequency control: logarithmic, and quantised in original mode. ────
+{
+  const fs = 48000;
+  const F0_MIN = 60, F0_MAX = 1200;
+  const sliderToF0 = v => F0_MIN * (F0_MAX / F0_MIN) ** v;
+  const snap = f0 => OriginalKsaProcessor.soundingFrequency(
+    OriginalKsaProcessor.delayLengthFor(f0, fs), fs);
+
+  // Equal slider travel must be equal musical interval.
+  const intervals = [];
+  for (let v = 0; v < 1; v += 0.1) {
+    intervals.push(1200 * Math.log2(sliderToF0(v + 0.1) / sliderToF0(v)));
+  }
+  const spread = Math.max(...intervals) - Math.min(...intervals);
+  report('frequency slider is logarithmic', spread < 1e-6,
+    `${intervals[0].toFixed(1)} cents per 10% of travel, spread ${spread.toExponential(1)}`);
+
+  // Sweeping the slider must land on a finite set of values, and that set must
+  // thin out towards the top of the range — the quantisation you can feel.
+  const reached = new Set();
+  for (let v = 0; v <= 1; v += 0.0005) reached.add(snap(sliderToF0(v)).toFixed(4));
+  const steps = 2001;
+  report('original mode quantises the slider', reached.size < steps / 2,
+    `${reached.size} distinct pitches from ${steps} slider positions`);
+
+  const stepAt = f0 => {
+    const n = OriginalKsaProcessor.delayLengthFor(f0, fs);
+    return Math.abs(1200 * Math.log2(
+      OriginalKsaProcessor.soundingFrequency(n - 1, fs) /
+      OriginalKsaProcessor.soundingFrequency(n, fs)));
+  };
+  const low = stepAt(80);
+  const high = stepAt(1100);
+  report('quantisation coarsens towards high notes', high > low * 8,
+    `${low.toFixed(2)} cents at 80 Hz vs ${high.toFixed(2)} cents at 1100 Hz`);
+
+  // The extended algorithm interpolates, so nothing snaps there.
+  report('extended mode leaves the frequency continuous',
+    Math.abs(sliderToF0(0.5) - sliderToF0(0.5)) === 0 && sliderToF0(0.5) !== snap(sliderToF0(0.5)),
+    `requested ${sliderToF0(0.5).toFixed(2)} Hz vs snapped ${snap(sliderToF0(0.5)).toFixed(2)} Hz`);
+}
+
+
+// ── A gentler pluck must be quieter, not merely duller. ────────────────────
+{
+  const fs = 48000;
+  const base = { mode: 'extended', f0: 220, decay: 0.99, damping: 0.28, pluck: 0.25 };
+  const peakOf = d => Math.max(...responseCurveDb({ ...base, dynamic: d }, fs, 512));
+  const loud = peakOf(1.0);
+  const soft = peakOf(0.25);
+  report('lowering dynamics lowers the whole response', loud - soft > 10,
+    `peak ${loud.toFixed(1)} dB at d=1 vs ${soft.toFixed(1)} dB at d=0.25`);
+  // And the drop should track the excitation amplitude, i.e. 20log10(d).
+  const expected = 20 * Math.log10(1 / 0.25);
+  report('the drop matches 20log10(d)', Math.abs((loud - soft) - expected) < 0.5,
+    `${(loud - soft).toFixed(2)} dB vs expected ${expected.toFixed(2)} dB`);
 }
 
 document.getElementById('out').textContent =

@@ -106,7 +106,17 @@ export function lagrangeFractionalDelay(totalDelay) {
 
 /**
  * Karplus & Strong (1983), in Smith's signal-processing recasting with explicit
- * additive input:  y[n] = x[n] + g/2 * (y[n-N] + y[n-N-1]).
+ * additive input:  y[n] = x[n] + 1/2 * (y[n-N] + y[n-N-1]).
+ *
+ * As published there is no gain term: the two-point average is the only loss in
+ * the loop. Written that way the algorithm is only marginally stable, because
+ * |H_L| is exactly 1 at DC — the pole sits on the unit circle and any DC in the
+ * excitation rings forever. Implementations therefore keep a loop gain a hair
+ * below one, as here. It also matters that the averager's magnitude is
+ * |cos(w/2)|, which at a modern sample rate is very close to 1 for a low note:
+ * the 1983 algorithm decays far more slowly at 48 kHz than at the 8-25 kHz it
+ * was written for, and that is exactly what motivated the explicit decay
+ * control the extended version adds.
  *
  * The two-point averager H_L(z) = 1/2 (1 + z^-1) is linear phase with a phase
  * delay of exactly half a sample at every frequency, so the loop rings at
@@ -137,7 +147,12 @@ export class OriginalKsaProcessor {
     this.previous = 0;
   }
 
-  process(excitation) {
+  /** `delayLength` may be supplied per sample so the pitch can track a slider. */
+  process(excitation, { delayLength } = {}) {
+    if (delayLength && delayLength !== this.delayLength) {
+      this.delayLength = delayLength;
+      this.frequency = OriginalKsaProcessor.soundingFrequency(delayLength, this.fs);
+    }
     const delayed = this.delay[modulo(this.write - this.delayLength, this.delay.length)];
     const filtered = this.decayGain * 0.5 * (delayed + this.previous);
     this.previous = delayed;
@@ -162,7 +177,13 @@ export class ExtendedKsaProcessor {
     this.dynamicsState = 0;
   }
 
-  process(excitation, { pluck, dynamic, damping, decay }) {
+  process(excitation, { pluck, dynamic, damping, decay, f0 }) {
+    // f0 may change per sample, so a slider drag retunes the string as you move
+    // it rather than at the next pluck.
+    if (f0 && f0 !== this.frequency) {
+      this.frequency = f0;
+      this.period = this.fs / f0;
+    }
     const combDelay = this.period * pluck;
     const combInteger = Math.floor(combDelay);
     const combFraction = combDelay - combInteger;
