@@ -31,8 +31,29 @@ if you clone it there the variable can be omitted. Everything runs forward-only 
 ### Output
 
 ```text
-assets/data/landscapes.bin    uint16-quantised loss grids
+assets/data/landscapes.bin    uint16-quantised grids
 assets/data/landscapes.json   axes, per-slice min/max, byte offsets
+```
+
+Three groups are stored. `A` and `B` are loss surfaces. `G` is something
+different and easy to confuse with them: the **true autograd gradients** of the
+loss with respect to onset time and f0, on a 48 x 48 grid.
+
+That distinction carries Section 2.3. Onset reaches the synthesiser through a
+Straight-Through Estimator, so the loss surface has usable slope toward the
+right onset — finite-differencing it scores 69.4% on the sign test — while the
+gradient the model actually receives scores 54.4%, matching Table 1's 51.2%.
+Demo B descends `G`, not the surface; descending the surface would show the
+markers confidently finding the correct onset, i.e. the opposite of the result.
+The field is looked up by nearest cell and never interpolated, because
+smoothing it would manufacture the directional coherence it exists to show is
+missing.
+
+To recompute only the gradient field and append it to existing output:
+
+```bash
+PRECOMPUTE_ONLY=G KARPLUS_REPO=../DAFx26-Karplus-main \
+  ../DAFx26-Karplus-main/.pixi/envs/default/bin/python tools/precompute_landscapes.py
 ```
 
 Landscape A is decay x damping, 96 x 96, for tKSA plus fKSA at four FFT sizes,
@@ -55,7 +76,17 @@ After regenerating, confirm the numbers still say what Section 2 claims:
 - every tKSA slice of landscape A should have its minimum within a grid cell of
   the true target, `g = 0.99`, `a1 = 0.2`;
 - fKSA slices should be displaced away from it, and markedly flatter — the
-  printed `[min, max]` range for a short FFT is much narrower than tKSA's.
+  printed `[min, max]` range for a short FFT is much narrower than tKSA's;
+- the onset sign accuracy of `G` should sit near 51%, and clearly below the
+  same measurement taken off the loss surface.
+
+`tests/data-check.html` asserts all of this in the browser:
+
+```bash
+python3 -m http.server 8000 &
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless \
+  --virtual-time-budget=180000 --dump-dom http://localhost:8000/tests/data-check.html
+```
 
 If the fKSA slices are *not* displaced, something is wrong: the time-aliasing
 this whole section is about has gone missing.
