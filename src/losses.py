@@ -6,7 +6,10 @@ import torch.nn.functional as F
 import scipy.signal.windows
 from torch import Tensor
 from scipy.optimize import linear_sum_assignment
-from sot import Wasserstein1DLoss
+try:
+    from sot import Wasserstein1DLoss
+except ImportError:  # Optional for users running only the in-repo objectives.
+    Wasserstein1DLoss = None
 
 from src.synths.param_registry import (
     ParamSpec, PARAM_NAMES, make_default_registry, LossType,
@@ -212,6 +215,8 @@ class SOT2048Loss(nn.Module):
         self._device = None
 
     def _build(self, device: torch.device):
+        if Wasserstein1DLoss is None:
+            raise ImportError("SOT2048Loss requires the optional 'sot-loss' package")
         self.loss_fn = Wasserstein1DLoss(
             transform="stft",
             fft_size=2048,

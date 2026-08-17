@@ -502,3 +502,38 @@ def karplus_strong(
         return _freq_karplus_strong(x, L_corrected, a1_stable, g_stable, n_fft)
     else:
         raise NotImplementedError
+
+
+def karplus_strong_from_delay(
+        x: T,
+        delay: T,
+        a1: T,
+        g: T,
+        fs: int = FS_MIN,
+        lagrange_order: int = LAGRANGE_ORDER,
+) -> T:
+    """Time-domain Karplus--Strong with a desired loop period in samples.
+
+    ``karplus_strong`` derives the delay from a fundamental frequency.  Dense
+    inverse problems naturally optimize the delay itself, so converting it to
+    frequency and back is both misleading and needlessly ill-conditioned.
+    This entry point retains the exact same Lagrange interpolation and
+    one-pole loop-filter phase compensation as the event renderer while
+    treating ``delay`` as the desired (uncompensated) loop period.
+    """
+    if not (x.shape == delay.shape == a1.shape == g.shape):
+        raise ValueError(
+            "x, delay, a1, and g must have matching [batch, samples] shapes"
+        )
+    if torch.any(delay <= 0):
+        raise ValueError("delay must be strictly positive")
+    if torch.any((a1 < 0.0) | (a1 > 1.0)):
+        raise ValueError("a1 must lie in [0, 1]")
+    if torch.any((g < 0.0) | (g > 1.0)):
+        raise ValueError("g must lie in [0, 1]")
+
+    f0 = fs / delay
+    corrected_delay = delay + one_pole_phase_delay(f0, a1, fs)
+    return _time_karplus_strong(
+        x, corrected_delay, a1, g, lagrange_order,
+    )

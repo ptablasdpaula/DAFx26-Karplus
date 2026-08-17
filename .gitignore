@@ -51,6 +51,7 @@ PAPER_EDITS_PLAN.md
 # regenerated figure artifacts (paper copies live in Latex/figures, synced to Overleaf)
 figures/*.pdf
 .overnight_jids
+.dense_vibrato_bend_jids
 OVERNIGHT_RUN.md
 SURPRISES_AND_REFLECTION.md
 
