@@ -3,7 +3,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# Slurm copies batch scripts into its spool, so BASH_SOURCE no longer locates
+# the checkout inside a job.  sbatch records the caller's repository cwd in
+# SLURM_SUBMIT_DIR; the explicit override also keeps local invocation useful.
+if [[ -n "${DENSE_KS_PROJECT_ROOT:-}" ]]; then
+    PROJECT_ROOT="$DENSE_KS_PROJECT_ROOT"
+elif [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+    PROJECT_ROOT="$SLURM_SUBMIT_DIR"
+else
+    PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+fi
 MODE="${1:?expected preflight, sweep, or aggregate}"
 OUTPUT="${DENSE_KS_OUTPUT:-${PROJECT_ROOT}/experiments/outputs/dense-vibrato-bend-ot}"
 
