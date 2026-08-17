@@ -356,24 +356,14 @@ function updateReadouts() {
   const substitution = root.querySelector('[data-readout="substitution"]');
   if (substitution) {
     if (state.mode === 'original') {
-      // Every slider position is reachable, so there is no rounding error to
-      // report. What matters instead is how far it is to the next reachable
-      // pitch — the grid you can hear widening as the delay line shortens.
-      const stepCents = Math.abs(centsError(
-        OriginalKsaProcessor.soundingFrequency(n, fs),
-        OriginalKsaProcessor.soundingFrequency(n - 1, fs)));
       substitution.innerHTML =
         `<span class="sub-line"><span><i>N</i> = <b>${n}</b> samples + &frac12; (averager)</span>` +
-        `<span>${fs} &divide; ${(n + 0.5).toFixed(1)} = <b>${sounding.toFixed(2)} Hz</b></span></span>` +
-        `<span class="sub-line"><span>next reachable pitch</span>` +
-        `<b class="cents${stepCents > 5 ? ' off-pitch' : ''}">${stepCents.toFixed(1)} cents away</b></span>`;
+        `<span>${fs} &divide; ${(n + 0.5).toFixed(1)} = <b>${sounding.toFixed(2)} Hz</b></span></span>`;
     } else {
       const exact = fs / state.f0;
       substitution.innerHTML =
         `<span class="sub-line"><span><i>N</i> = <b>${exact.toFixed(2)}</b> samples, fraction and all</span>` +
-        `<span>${fs} &divide; ${exact.toFixed(2)} = <b>${state.f0.toFixed(2)} Hz</b></span></span>` +
-        `<span class="sub-line"><span>interpolated delay</span>` +
-        `<b class="cents">any pitch reachable</b></span>`;
+        `<span>${fs} &divide; ${exact.toFixed(2)} = <b>${state.f0.toFixed(2)} Hz</b></span></span>`;
     }
   }
   set('repluck', `${state.repluck.toFixed(2)} Hz`);

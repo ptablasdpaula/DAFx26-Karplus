@@ -183,6 +183,7 @@
     .mode-switch button.active{background:#274f69;color:#fff}
     .response-canvas{display:block;width:100%;height:260px}
     .figure-legend{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;margin:.5rem 0 0;font-size:.72rem;color:#5f6871}
+    .legend-item{display:inline-flex;align-items:center;gap:2px}
     .swatch{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
     .swatch.analytic{background:#d55b37;height:3px}
     .swatch.measured{background:rgba(111,151,178,.6);height:9px}
