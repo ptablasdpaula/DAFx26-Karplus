@@ -259,11 +259,101 @@ def landscape_b(objective: Objective, manifest: dict, payload: list) -> None:
     }
 
 
+
+# ── Gradient field for landscape B ──────────────────────────────────────────
+def gradient_field_b(objective: Objective, manifest: dict, payload: list) -> None:
+    """True autograd gradients of the loss w.r.t. onset time and f0.
+
+    This is not the same thing as the slope of the loss surface, and the
+    difference is the whole point of Section 2.3. Onset enters the synthesiser
+    through a Straight-Through Estimator: the forward pass snaps the burst to
+    the nearest integer sample, while the backward pass routes gradients through
+    a continuous phase rotation. Finite-differencing the sampled loss measures
+    the landscape and scores about 63% on the sign test; the gradient the model
+    actually receives scores about 51%, matching Table 1. Only the latter shows
+    why joint training collapses, so the demo descends this field rather than
+    the surface.
+
+    Sampled on a coarser grid than the loss, and looked up by nearest cell
+    rather than interpolated — smoothing this field would manufacture exactly
+    the directional coherence it is meant to show is missing.
+    """
+    n = 48
+    onset_axis = np.linspace(0.0, 3.5, n)
+    f0_axis = np.geomspace(55.0, 880.0, n)
+    target_onsets = manifest["B"]["targets"]["onsets"]
+    target_f0s = manifest["B"]["targets"]["f0s"]
+
+    reference = build_synth(Implementation.TIME_DOMAIN, FFT_LONG)
+    variants = [("tksa", Implementation.TIME_DOMAIN), ("fksa", Implementation.FREQUENCY_SAMPLING)]
+    slices = {}
+
+    for ti, t_onset in enumerate(target_onsets):
+        for fi, t_f0 in enumerate(target_f0s):
+            with torch.no_grad():
+                target = render(reference, f0=t_f0, decay=[TARGET["decay"]],
+                                a1=TARGET["a1"], onset=t_onset)
+            for var_name, impl in variants:
+                synth = build_synth(impl, FFT_LONG)
+                gt = np.zeros((n, n), dtype=np.float64)
+                gf = np.zeros((n, n), dtype=np.float64)
+                t0 = time.time()
+                for row, f0 in enumerate(f0_axis):
+                    params = make_params(n, f0=f0, decay=[TARGET["decay"]] * n,
+                                         a1=TARGET["a1"], onset=onset_axis)
+                    params["time"] = params["time"].clone().requires_grad_(True)
+                    params["f0"] = params["f0"].clone().requires_grad_(True)
+                    with torch.enable_grad():
+                        audio, _ = synth(params)
+                        sot = objective.sot(audio, target.expand_as(audio)).mean()
+                        mss = objective.mss(audio, target.expand(audio.shape[0], -1))
+                        (W_MSS * mss + W_SOT * sot).backward()
+                    gt[row] = params["time"].grad.detach().cpu().numpy().ravel()
+                    gf[row] = params["f0"].grad.detach().cpu().numpy().ravel()
+
+                for name, grid in (("dt", gt), ("df0", gf)):
+                    key = f"G_t{ti}_f{fi}_{var_name}_{name}"
+                    q, lo, hi = quantise(grid)
+                    slices[key] = {"offset": sum(p.nbytes for p in payload),
+                                   "min": lo, "max": hi}
+                    payload.append(q)
+                print(f"  G_t{ti}_f{fi}_{var_name} in {time.time() - t0:.0f}s", flush=True)
+
+    manifest["G"] = {
+        "axes": {
+            "x": {"name": "onset", "values": onset_axis.tolist()},
+            "y": {"name": "f0", "values": f0_axis.tolist()},
+        },
+        "shape": [n, n],
+        "note": "true autograd gradients; nearest-cell lookup, do not interpolate",
+        "slices": slices,
+    }
+
+
 def main() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    torch.set_grad_enabled(False)
-
     objective = Objective()
+
+    # PRECOMPUTE_ONLY=G recomputes just the gradient field and appends it to the
+    # existing output, so a change there does not cost a rerun of the surfaces.
+    if os.environ.get("PRECOMPUTE_ONLY") == "G":
+        manifest = json.loads((DATA_DIR / "landscapes.json").read_text())
+        existing = (DATA_DIR / "landscapes.bin").read_bytes()
+        payload: list[np.ndarray] = []
+        print("Gradient field for B (true autograd)...", flush=True)
+
+        class Offset:
+            """Shim so slice offsets account for the bytes already on disk."""
+            nbytes = len(existing)
+
+        payload.append(Offset())
+        gradient_field_b(objective, manifest, payload)
+        blob = existing + b"".join(p.tobytes() for p in payload[1:])
+        (DATA_DIR / "landscapes.bin").write_bytes(blob)
+        (DATA_DIR / "landscapes.json").write_text(json.dumps(manifest, indent=1) + "\n")
+        print(f"\nAppended gradient field; {len(blob) / 1024:.0f} KB total")
+        return
+
     manifest: dict = {
         "fs": FS,
         "durationS": DURATION_S,
@@ -279,6 +369,8 @@ def main() -> None:
     landscape_a(objective, manifest, payload)
     print("Landscape B (onset x f0)...", flush=True)
     landscape_b(objective, manifest, payload)
+    print("Gradient field for B (true autograd)...", flush=True)
+    gradient_field_b(objective, manifest, payload)
 
     blob = b"".join(p.tobytes() for p in payload)
     (DATA_DIR / "landscapes.bin").write_bytes(blob)

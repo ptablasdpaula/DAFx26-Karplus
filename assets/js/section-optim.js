@@ -5,7 +5,7 @@
 //                 way to move.
 
 import {
-  Surface, Walker, drawTarget, drawWalkers, loadData, nearestIndex,
+  GradientField, Surface, Walker, drawTarget, drawWalkers, loadData, nearestIndex,
   paintOverlay, paintSpectrogram, paintSurface, renderFrequencySampling,
   renderTimeDomain, whenVisible,
 } from './optim-demo.js';
@@ -59,6 +59,18 @@ function initDemoA(root, meta) {
   let timer = null;
   let startCol = 20;
   let startRow = 60;
+
+  // FFT choices come from the manifest, so regenerating the data at a new
+  // sample rate rescales the selector instead of silently mismatching it.
+  if (fftSelect && !fftSelect.options.length) {
+    meta.A.fftSizes.forEach((n, i) => {
+      const option = document.createElement('option');
+      option.value = String(n);
+      option.textContent = `${n} (${(1000 * n / fs).toFixed(0)} ms)`;
+      if (i === Math.floor(meta.A.fftSizes.length / 2)) option.selected = true;
+      fftSelect.appendChild(option);
+    });
+  }
 
   const load = () => {
     const onset = onsetSelect.value;
@@ -205,8 +217,18 @@ function initDemoB(root, meta) {
     }
     surfaceT = new Surface('B', `B_t${ti}_f${fi}_tksa`, mix);
     surfaceF = new Surface('B', `B_t${ti}_f${fi}_fksa`, mix);
-    walkerT = new Walker(surfaceT, TKSA_COLOUR, 'tKSA');
-    walkerF = new Walker(surfaceF, FKSA_COLOUR, 'fKSA');
+    // The markers follow the real autograd gradient, not the slope of the
+    // heatmap under them — which is exactly why the onset axis misbehaves.
+    let fieldT = null;
+    let fieldF = null;
+    try {
+      fieldT = new GradientField(`G_t${ti}_f${fi}_tksa`);
+      fieldF = new GradientField(`G_t${ti}_f${fi}_fksa`);
+    } catch (error) {
+      console.warn('optim demo B: no gradient field, falling back to surface slope', error);
+    }
+    walkerT = new Walker(surfaceT, TKSA_COLOUR, 'tKSA', { field: fieldT });
+    walkerF = new Walker(surfaceF, FKSA_COLOUR, 'fKSA', { field: fieldF });
     targetSignal = null;
     reset();
   };
@@ -333,5 +355,7 @@ export function initOptimDemos() {
     if (b) initDemoB(b, meta);
   };
 
-  whenVisible(a || b, start, '400px');
+  // ?eager skips the visibility gate so headless checks exercise the real path.
+  if (new URLSearchParams(location.search).has('eager')) start();
+  else whenVisible(a || b, start, '400px');
 }

@@ -1,11 +1,20 @@
 // Section 2's optimisation demos.
 //
-// The loss surfaces are sampled offline by tools/precompute_landscapes.py using
-// the paper's own synthesiser and losses (L = 0.05 L_MSS + 1.0 L_SOT, Eq. 12).
-// Here we interpolate that surface, take finite differences for the gradient,
-// and descend. The divergence between the time-domain and frequency-sampling
-// markers is therefore real: it is the difference between two genuinely
-// different landscapes, one of which has been distorted by time-aliasing.
+// Everything here is sampled offline by tools/precompute_landscapes.py using the
+// paper's own synthesiser and losses (L = 0.05 L_MSS + 1.0 L_SOT, Eq. 12).
+//
+// Two distinct things are shipped, and keeping them apart matters:
+//
+//   the loss surface    drawn as the heatmap. Demo A descends it, which is
+//                       legitimate there because the fKSA failure is a property
+//                       of the landscape itself — time-aliasing deforms it.
+//   the gradient field  true autograd gradients. Demo B descends these, because
+//                       the onset failure is NOT in the landscape: the surface
+//                       has usable slope (~63% on the sign test) while the
+//                       gradient reaching the model, routed through a
+//                       Straight-Through Estimator, is a coin flip (~51%,
+//                       matching Table 1). Descending the heatmap there would
+//                       quietly show the opposite of the paper's result.
 
 import { renderFrequencySampling } from './ksa-freq.js';
 import { ExtendedKsaProcessor } from './interactive-ks.js';
@@ -186,13 +195,46 @@ function paintSurface(canvas, surface) {
   return ctx;
 }
 
+/**
+ * The true autograd gradient of the loss, sampled offline.
+ *
+ * Distinct from the slope of the loss surface, and the distinction is the point
+ * of Section 2.3: onset reaches the synthesiser through a Straight-Through
+ * Estimator, so the landscape has usable slope (~63% on the sign test) while
+ * the gradient the model receives does not (~51%, matching Table 1). Looked up
+ * by nearest cell, never interpolated — smoothing would manufacture the
+ * directional coherence this is meant to show is absent.
+ */
+class GradientField {
+  constructor(key) {
+    const meta = manifest.G;
+    if (!meta) throw new Error('no gradient field in manifest');
+    const [rows, cols] = meta.shape;
+    this.rows = rows;
+    this.cols = cols;
+    this.xValues = meta.axes.x.values;
+    this.yValues = meta.axes.y.values;
+    this.dt = dequantise('G', `${key}_dt`);
+    this.df0 = dequantise('G', `${key}_df0`);
+  }
+
+  /** Gradient at surface coordinates, mapped through the axis values. */
+  at(xValue, yValue) {
+    const c = Math.max(0, Math.min(this.cols - 1, nearestIndex(this.xValues, xValue)));
+    const r = Math.max(0, Math.min(this.rows - 1, nearestIndex(this.yValues, yValue)));
+    return [this.dt[r * this.cols + c], this.df0[r * this.cols + c]];
+  }
+}
+
 /** One descending marker on a surface. */
 class Walker {
-  constructor(surface, colour, label, { stepSize = 1.4 } = {}) {
+  constructor(surface, colour, label, { stepSize = 1.4, field = null } = {}) {
     this.surface = surface;
     this.colour = colour;
     this.label = label;
     this.stepSize = stepSize;
+    // When present, descend the real gradient rather than the surface slope.
+    this.field = field;
     this.trail = [];
   }
 
@@ -205,7 +247,24 @@ class Walker {
 
   step() {
     if (this.done) return;
-    const [gc, gr] = this.surface.gradient(this.col, this.row);
+    let gc;
+    let gr;
+    if (this.field) {
+      // Gradients come in physical units (per second, per Hz); convert to grid
+      // steps so the two axes advance comparably on screen.
+      const x = this.surface.xValues[Math.round(this.col)];
+      const y = this.surface.yValues[Math.round(this.row)];
+      const [dx, dy] = this.field.at(x, y);
+      const xs = this.surface.xValues;
+      const ys = this.surface.yValues;
+      const dxPerCell = (xs[xs.length - 1] - xs[0]) / (xs.length - 1);
+      const dyPerCell = (ys[Math.min(ys.length - 1, Math.round(this.row) + 1)]
+        - ys[Math.max(0, Math.round(this.row) - 1)]) / 2 || 1;
+      gc = dx * dxPerCell;
+      gr = dy * dyPerCell;
+    } else {
+      [gc, gr] = this.surface.gradient(this.col, this.row);
+    }
     const norm = Math.hypot(gc, gr);
     if (norm < 1e-9) { this.done = true; return; }
     // Normalised step: the two surfaces have very different loss scales, and
@@ -354,7 +413,7 @@ function paintOverlay(canvas, target, prediction, options = {}) {
 }
 
 export {
-  loadData, Surface, Walker, paintSurface, drawWalkers, drawTarget,
+  loadData, Surface, Walker, GradientField, paintSurface, drawWalkers, drawTarget,
   paintSpectrogram, paintOverlay, renderTimeDomain, renderFrequencySampling,
   nearestIndex, whenVisible, lossColour,
 };
