@@ -6,10 +6,10 @@ pluck to a late, high pluck.  For every reference/prediction pair, this script
 records the differentiable 2D-OT distance and its gradients with respect to
 the predicted onset (seconds) and pitch (Hz).
 
-The excitation is a fixed 256-sample noise burst (one OT hop), placed with
-piecewise-linear fractional delay.  This avoids the event renderer's
-pitch-dependent burst length and circular time shift, either of which would
-confound the gradient measurement.
+The excitation is a fixed 256-sample noise burst (one OT hop), placed with a
+zero-padded Fourier fractional delay.  This retains the event renderer's
+smooth onset derivative while avoiding its pitch-dependent burst length and
+circular time shift, either of which would confound the gradient measurement.
 """
 from __future__ import annotations
 
@@ -78,23 +78,32 @@ class StaticKSRenderer(torch.nn.Module):
         burst = torch.randn(config.burst_samples, generator=generator)
         burst = burst - burst.mean()
         burst = burst / burst.square().mean().sqrt().clamp_min(1e-12)
-        self.register_buffer("burst", burst)
+        fft_length = 1 << math.ceil(
+            math.log2(config.num_samples + config.burst_samples)
+        )
+        padded = torch.nn.functional.pad(
+            burst, (0, fft_length - config.burst_samples),
+        )
+        self.fft_length = fft_length
+        self.register_buffer("burst_spectrum", torch.fft.rfft(padded))
         self.register_buffer(
-            "sample_indices", torch.arange(config.num_samples, dtype=torch.float32),
+            "angular_frequency",
+            2.0
+            * torch.pi
+            * torch.arange(fft_length // 2 + 1, dtype=torch.float32)
+            / fft_length,
         )
 
     def _fractionally_shifted_burst(self, onset_seconds: Tensor) -> Tensor:
-        """Causally place the burst using continuous linear interpolation."""
-        source_position = self.sample_indices - onset_seconds * self.config.sample_rate
-        lower_unclamped = torch.floor(source_position)
-        fraction = source_position - lower_unclamped
-        lower = lower_unclamped.long().clamp(0, self.config.burst_samples - 1)
-        upper = (lower + 1).clamp(max=self.config.burst_samples - 1)
-        shifted = (1.0 - fraction) * self.burst[lower] + fraction * self.burst[upper]
-        valid = (source_position >= 0.0) & (
-            source_position <= self.config.burst_samples - 1
+        """Causally place the burst using a zero-padded Fourier delay."""
+        onset_samples = onset_seconds * self.config.sample_rate
+        phase = torch.exp(
+            -1j * self.angular_frequency * onset_samples,
         )
-        return torch.where(valid, shifted, torch.zeros_like(shifted)).unsqueeze(0)
+        shifted = torch.fft.irfft(
+            self.burst_spectrum * phase, n=self.fft_length,
+        )
+        return shifted[: self.config.num_samples].unsqueeze(0)
 
     def forward(self, onset_seconds: Tensor, pitch_hz: Tensor) -> Tensor:
         cfg = self.config
