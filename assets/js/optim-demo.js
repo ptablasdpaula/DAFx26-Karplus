@@ -210,15 +210,32 @@ class GradientField {
   }
 }
 
-/** One descending marker on a surface. */
+/**
+ * One descending marker on a surface.
+ *
+ * The optimiser is Adam, matching the family the paper trains with, on the two
+ * parameters normalised to [0, 1] — their physical ranges differ by orders of
+ * magnitude, so a single step size in physical units would be meaningless. The
+ * learning rate is chosen for the demo rather than taken from the paper, which
+ * optimises network weights rather than these parameters directly.
+ *
+ * `sgd` is kept for comparison: plain normalised steepest descent, no memory.
+ */
 class Walker {
-  constructor(surface, colour, label, { stepSize = 1.4, field = null } = {}) {
+  constructor(surface, colour, label, {
+    field = null, optimiser = 'adam', learningRate = 0.02,
+    beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8, stepSize = 1.4,
+  } = {}) {
     this.surface = surface;
     this.colour = colour;
     this.label = label;
-    this.stepSize = stepSize;
-    // When present, descend the real gradient rather than the surface slope.
     this.field = field;
+    this.optimiser = optimiser;
+    this.learningRate = learningRate;
+    this.beta1 = beta1;
+    this.beta2 = beta2;
+    this.epsilon = epsilon;
+    this.stepSize = stepSize;
     this.trail = [];
   }
 
@@ -227,36 +244,61 @@ class Walker {
     this.row = row;
     this.trail = [[col, row]];
     this.done = false;
+    // Adam state, in normalised parameter space.
+    this.m = [0, 0];
+    this.v = [0, 0];
+    this.t = 0;
+  }
+
+  /** Loss gradient in grid units at the current position. */
+  currentGradient() {
+    if (!this.field) return this.surface.gradient(this.col, this.row);
+    // The true autograd gradient arrives in physical units; convert to grid
+    // units so both optimisers see the same kind of quantity.
+    const xs = this.surface.xValues;
+    const ys = this.surface.yValues;
+    const x = xs[Math.round(this.col)];
+    const y = ys[Math.round(this.row)];
+    const [dx, dy] = this.field.at(x, y);
+    const dxPerCell = (xs[xs.length - 1] - xs[0]) / (xs.length - 1);
+    const dyPerCell = (ys[Math.min(ys.length - 1, Math.round(this.row) + 1)]
+      - ys[Math.max(0, Math.round(this.row) - 1)]) / 2 || 1;
+    return [dx * dxPerCell, dy * dyPerCell];
   }
 
   step() {
     if (this.done) return;
-    let gc;
-    let gr;
-    if (this.field) {
-      // Gradients come in physical units (per second, per Hz); convert to grid
-      // steps so the two axes advance comparably on screen.
-      const x = this.surface.xValues[Math.round(this.col)];
-      const y = this.surface.yValues[Math.round(this.row)];
-      const [dx, dy] = this.field.at(x, y);
-      const xs = this.surface.xValues;
-      const ys = this.surface.yValues;
-      const dxPerCell = (xs[xs.length - 1] - xs[0]) / (xs.length - 1);
-      const dyPerCell = (ys[Math.min(ys.length - 1, Math.round(this.row) + 1)]
-        - ys[Math.max(0, Math.round(this.row) - 1)]) / 2 || 1;
-      gc = dx * dxPerCell;
-      gr = dy * dyPerCell;
+    const [gc, gr] = this.currentGradient();
+
+    if (this.optimiser === 'adam') {
+      const cols = this.surface.cols - 1;
+      const rows = this.surface.rows - 1;
+      // Normalised coordinates, so both axes move on a comparable scale.
+      const grad = [gc * cols, gr * rows];
+      this.t += 1;
+      let moved = 0;
+      const next = [this.col / cols, this.row / rows];
+      for (let k = 0; k < 2; k += 1) {
+        this.m[k] = this.beta1 * this.m[k] + (1 - this.beta1) * grad[k];
+        this.v[k] = this.beta2 * this.v[k] + (1 - this.beta2) * grad[k] * grad[k];
+        const mHat = this.m[k] / (1 - this.beta1 ** this.t);
+        const vHat = this.v[k] / (1 - this.beta2 ** this.t);
+        const delta = this.learningRate * mHat / (Math.sqrt(vHat) + this.epsilon);
+        next[k] -= delta;
+        moved = Math.max(moved, Math.abs(delta));
+      }
+      this.col = Math.max(0, Math.min(cols, next[0] * cols));
+      this.row = Math.max(0, Math.min(rows, next[1] * rows));
+      if (moved < 1e-6) this.done = true;
     } else {
-      [gc, gr] = this.surface.gradient(this.col, this.row);
+      const norm = Math.hypot(gc, gr);
+      if (norm < 1e-9) { this.done = true; return; }
+      this.col = Math.max(0, Math.min(this.surface.cols - 1, this.col - this.stepSize * gc / norm));
+      this.row = Math.max(0, Math.min(this.surface.rows - 1, this.row - this.stepSize * gr / norm));
     }
-    const norm = Math.hypot(gc, gr);
-    if (norm < 1e-9) { this.done = true; return; }
-    // Normalised step: the two surfaces have very different loss scales, and
-    // comparing their *paths* is the point, not their raw gradient magnitudes.
-    this.col = Math.max(0, Math.min(this.surface.cols - 1, this.col - this.stepSize * gc / norm));
-    this.row = Math.max(0, Math.min(this.surface.rows - 1, this.row - this.stepSize * gr / norm));
+
     this.trail.push([this.col, this.row]);
-    if (this.trail.length > 400) this.done = true;
+    if (this.trail.length > 600) this.done = true;
   }
 }
 

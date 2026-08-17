@@ -43,10 +43,10 @@ function bindCanvasDrag(canvas, surface, onPick) {
 // truncate the decay of the pluck at 0 s does something quite different to the
 // one at 3 s, and you can only see that if you are looking at both.
 function initDemoA(root, meta) {
-  const canvases = [
-    root.querySelector('[data-landscape="0"]'),
-    root.querySelector('[data-landscape="1"]'),
-  ];
+  // Four squares: a surface per (event, implementation). Each walker is drawn
+  // on the surface it is actually descending — the two implementations do not
+  // share a landscape, which is the whole point of Section 2.2.
+  const canvasFor = (event, impl) => root.querySelector(`[data-landscape="${event}-${impl}"]`);
   const specTarget = root.querySelector('[data-spec="target"]');
   const specT = root.querySelector('[data-spec="tksa"]');
   const specF = root.querySelector('[data-spec="fksa"]');
@@ -55,6 +55,7 @@ function initDemoA(root, meta) {
   const stepButton = root.querySelector('[data-action="step"]');
   const resetButton = root.querySelector('[data-action="reset"]');
   const readout = root.querySelector('[data-readout="status"]');
+  const optimiserSelect = root.querySelector('[data-optimiser]');
 
   const fs = meta.fs;
   const length = meta.numSamples;
@@ -82,8 +83,9 @@ function initDemoA(root, meta) {
     tracks.forEach((track, i) => {
       track.surfaceT = new Surface('A', `A_${SLICES[i]}_tksa`);
       track.surfaceF = new Surface('A', `A_${SLICES[i]}_fksa${fft}`);
-      track.walkerT = new Walker(track.surfaceT, TKSA_COLOUR, 'tKSA');
-      track.walkerF = new Walker(track.surfaceF, FKSA_COLOUR, 'fKSA');
+      const options = { optimiser: optimiserSelect ? optimiserSelect.value : 'adam' };
+      track.walkerT = new Walker(track.surfaceT, TKSA_COLOUR, 'tKSA', options);
+      track.walkerF = new Walker(track.surfaceF, FKSA_COLOUR, 'fKSA', options);
     });
     reset();
   };
@@ -129,11 +131,16 @@ function initDemoA(root, meta) {
 
   const render = () => {
     tracks.forEach((track, i) => {
-      const ctx = paintSurface(canvases[i], track.surfaceT);
-      drawTarget(ctx, canvases[i], track.surfaceT,
-        nearestIndex(track.surfaceT.xValues, meta.A.target.decay),
-        nearestIndex(track.surfaceT.yValues, meta.A.target.a1));
-      drawWalkers(ctx, canvases[i], [track.walkerT, track.walkerF], track.surfaceT);
+      [['tksa', track.surfaceT, track.walkerT, TKSA_COLOUR],
+       ['fksa', track.surfaceF, track.walkerF, FKSA_COLOUR]].forEach(([impl, surface, walker]) => {
+        const canvas = canvasFor(i, impl);
+        if (!canvas) return;
+        const ctx = paintSurface(canvas, surface);
+        drawTarget(ctx, canvas, surface,
+          nearestIndex(surface.xValues, meta.A.target.decay),
+          nearestIndex(surface.yValues, meta.A.target.a1));
+        drawWalkers(ctx, canvas, [walker], surface);
+      });
     });
     if (readout) {
       readout.innerHTML = tracks.map((track, i) => {
@@ -180,10 +187,15 @@ function initDemoA(root, meta) {
   if (resetButton) resetButton.addEventListener('click', reset);
   if (fftSelect) fftSelect.addEventListener('change', load);
 
+  if (optimiserSelect) optimiserSelect.addEventListener('change', load);
+
   load();
-  canvases.forEach((canvas, i) => bindCanvasDrag(canvas, tracks[i].surfaceT, (col, row) => {
-    starts[i] = [col, row];
-    reset();
+  tracks.forEach((track, i) => ['tksa', 'fksa'].forEach(impl => {
+    const canvas = canvasFor(i, impl);
+    if (canvas) bindCanvasDrag(canvas, track.surfaceT, (col, row) => {
+      starts[i] = [col, row];
+      reset();
+    });
   }));
 }
 
@@ -198,6 +210,7 @@ function initDemoB(root, meta) {
   const stepButton = root.querySelector('[data-action="step"]');
   const resetButton = root.querySelector('[data-action="reset"]');
   const readout = root.querySelector('[data-readout="status"]');
+  const optimiserSelect = root.querySelector('[data-optimiser]');
 
   const fs = meta.fs;
   const length = meta.numSamples;

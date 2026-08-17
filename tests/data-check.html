@@ -69,6 +69,73 @@ window.addEventListener('error', e => {
     `trail lengths ${made.map(w => w.trail.length).join(', ')}`);
 }
 
+
+// ── Adam, and the two implementations on their own surfaces. ───────────────
+{
+  const fft = meta.A.fftSizes[0];
+  const sT = new Surface('A', 'A_3s_tksa');
+  const sF = new Surface('A', `A_3s_fksa${fft}`);
+
+  // The two surfaces genuinely differ — if they did not, plotting both walkers
+  // on one heatmap would have been harmless.
+  let maxDiff = 0;
+  const nT = v => (v - sT.min) / (sT.max - sT.min);
+  const nF = v => (v - sF.min) / (sF.max - sF.min);
+  for (let i = 0; i < sT.data.length; i += 1) {
+    maxDiff = Math.max(maxDiff, Math.abs(nT(sT.data[i]) - nF(sF.data[i])));
+  }
+  report('tKSA and fKSA are different surfaces', maxDiff > 0.2,
+    `max normalised difference ${maxDiff.toFixed(3)} — each walker needs its own square`);
+
+  // Adam must reach the answer on the well-formed surface.
+  const adam = new Walker(sT, '#000', 'adam', { optimiser: 'adam' });
+  adam.reset(20, 60);
+  for (let i = 0; i < 600; i += 1) adam.step();
+  const { col, row } = sT.argmin();
+  report('Adam converges on the tKSA surface',
+    Math.hypot(adam.col - col, adam.row - row) < 12,
+    `settled ${Math.hypot(adam.col - col, adam.row - row).toFixed(1)} cells from the minimum ` +
+    `at g=${sT.xValues[Math.round(adam.col)].toFixed(4)}`);
+
+  // Adam has memory; steepest descent does not. Their paths must differ.
+  const sgd = new Walker(sT, '#000', 'sgd', { optimiser: 'sgd' });
+  sgd.reset(20, 60);
+  for (let i = 0; i < 600; i += 1) sgd.step();
+  const pathDiff = Math.hypot(adam.col - sgd.col, adam.row - sgd.row);
+  report('Adam and steepest descent take different paths',
+    adam.trail.length !== sgd.trail.length || pathDiff > 0.5,
+    `${adam.trail.length} vs ${sgd.trail.length} steps`);
+}
+
+
+// ── A frame as long as the clip removes the artefact entirely. ─────────────
+{
+  const longest = meta.A.fftSizes[meta.A.fftSizes.length - 1];
+  const shortest = meta.A.fftSizes[0];
+  const truth = new Surface('A', 'A_3s_tksa').argmin();
+  const tSurface = new Surface('A', 'A_3s_tksa');
+  const errs = meta.A.fftSizes.map(n => {
+    const s = new Surface('A', `A_3s_fksa${n}`);
+    const m = s.argmin();
+    return Math.abs(s.xValues[m.col] - meta.A.target.decay);
+  });
+  note(`fKSA decay error by frame: ${meta.A.fftSizes.map((n, i) =>
+    `${(n / meta.fs).toFixed(2)}s ${errs[i].toFixed(4)}`).join('  ')}`);
+  report('the error falls monotonically with frame length',
+    errs.every((e, i) => i === 0 || e <= errs[i - 1] + 1e-9),
+    errs.map(e => e.toFixed(4)).join(' → '));
+
+  const full = new Surface('A', `A_3s_fksa${longest}`).argmin();
+  report('a frame as long as the clip matches the time domain exactly',
+    full.col === truth.col && full.row === truth.row,
+    `fKSA/${longest} lands on g=${tSurface.xValues[full.col].toFixed(4)}, ` +
+    `a1=${tSurface.yValues[full.row].toFixed(4)} — the same cell as tKSA`);
+  report('the shortest frame is still badly wrong',
+    errs[0] > errs[errs.length - 1] * 50,
+    `${errs[0].toFixed(4)} at ${(shortest / meta.fs).toFixed(2)}s vs ` +
+    `${errs[errs.length - 1].toFixed(4)} at ${(longest / meta.fs).toFixed(2)}s`);
+}
+
 document.getElementById('out').textContent = `UNCAUGHT: ${e.message}\n${e.filename}:${e.lineno}`;
 });
 window.addEventListener('unhandledrejection', e => {
@@ -131,6 +198,73 @@ window.addEventListener('unhandledrejection', e => {
       return made.every(w => w.trail.length > 40);
     })(),
     `trail lengths ${made.map(w => w.trail.length).join(', ')}`);
+}
+
+
+// ── Adam, and the two implementations on their own surfaces. ───────────────
+{
+  const fft = meta.A.fftSizes[0];
+  const sT = new Surface('A', 'A_3s_tksa');
+  const sF = new Surface('A', `A_3s_fksa${fft}`);
+
+  // The two surfaces genuinely differ — if they did not, plotting both walkers
+  // on one heatmap would have been harmless.
+  let maxDiff = 0;
+  const nT = v => (v - sT.min) / (sT.max - sT.min);
+  const nF = v => (v - sF.min) / (sF.max - sF.min);
+  for (let i = 0; i < sT.data.length; i += 1) {
+    maxDiff = Math.max(maxDiff, Math.abs(nT(sT.data[i]) - nF(sF.data[i])));
+  }
+  report('tKSA and fKSA are different surfaces', maxDiff > 0.2,
+    `max normalised difference ${maxDiff.toFixed(3)} — each walker needs its own square`);
+
+  // Adam must reach the answer on the well-formed surface.
+  const adam = new Walker(sT, '#000', 'adam', { optimiser: 'adam' });
+  adam.reset(20, 60);
+  for (let i = 0; i < 600; i += 1) adam.step();
+  const { col, row } = sT.argmin();
+  report('Adam converges on the tKSA surface',
+    Math.hypot(adam.col - col, adam.row - row) < 12,
+    `settled ${Math.hypot(adam.col - col, adam.row - row).toFixed(1)} cells from the minimum ` +
+    `at g=${sT.xValues[Math.round(adam.col)].toFixed(4)}`);
+
+  // Adam has memory; steepest descent does not. Their paths must differ.
+  const sgd = new Walker(sT, '#000', 'sgd', { optimiser: 'sgd' });
+  sgd.reset(20, 60);
+  for (let i = 0; i < 600; i += 1) sgd.step();
+  const pathDiff = Math.hypot(adam.col - sgd.col, adam.row - sgd.row);
+  report('Adam and steepest descent take different paths',
+    adam.trail.length !== sgd.trail.length || pathDiff > 0.5,
+    `${adam.trail.length} vs ${sgd.trail.length} steps`);
+}
+
+
+// ── A frame as long as the clip removes the artefact entirely. ─────────────
+{
+  const longest = meta.A.fftSizes[meta.A.fftSizes.length - 1];
+  const shortest = meta.A.fftSizes[0];
+  const truth = new Surface('A', 'A_3s_tksa').argmin();
+  const tSurface = new Surface('A', 'A_3s_tksa');
+  const errs = meta.A.fftSizes.map(n => {
+    const s = new Surface('A', `A_3s_fksa${n}`);
+    const m = s.argmin();
+    return Math.abs(s.xValues[m.col] - meta.A.target.decay);
+  });
+  note(`fKSA decay error by frame: ${meta.A.fftSizes.map((n, i) =>
+    `${(n / meta.fs).toFixed(2)}s ${errs[i].toFixed(4)}`).join('  ')}`);
+  report('the error falls monotonically with frame length',
+    errs.every((e, i) => i === 0 || e <= errs[i - 1] + 1e-9),
+    errs.map(e => e.toFixed(4)).join(' → '));
+
+  const full = new Surface('A', `A_3s_fksa${longest}`).argmin();
+  report('a frame as long as the clip matches the time domain exactly',
+    full.col === truth.col && full.row === truth.row,
+    `fKSA/${longest} lands on g=${tSurface.xValues[full.col].toFixed(4)}, ` +
+    `a1=${tSurface.yValues[full.row].toFixed(4)} — the same cell as tKSA`);
+  report('the shortest frame is still badly wrong',
+    errs[0] > errs[errs.length - 1] * 50,
+    `${errs[0].toFixed(4)} at ${(shortest / meta.fs).toFixed(2)}s vs ` +
+    `${errs[errs.length - 1].toFixed(4)} at ${(longest / meta.fs).toFixed(2)}s`);
 }
 
 document.getElementById('out').textContent = `REJECTED: ${(e.reason && e.reason.stack) || e.reason}`;
@@ -214,6 +348,73 @@ try {
       return made.every(w => w.trail.length > 40);
     })(),
     `trail lengths ${made.map(w => w.trail.length).join(', ')}`);
+}
+
+
+// ── Adam, and the two implementations on their own surfaces. ───────────────
+{
+  const fft = meta.A.fftSizes[0];
+  const sT = new Surface('A', 'A_3s_tksa');
+  const sF = new Surface('A', `A_3s_fksa${fft}`);
+
+  // The two surfaces genuinely differ — if they did not, plotting both walkers
+  // on one heatmap would have been harmless.
+  let maxDiff = 0;
+  const nT = v => (v - sT.min) / (sT.max - sT.min);
+  const nF = v => (v - sF.min) / (sF.max - sF.min);
+  for (let i = 0; i < sT.data.length; i += 1) {
+    maxDiff = Math.max(maxDiff, Math.abs(nT(sT.data[i]) - nF(sF.data[i])));
+  }
+  report('tKSA and fKSA are different surfaces', maxDiff > 0.2,
+    `max normalised difference ${maxDiff.toFixed(3)} — each walker needs its own square`);
+
+  // Adam must reach the answer on the well-formed surface.
+  const adam = new Walker(sT, '#000', 'adam', { optimiser: 'adam' });
+  adam.reset(20, 60);
+  for (let i = 0; i < 600; i += 1) adam.step();
+  const { col, row } = sT.argmin();
+  report('Adam converges on the tKSA surface',
+    Math.hypot(adam.col - col, adam.row - row) < 12,
+    `settled ${Math.hypot(adam.col - col, adam.row - row).toFixed(1)} cells from the minimum ` +
+    `at g=${sT.xValues[Math.round(adam.col)].toFixed(4)}`);
+
+  // Adam has memory; steepest descent does not. Their paths must differ.
+  const sgd = new Walker(sT, '#000', 'sgd', { optimiser: 'sgd' });
+  sgd.reset(20, 60);
+  for (let i = 0; i < 600; i += 1) sgd.step();
+  const pathDiff = Math.hypot(adam.col - sgd.col, adam.row - sgd.row);
+  report('Adam and steepest descent take different paths',
+    adam.trail.length !== sgd.trail.length || pathDiff > 0.5,
+    `${adam.trail.length} vs ${sgd.trail.length} steps`);
+}
+
+
+// ── A frame as long as the clip removes the artefact entirely. ─────────────
+{
+  const longest = meta.A.fftSizes[meta.A.fftSizes.length - 1];
+  const shortest = meta.A.fftSizes[0];
+  const truth = new Surface('A', 'A_3s_tksa').argmin();
+  const tSurface = new Surface('A', 'A_3s_tksa');
+  const errs = meta.A.fftSizes.map(n => {
+    const s = new Surface('A', `A_3s_fksa${n}`);
+    const m = s.argmin();
+    return Math.abs(s.xValues[m.col] - meta.A.target.decay);
+  });
+  note(`fKSA decay error by frame: ${meta.A.fftSizes.map((n, i) =>
+    `${(n / meta.fs).toFixed(2)}s ${errs[i].toFixed(4)}`).join('  ')}`);
+  report('the error falls monotonically with frame length',
+    errs.every((e, i) => i === 0 || e <= errs[i - 1] + 1e-9),
+    errs.map(e => e.toFixed(4)).join(' → '));
+
+  const full = new Surface('A', `A_3s_fksa${longest}`).argmin();
+  report('a frame as long as the clip matches the time domain exactly',
+    full.col === truth.col && full.row === truth.row,
+    `fKSA/${longest} lands on g=${tSurface.xValues[full.col].toFixed(4)}, ` +
+    `a1=${tSurface.yValues[full.row].toFixed(4)} — the same cell as tKSA`);
+  report('the shortest frame is still badly wrong',
+    errs[0] > errs[errs.length - 1] * 50,
+    `${errs[0].toFixed(4)} at ${(shortest / meta.fs).toFixed(2)}s vs ` +
+    `${errs[errs.length - 1].toFixed(4)} at ${(longest / meta.fs).toFixed(2)}s`);
 }
 
 document.getElementById('out').textContent = `FAILED TO LOAD DATA: ${error}`;
@@ -438,6 +639,73 @@ if (meta.G) {
       return made.every(w => w.trail.length > 40);
     })(),
     `trail lengths ${made.map(w => w.trail.length).join(', ')}`);
+}
+
+
+// ── Adam, and the two implementations on their own surfaces. ───────────────
+{
+  const fft = meta.A.fftSizes[0];
+  const sT = new Surface('A', 'A_3s_tksa');
+  const sF = new Surface('A', `A_3s_fksa${fft}`);
+
+  // The two surfaces genuinely differ — if they did not, plotting both walkers
+  // on one heatmap would have been harmless.
+  let maxDiff = 0;
+  const nT = v => (v - sT.min) / (sT.max - sT.min);
+  const nF = v => (v - sF.min) / (sF.max - sF.min);
+  for (let i = 0; i < sT.data.length; i += 1) {
+    maxDiff = Math.max(maxDiff, Math.abs(nT(sT.data[i]) - nF(sF.data[i])));
+  }
+  report('tKSA and fKSA are different surfaces', maxDiff > 0.2,
+    `max normalised difference ${maxDiff.toFixed(3)} — each walker needs its own square`);
+
+  // Adam must reach the answer on the well-formed surface.
+  const adam = new Walker(sT, '#000', 'adam', { optimiser: 'adam' });
+  adam.reset(20, 60);
+  for (let i = 0; i < 600; i += 1) adam.step();
+  const { col, row } = sT.argmin();
+  report('Adam converges on the tKSA surface',
+    Math.hypot(adam.col - col, adam.row - row) < 12,
+    `settled ${Math.hypot(adam.col - col, adam.row - row).toFixed(1)} cells from the minimum ` +
+    `at g=${sT.xValues[Math.round(adam.col)].toFixed(4)}`);
+
+  // Adam has memory; steepest descent does not. Their paths must differ.
+  const sgd = new Walker(sT, '#000', 'sgd', { optimiser: 'sgd' });
+  sgd.reset(20, 60);
+  for (let i = 0; i < 600; i += 1) sgd.step();
+  const pathDiff = Math.hypot(adam.col - sgd.col, adam.row - sgd.row);
+  report('Adam and steepest descent take different paths',
+    adam.trail.length !== sgd.trail.length || pathDiff > 0.5,
+    `${adam.trail.length} vs ${sgd.trail.length} steps`);
+}
+
+
+// ── A frame as long as the clip removes the artefact entirely. ─────────────
+{
+  const longest = meta.A.fftSizes[meta.A.fftSizes.length - 1];
+  const shortest = meta.A.fftSizes[0];
+  const truth = new Surface('A', 'A_3s_tksa').argmin();
+  const tSurface = new Surface('A', 'A_3s_tksa');
+  const errs = meta.A.fftSizes.map(n => {
+    const s = new Surface('A', `A_3s_fksa${n}`);
+    const m = s.argmin();
+    return Math.abs(s.xValues[m.col] - meta.A.target.decay);
+  });
+  note(`fKSA decay error by frame: ${meta.A.fftSizes.map((n, i) =>
+    `${(n / meta.fs).toFixed(2)}s ${errs[i].toFixed(4)}`).join('  ')}`);
+  report('the error falls monotonically with frame length',
+    errs.every((e, i) => i === 0 || e <= errs[i - 1] + 1e-9),
+    errs.map(e => e.toFixed(4)).join(' → '));
+
+  const full = new Surface('A', `A_3s_fksa${longest}`).argmin();
+  report('a frame as long as the clip matches the time domain exactly',
+    full.col === truth.col && full.row === truth.row,
+    `fKSA/${longest} lands on g=${tSurface.xValues[full.col].toFixed(4)}, ` +
+    `a1=${tSurface.yValues[full.row].toFixed(4)} — the same cell as tKSA`);
+  report('the shortest frame is still badly wrong',
+    errs[0] > errs[errs.length - 1] * 50,
+    `${errs[0].toFixed(4)} at ${(shortest / meta.fs).toFixed(2)}s vs ` +
+    `${errs[errs.length - 1].toFixed(4)} at ${(longest / meta.fs).toFixed(2)}s`);
 }
 
 document.getElementById('out').textContent =

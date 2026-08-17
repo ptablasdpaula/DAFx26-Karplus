@@ -64,10 +64,12 @@ W_SOT = 1.0
 # {f0, t, a1, g, p, dyn} = {110 Hz, 2 s, 0.2, 0.99, 0.25, 0.9}.
 TARGET = dict(f0=110.0, decay=0.99, a1=0.2, pluck_position=0.25, dynamic_level=0.9)
 
-# fKSA frame sizes. At 16 kHz these span 128 ms to 1.02 s, straddling the point
-# where the frame stops containing the decay. The largest matches the N_FFT the
-# paper uses.
-FFT_SIZES = [2048, 4096, 8192, 16384]
+# fKSA frame sizes at 16 kHz: 0.13 s and 1.02 s (the N_FFT the paper uses) for
+# the badly-aliased end, then round 2, 3 and 4 second frames. None of the last
+# three is a power of two, which is why assets/js/fft.js carries Bluestein — the
+# page has to render the same frame the loss was sampled with, and rounding to a
+# nearby power of two would mean showing one thing and measuring another.
+FFT_SIZES = [2048, 16384, 32000, 48000, 64000]
 # For landscape B we want fKSA to be effectively alias-free, mirroring the
 # N_FFT = 16384 the paper uses for its multi-event onset experiments.
 FFT_LONG = 16384
@@ -336,6 +338,32 @@ def main() -> None:
 
     # PRECOMPUTE_ONLY=G recomputes just the gradient field and appends it to the
     # existing output, so a change there does not cost a rerun of the surfaces.
+    if os.environ.get("PRECOMPUTE_ONLY") == "A":
+        old = json.loads((DATA_DIR / "landscapes.json").read_text())
+        blob = (DATA_DIR / "landscapes.bin").read_bytes()
+        manifest = {k: v for k, v in old.items() if k not in ("A",)}
+        payload: list[np.ndarray] = []
+        print("Landscape A (decay x damping)...", flush=True)
+        landscape_a(objective, manifest, payload)
+
+        # A is rewritten in place at the head of the file; B and G keep their
+        # bytes and simply shift by however much A's size changed.
+        out = b"".join(p.tobytes() for p in payload)
+        for group in ("B", "G"):
+            if group not in manifest:
+                continue
+            for key, entry in sorted(manifest[group]["slices"].items(),
+                                     key=lambda kv: kv[1]["offset"]):
+                rows, cols = manifest[group]["shape"]
+                size = rows * cols * 2
+                chunk = blob[entry["offset"]:entry["offset"] + size]
+                entry["offset"] = len(out)
+                out += chunk
+        (DATA_DIR / "landscapes.bin").write_bytes(out)
+        (DATA_DIR / "landscapes.json").write_text(json.dumps(manifest, indent=1) + "\n")
+        print(f"\nRewrote landscape A; {len(out) / 1024:.0f} KB total")
+        return
+
     if os.environ.get("PRECOMPUTE_ONLY") == "G":
         manifest = json.loads((DATA_DIR / "landscapes.json").read_text())
         existing = (DATA_DIR / "landscapes.bin").read_bytes()

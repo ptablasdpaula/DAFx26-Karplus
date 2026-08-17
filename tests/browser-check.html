@@ -177,6 +177,31 @@ function compareToAnalytic(label, measured, analyticAt, fftSize, tolDb) {
     `relative L1 ${(num / den).toExponential(2)}`);
 }
 
+
+// ── Longer frames converge on the time-domain answer. ──────────────────────
+{
+  const fs = 16000;
+  const f0 = 110;
+  const params = { f0, fs, decay: 0.99, damping: 0.2, pluck: 0.25, dynamic: 0.9 };
+  const proc = new ExtendedKsaProcessor(fs, f0);
+  const reference = measure(proc, { pluck: 0.25, dynamic: 0.9, damping: 0.2, decay: 0.99 }, 65536);
+
+  const errs = [2048, 8192, 16384, 32768, 65536].map(nFft => {
+    const ir = frequencySamplingImpulseResponse({ ...params, nFft });
+    let num = 0, den = 0;
+    for (let i = 0; i < Math.min(nFft, 4096); i += 1) {
+      num += Math.abs(ir[i] - reference[i]);
+      den += Math.abs(reference[i]);
+    }
+    return num / den;
+  });
+  report('fKSA converges on the time domain as the frame grows',
+    errs.every((e, i) => i === 0 || e <= errs[i - 1] + 1e-12),
+    errs.map(e => e.toExponential(1)).join(' → '));
+  report('the longest usable frame is close to alias-free', errs[errs.length - 1] < errs[0] / 10,
+    `${errs[errs.length - 1].toExponential(2)} at 65536 vs ${errs[0].toExponential(2)} at 2048`);
+}
+
 document.getElementById('out').textContent =
   lines.join('\n') + `\n\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`;
 </script>

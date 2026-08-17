@@ -201,8 +201,13 @@
     .demo-controls label{display:grid;gap:3px;font-size:.76rem;font-weight:600;margin:0}
     .demo-controls select{border:1px solid #cfd5da;border-radius:6px;padding:4px 8px;font-size:.82rem;background:#fff}
     .demo-body{display:grid;grid-template-columns:minmax(0,440px) minmax(0,1fr);gap:20px;align-items:start}
-    .demo-body-paired{grid-template-columns:minmax(0,340px) minmax(0,1fr)}
+    .demo-body-paired{grid-template-columns:minmax(0,500px) minmax(0,1fr)}
     .landscape-stack{display:grid;gap:12px}
+    .landscape-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px;align-items:start}
+    .landscape-grid .grid-head{font-size:.72rem;font-weight:700;color:#274f69;text-align:center}
+    .landscape-grid figure{margin:0}
+    .landscape-grid figcaption{font-size:.68rem;text-align:center;margin-top:3px}
+    .landscape-grid .landscape-key{grid-column:1/-1}
     .landscape-stack figcaption{font-size:.74rem;font-weight:600;color:#274f69;margin:0 0 4px}
     .landscape-key{font-size:.7rem;color:#5f6871;line-height:1.45;margin:0}
     .readout-row{display:block}

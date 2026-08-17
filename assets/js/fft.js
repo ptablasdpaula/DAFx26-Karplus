@@ -53,9 +53,102 @@ export function ifftInPlace(re, im) {
   }
 }
 
+
+const isPowerOfTwo = n => n > 0 && (n & (n - 1)) === 0;
+
+/**
+ * Bluestein's algorithm: a DFT of any length, by turning it into a convolution
+ * that a radix-2 FFT can do.
+ *
+ * Needed because the frame sizes the Section 2.2 demo offers are round numbers
+ * of seconds — 2 s, 3 s and 4 s at 16 kHz are 32000, 48000 and 64000 samples —
+ * and none of those is a power of two. The browser has to render the same frame
+ * the loss was sampled with, so rounding to a nearby power of two would mean
+ * showing one thing and measuring another.
+ *
+ * Uses jk = (j^2 + k^2 - (k - j)^2) / 2 to rewrite the transform as a linear
+ * convolution of length >= 2n - 1, which is then padded up to a power of two.
+ */
+function bluestein(re, im, inverse) {
+  const n = re.length;
+  let m = 1;
+  while (m < 2 * n + 1) m <<= 1;
+
+  const sign = inverse ? 1 : -1;
+  const cos = new Float64Array(n);
+  const sin = new Float64Array(n);
+  for (let i = 0; i < n; i += 1) {
+    // (i * i) % (2n) keeps the angle exact for large i, where i * i would not
+    // survive double precision.
+    const angle = (Math.PI * ((i * i) % (2 * n))) / n;
+    cos[i] = Math.cos(angle);
+    sin[i] = Math.sin(angle) * sign;
+  }
+
+  // a[j] = x[j] * w[j], with w[i] = cos + i*sin as built above.
+  const aRe = new Float64Array(m);
+  const aIm = new Float64Array(m);
+  for (let i = 0; i < n; i += 1) {
+    aRe[i] = re[i] * cos[i] - im[i] * sin[i];
+    aIm[i] = re[i] * sin[i] + im[i] * cos[i];
+  }
+
+  // b[m] = conj(w[m]), mirrored so the cyclic convolution is a linear one.
+  const bRe = new Float64Array(m);
+  const bIm = new Float64Array(m);
+  bRe[0] = cos[0];
+  bIm[0] = -sin[0];
+  for (let i = 1; i < n; i += 1) {
+    bRe[i] = bRe[m - i] = cos[i];
+    bIm[i] = bIm[m - i] = -sin[i];
+  }
+
+  fftInPlace(aRe, aIm);
+  fftInPlace(bRe, bIm);
+  for (let i = 0; i < m; i += 1) {
+    const tr = aRe[i] * bRe[i] - aIm[i] * bIm[i];
+    aIm[i] = aRe[i] * bIm[i] + aIm[i] * bRe[i];
+    aRe[i] = tr;
+  }
+  // Inverse of the length-m transform, by conjugation.
+  for (let i = 0; i < m; i += 1) aIm[i] = -aIm[i];
+  fftInPlace(aRe, aIm);
+  for (let i = 0; i < m; i += 1) {
+    aRe[i] /= m;
+    aIm[i] = -aIm[i] / m;
+  }
+
+  // X[k] = w[k] * conv[k]
+  for (let i = 0; i < n; i += 1) {
+    re[i] = aRe[i] * cos[i] - aIm[i] * sin[i];
+    im[i] = aRe[i] * sin[i] + aIm[i] * cos[i];
+  }
+}
+
+/** Forward transform of any length, in place. */
+export function transform(re, im) {
+  if (isPowerOfTwo(re.length)) fftInPlace(re, im);
+  else bluestein(re, im, false);
+}
+
+/** Inverse transform of any length, in place. */
+export function inverseTransform(re, im) {
+  const n = re.length;
+  if (isPowerOfTwo(n)) {
+    ifftInPlace(re, im);
+    return;
+  }
+  bluestein(re, im, true);
+  for (let i = 0; i < n; i += 1) {
+    re[i] /= n;
+    im[i] /= n;
+  }
+}
+
 /**
  * Inverse real FFT from a half spectrum of length n/2 + 1, mirroring it back to
- * full Hermitian length before transforming. Returns the real signal.
+ * full Hermitian length before transforming. Returns the real signal. `n` may be
+ * any even length, not only a power of two.
  */
 export function irfft(halfRe, halfIm, n) {
   const re = new Float64Array(n);
@@ -71,7 +164,7 @@ export function irfft(halfRe, halfIm, n) {
   }
   im[0] = 0;
   if (half < n) im[half] = 0;
-  ifftInPlace(re, im);
+  inverseTransform(re, im);
   return re;
 }
 
