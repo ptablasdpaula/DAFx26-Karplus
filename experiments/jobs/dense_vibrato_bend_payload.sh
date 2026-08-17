@@ -32,7 +32,8 @@ case "$MODE" in
         # Build on the sm_80 node, then reinstall the compatibility pin after
         # PhilTorch so its compiled extension cannot be displaced by resolution.
         pixi install -e cuda
-        pixi run -e cuda python -m pip install --force-reinstall --no-deps torchlpc==0.7.2
+        pixi run -e cuda python -m pip install \
+            --force-reinstall --no-deps --no-build-isolation torchlpc==0.7.2
         pixi run -e cuda python experiments/dense_vibrato_bend.py \
             --output "$OUTPUT" preflight
         ;;
