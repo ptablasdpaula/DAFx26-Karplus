@@ -186,7 +186,53 @@
           <h3 id="sec-2-1">2.1 &nbsp;A guitar note is an event, not a frame</h3>
           <p>Everything so far assumed we already knew the parameters. Sound matching is the inverse problem: given a recording, recover the parameters that reproduce it. For a physical model like the KSA this is unusually appealing, because the parameters that come back out are interpretable — they tell you something about the string.</p>
           <p>Listen to a real recording first. This is an acoustic guitar note from NSynth, plucked once and palm-muted at around three seconds.</p>
-          <div class="featured-audio cell" data-featured-audio="assets/audio/real/target/010.ogg"><div class="featured-label"><span>NSynth acoustic guitar</span><strong>Target 10 · palm mute near 3 s</strong></div><div class="media-stack"><div class="waveform"></div><div class="spectrogram"></div><button class="overlay-play" aria-label="Play target 10"><i class="fas fa-play"></i></button></div></div>
+          <div class="featured-audio cell" data-featured-audio="assets/audio/real/target/013.ogg"><div class="featured-label"><span>NSynth acoustic guitar</span><strong>Target 13 · F2, released near 3 s</strong></div><div class="media-stack"><div class="waveform"></div><div class="spectrogram"></div><button class="overlay-play" aria-label="Play target 13"><i class="fas fa-play"></i></button></div></div>
+
+          <p>Try it yourself. Below, the same recording sits above a two-event extended Karplus-Strong at the same pitch, with its onsets pinned to 0 s and 3 s. The four timbral controls of Chapter 1 apply to each event independently, held from its onset until the next — which is exactly how the synthesiser treats a set of events. Click either spectrogram to hear it.</p>
+
+          <div class="match-widget" data-match-widget data-match-target="assets/audio/real/target/013.ogg">
+            <div class="match-specs">
+              <figure class="match-cell" data-match-cell="target">
+                <figcaption>NSynth target · F2</figcaption>
+                <canvas data-match-spec="target" width="620" height="150"></canvas>
+                <span class="match-play"><i class="fas fa-play"></i></span>
+              </figure>
+              <figure class="match-cell" data-match-cell="yours">
+                <figcaption>Your two events</figcaption>
+                <canvas data-match-spec="yours" width="620" height="150"></canvas>
+                <span class="match-play"><i class="fas fa-play"></i></span>
+              </figure>
+            </div>
+
+            <div class="match-controls">
+              <div class="match-event">
+                <h5>Event 1 &middot; pluck at 0 s</h5>
+                <label>Decay $g$ <output data-match-readout="0.decay"></output>
+                  <input type="range" data-match-param="0.decay" min="0.90" max="0.9999" step="0.0001"></label>
+                <label>Damping $a_1$ <output data-match-readout="0.damping"></output>
+                  <input type="range" data-match-param="0.damping" min="0.01" max="0.9" step="0.01"></label>
+                <label>Pluck position $p$ <output data-match-readout="0.pluck"></output>
+                  <input type="range" data-match-param="0.pluck" min="0.01" max="0.5" step="0.01"></label>
+                <label>Dynamics $d$ <output data-match-readout="0.dynamic"></output>
+                  <input type="range" data-match-param="0.dynamic" min="0.02" max="1" step="0.01"></label>
+              </div>
+              <div class="match-event">
+                <h5>Event 2 &middot; release at 3 s</h5>
+                <label>Decay $g$ <output data-match-readout="1.decay"></output>
+                  <input type="range" data-match-param="1.decay" min="0.90" max="0.9999" step="0.0001"></label>
+                <label>Damping $a_1$ <output data-match-readout="1.damping"></output>
+                  <input type="range" data-match-param="1.damping" min="0.01" max="0.9" step="0.01"></label>
+                <label>Pluck position $p$ <output data-match-readout="1.pluck"></output>
+                  <input type="range" data-match-param="1.pluck" min="0.01" max="0.5" step="0.01"></label>
+                <label>Dynamics $d$ <output data-match-readout="1.dynamic"></output>
+                  <input type="range" data-match-param="1.dynamic" min="0.02" max="1" step="0.01"></label>
+              </div>
+            </div>
+            <button class="btn btn-sm btn-outline-dark" type="button" data-action="match-reset">Reset</button>
+          </div>
+
+          <p>Eight numbers, and the resemblance you can reach by hand is already close. That is the appeal of a physical model: the parameters mean something, and there are few enough of them to reason about. The rest of this page is about getting a network to find them without you.</p>
+
           <p>Two things happen in that clip, and both are <em>events</em>: an excitation and a termination. Nothing about the string changes in between. This matters for how a model should be shaped. Most DDSP systems predict parameters on a fixed frame grid — a new $f_0$, a new decay, a new damping every few milliseconds. For a plucked string that is both wasteful and actively harmful: the KSA is a recursive, energy-dissipating system, so an error in a frame-wise decay estimate accumulates through the feedback loop instead of staying local.</p>
           <p>So we predict a <em>set of events</em> instead. Each event carries an onset time, an $f_0$, and the timbral parameters from Chapter 1, held constant for the note's duration. Provided no extended techniques are present — no vibrato, no pitch bends — this is not an approximation, it is simply the right representation.</p>
           <figure class="architecture-figure"><img class="paper-figure" src="assets/images/fig_2.png" alt="Event-based sound-matching model architecture"><a class="figure-source" href="assets/figures/fig_2.pdf">Open PDF</a><figcaption>The pipeline. A dual frontend feeds a set-prediction transformer, which asks which events exist, when they occur, their pitch, and their timbre, then resynthesises them through the differentiable KSA.</figcaption></figure>

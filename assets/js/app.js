@@ -1,19 +1,21 @@
 import { initAudioExamples, pauseExamplePlayers } from './audio-examples.js';
 import { initInteractiveKarplus, stopSequence } from './interactive-ks.js';
 import { initKsaFigure, stopKsaFigure } from './section-ksa.js';
+import { initMatchWidget, stopMatchWidget } from './section-match.js';
 import { initOptimDemos } from './section-optim.js';
 import { initTabs } from './tabs.js';
 
 initAudioExamples();
 initInteractiveKarplus({ pauseExamples: () => pauseExamplePlayers(null) });
 initKsaFigure();
+initMatchWidget();
 initOptimDemos();
 
 initTabs({
   onTabChange: tabName => {
     // Never leave a string ringing in a panel the reader has left.
     if (tabName !== 'synth') stopSequence();
-    if (tabName !== 'story') stopKsaFigure();
+    if (tabName !== 'story') { stopKsaFigure(); stopMatchWidget(); }
   },
 });
 

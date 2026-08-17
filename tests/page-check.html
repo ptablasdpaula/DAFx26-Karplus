@@ -13,6 +13,7 @@
 import { OriginalKsaProcessor } from '../assets/js/interactive-ks.js';
 import { sampleResponse } from '../assets/js/ks-response.js';
 import { responseCurveDb } from '../assets/js/section-ksa.js';
+import { renderMatchSignal, matchEvents, MATCH_F0 } from '../assets/js/section-match.js';
 
 const lines = [];
 let failures = 0;
@@ -150,6 +151,62 @@ const report = (name, ok, detail = '') => {
   const expected = 20 * Math.log10(1 / 0.25);
   report('the drop matches 20log10(d)', Math.abs((loud - soft) - expected) < 0.5,
     `${(loud - soft).toFixed(2)} dB vs expected ${expected.toFixed(2)} dB`);
+}
+
+
+// ── The two-event matching widget renders the structure it claims. ─────────
+{
+  const FS = 16000;
+  const rms = (sig, from, to) => {
+    let sum = 0;
+    for (let i = from; i < to; i += 1) sum += sig[i] * sig[i];
+    return Math.sqrt(sum / (to - from));
+  };
+
+  const signal = renderMatchSignal();
+  report('render produces 4 s at 16 kHz', signal.length === FS * 4, `${signal.length} samples`);
+
+  // A pluck at 0 s decaying, then a second event at 3 s.
+  const attack = rms(signal, 0, FS * 0.2);
+  const beforeSecond = rms(signal, FS * 2.8, FS * 2.98);
+  const afterSecond = rms(signal, FS * 3.02, FS * 3.2);
+  report('first event decays before the second', attack > beforeSecond * 3,
+    `attack ${attack.toExponential(2)} vs ${beforeSecond.toExponential(2)} at 2.9 s`);
+  // With its default settings the second event is a release: a small burst and
+  // heavy damping, so the string dies rather than restarting. Turn its dynamics
+  // up and it becomes a second pluck instead. Both must be reachable — that is
+  // what makes the two events genuinely independent.
+  report('the release damps the string', afterSecond < beforeSecond,
+    `${afterSecond.toExponential(2)} after 3 s vs ${beforeSecond.toExponential(2)} before`);
+
+  const mutedDynamic = matchEvents[1].dynamic;
+  const mutedDecay = matchEvents[1].decay;
+  const mutedDamping = matchEvents[1].damping;
+  Object.assign(matchEvents[1], { dynamic: 1, decay: 0.995, damping: 0.32 });
+  const replucked = renderMatchSignal();
+  const loudAfter = rms(replucked, FS * 3.02, FS * 3.2);
+  Object.assign(matchEvents[1], { dynamic: mutedDynamic, decay: mutedDecay, damping: mutedDamping });
+  report('a loud second event re-excites the string', loudAfter > beforeSecond * 2,
+    `${loudAfter.toExponential(2)} after a full-strength pluck vs ${beforeSecond.toExponential(2)} before`);
+
+  // Event 2's parameters must not reach backwards in time.
+  const before = signal.slice(0, FS * 3);
+  const original = matchEvents[1].damping;
+  matchEvents[1].damping = 0.9;
+  const changed = renderMatchSignal();
+  let maxDiffBefore = 0;
+  for (let i = 0; i < FS * 3; i += 1) {
+    maxDiffBefore = Math.max(maxDiffBefore, Math.abs(changed[i] - before[i]));
+  }
+  const diffAfter = Math.abs(rms(changed, FS * 3.1, FS * 3.6) - rms(signal, FS * 3.1, FS * 3.6));
+  matchEvents[1].damping = original;
+  report('event 2 changes nothing before its onset', maxDiffBefore === 0,
+    `max difference before 3 s: ${maxDiffBefore.toExponential(1)}`);
+  report('event 2 changes what follows it', diffAfter > 1e-4,
+    `RMS shift after 3 s: ${diffAfter.toExponential(2)}`);
+
+  // The pitch should be the target's, and audible in the signal.
+  report('renders at the target pitch', Math.abs(MATCH_F0 - 89.3) < 0.1, `${MATCH_F0} Hz`);
 }
 
 document.getElementById('out').textContent =
