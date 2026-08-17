@@ -269,14 +269,16 @@ class DifferentiableTFOT(nn.Module):
         )
         return interpolated
 
-    def spectrogram_distance(self, magnitude_a: Tensor, magnitude_b: Tensor) -> Tensor:
+    def spectrogram_distances(self, magnitude_a: Tensor, magnitude_b: Tensor) -> Tensor:
+        """Return one distance per batch item without reducing the batch."""
         if magnitude_a.ndim != 3 or magnitude_a.shape != magnitude_b.shape:
             raise ValueError(
                 "expected matching [batch, frequency, time] magnitude spectrograms"
             )
         if torch.equal(magnitude_a, magnitude_b):
             # Explicitly select the zero subgradient at exact self-comparison.
-            return (magnitude_a.sum() + magnitude_b.sum()) * 0.0
+            zero = (magnitude_a.sum() + magnitude_b.sum()) * 0.0
+            return zero.expand(magnitude_a.shape[0])
 
         batch, _, time_bins = magnitude_a.shape
         orders, positions, maximum = self._geometry(
@@ -335,7 +337,11 @@ class DifferentiableTFOT(nn.Module):
                     )
                 )
             distances.append(torch.stack(projection_distances).mean())
-        return torch.stack(distances).mean()
+        return torch.stack(distances)
+
+    def spectrogram_distance(self, magnitude_a: Tensor, magnitude_b: Tensor) -> Tensor:
+        """Return the batch-mean spectrogram distance."""
+        return self.spectrogram_distances(magnitude_a, magnitude_b).mean()
 
     def forward(self, audio_a: Tensor, audio_b: Tensor) -> Tensor:
         if audio_a.shape != audio_b.shape or audio_a.ndim != 2:

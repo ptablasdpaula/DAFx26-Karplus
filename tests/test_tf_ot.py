@@ -83,6 +83,19 @@ def test_audio_gradient_is_finite(small_metric):
     assert prediction.grad.abs().sum() > 0.0
 
 
+def test_unreduced_distances_match_individual_calls(small_metric):
+    _, metric = small_metric
+    torch.manual_seed(12)
+    first = torch.rand(3, 17, 9)
+    second = torch.rand_like(first)
+    unreduced = metric.spectrogram_distances(first, second)
+    individual = torch.stack(
+        [metric.spectrogram_distance(first[i : i + 1], second[i : i + 1]) for i in range(3)]
+    )
+    assert unreduced.shape == (3,)
+    torch.testing.assert_close(unreduced, individual)
+
+
 def test_rms_matching_is_prediction_scale_invariant():
     torch.manual_seed(9)
     prediction = torch.randn(2, 128)

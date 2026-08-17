@@ -96,19 +96,22 @@ class StaticKSRenderer(torch.nn.Module):
 
     def _fractionally_shifted_burst(self, onset_seconds: Tensor) -> Tensor:
         """Causally place the burst using a zero-padded Fourier delay."""
-        onset_samples = onset_seconds * self.config.sample_rate
+        onset_samples = onset_seconds.reshape(-1, 1) * self.config.sample_rate
         phase = torch.exp(
-            -1j * self.angular_frequency * onset_samples,
+            -1j * self.angular_frequency.unsqueeze(0) * onset_samples,
         )
         shifted = torch.fft.irfft(
-            self.burst_spectrum * phase, n=self.fft_length,
+            self.burst_spectrum.unsqueeze(0) * phase, n=self.fft_length,
         )
-        return shifted[: self.config.num_samples].unsqueeze(0)
+        return shifted[:, : self.config.num_samples]
 
     def forward(self, onset_seconds: Tensor, pitch_hz: Tensor) -> Tensor:
         cfg = self.config
         excitation = self._fractionally_shifted_burst(onset_seconds)
-        f0 = pitch_hz.reshape(1, 1).expand(1, cfg.num_samples)
+        pitch_hz = pitch_hz.reshape(-1)
+        if pitch_hz.shape[0] != excitation.shape[0]:
+            raise ValueError("onset and pitch batch sizes must match")
+        f0 = pitch_hz.reshape(-1, 1).expand(-1, cfg.num_samples)
         delay = cfg.sample_rate / f0
         decay = torch.full_like(f0, cfg.decay)
         a1 = torch.full_like(f0, cfg.a1)
