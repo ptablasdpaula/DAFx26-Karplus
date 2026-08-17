@@ -338,6 +338,12 @@ def aggregate(
     np.testing.assert_allclose(pitches, differentiable_data["pitch_hz"])
     differentiable = differentiable_data["distance"]
     metrics = comparison_metrics(pitches, canonical, differentiable)
+    exact_ot_configuration = asdict(TFOTConfig(sample_rate=config.sample_rate))
+    exact_ot_configuration["quantiles"] = None
+    exact_ot_configuration["quantile_note"] = (
+        "Unused by the exact monotone-coupling solver; 512 applies only to the "
+        "differentiable comparison surface."
+    )
 
     np.savez(
         output / "canonical_surface_data.npz",
@@ -361,7 +367,7 @@ def aggregate(
                 )
     metadata = {
         "experiment": asdict(config),
-        "ot": asdict(TFOTConfig(sample_rate=config.sample_rate)),
+        "ot": exact_ot_configuration,
         "source_commit": source_commit(),
         "tasks": tasks,
         "comparison": metrics,
