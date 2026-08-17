@@ -212,15 +212,14 @@ def draw_descent_panel(
     axis.scatter(
         [onsets[target_index]], [pitches[target_index]], marker="*", s=180,
         c="#f2bd2e", edgecolors="black", linewidths=0.8, zorder=4,
-        label="target / zero-gradient meeting point",
     )
     axis.set_xlim(-0.04 * onset_span, onsets[-1] + 0.04 * onset_span)
     axis.set_ylim(pitches[0] - 0.07 * pitch_span, pitches[-1] + 0.07 * pitch_span)
     axis.set_xlabel("predicted onset (s)")
     axis.set_ylabel("predicted pitch (Hz)")
     axis.set_title(
-        f"descent direction toward target\n"
-        f"{onsets[target_index]:.3f} s, {pitches[target_index]:.0f} Hz"
+        f"local normalized descent direction\n"
+        f"target: {onsets[target_index]:.3f} s, {pitches[target_index]:.0f} Hz"
     )
     axis.grid(alpha=0.2)
 
@@ -253,13 +252,12 @@ def save_figure(
         draw_descent_panel(
             axis, target_index, onsets, pitches, onset_gradient, pitch_gradient,
         )
-    handles, legend_labels = axes[1, 0].get_legend_handles_labels()
-    figure.legend(handles, legend_labels, loc="lower center", ncol=1)
     figure.suptitle(
         "Differentiable 2D time-frequency OT: static Karplus--Strong onset/pitch gradients\n"
         f"{config.sample_rate / 1000:g} kHz, g={config.decay}, a1={config.a1}, "
         f"pluck={config.pluck_position}, dynamics={config.dynamics}, "
-        f"fixed {config.burst_samples}-sample noise burst",
+        f"fixed {config.burst_samples}-sample noise burst\n"
+        "Stars mark exact self-comparisons (zero subgradient); arrows show normalized -gradient",
         fontsize=15,
     )
     figure.savefig(output, dpi=180)
