@@ -20,6 +20,7 @@ import { renderFrequencySampling } from './ksa-freq.js';
 import { ExtendedKsaProcessor } from './interactive-ks.js';
 import { stft } from './fft.js';
 import { whenVisible } from './scrollytelling.js';
+import { palette } from './palette.js';
 
 let manifest = null;
 let blob = null;
@@ -146,26 +147,9 @@ class Surface {
   }
 }
 
-/** Perceptually ordered blue -> yellow ramp for the loss heatmap. */
+/** Shared with every spectrogram on the page — see palette.js. */
 function lossColour(t) {
-  const stops = [
-    [ 26,  32,  62],
-    [ 44,  84, 130],
-    [ 47, 138, 138],
-    [123, 184,  99],
-    [237, 199,  74],
-    [252, 246, 197],
-  ];
-  const x = Math.max(0, Math.min(0.9999, t)) * (stops.length - 1);
-  const i = Math.floor(x);
-  const f = x - i;
-  const a = stops[i];
-  const b = stops[i + 1];
-  return [
-    Math.round(a[0] + (b[0] - a[0]) * f),
-    Math.round(a[1] + (b[1] - a[1]) * f),
-    Math.round(a[2] + (b[2] - a[2]) * f),
-  ];
+  return palette(t);
 }
 
 function paintSurface(canvas, surface) {
@@ -178,9 +162,9 @@ function paintSurface(canvas, surface) {
       const t = (surface.data[r * cols + c] - surface.min) / span;
       const [red, green, blue] = lossColour(1 - t); // bright = low loss
       const o = ((rows - 1 - r) * cols + c) * 4;
-      image.data[o] = red;
-      image.data[o + 1] = green;
-      image.data[o + 2] = blue;
+      image.data[o] = red | 0;
+      image.data[o + 1] = green | 0;
+      image.data[o + 2] = blue | 0;
       image.data[o + 3] = 255;
     }
   }
@@ -368,9 +352,9 @@ function paintSpectrogram(canvas, signal, { fftSize = 256, hop = 64, tint = null
         image.data[o + 3] = 255;
       } else {
         const [r, g, b] = lossColour(v);
-        image.data[o] = r;
-        image.data[o + 1] = g;
-        image.data[o + 2] = b;
+        image.data[o] = r | 0;
+        image.data[o + 1] = g | 0;
+        image.data[o + 2] = b | 0;
         image.data[o + 3] = 255;
       }
     }

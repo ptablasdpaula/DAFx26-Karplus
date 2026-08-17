@@ -1,5 +1,6 @@
 import WaveSurfer from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/wavesurfer.esm.js';
 import Spectrogram from 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7/dist/plugins/spectrogram.js';
+import { wavesurferColorMap } from './palette.js';
 
 const AUDIO_EXT = '.ogg';
 const EXAMPLES_TO_SHOW = 5;
@@ -70,11 +71,18 @@ const state = {
   }
 };
 
+// The waveform adds nothing next to the spectrogram, so it is collapsed to
+// nothing and only the spectrogram is shown. WaveSurfer still needs a container
+// to attach to, and still drives playback and the progress cursor.
 function makePlayer(td) {
   return WaveSurfer.create({
     container: td.querySelector('.waveform'),
-    backend: 'MediaElement', height: 60, waveColor: '#999', progressColor: '#007BFF',
-    plugins: [ Spectrogram.create({ container: td.querySelector('.spectrogram'), scale: 'mel', labels: false, height: 60 }) ]
+    backend: 'MediaElement', height: 0, waveColor: '#999', progressColor: '#007BFF',
+    plugins: [Spectrogram.create({
+      container: td.querySelector('.spectrogram'),
+      scale: 'mel', labels: false, height: 78,
+      colorMap: wavesurferColorMap(),
+    })],
   });
 }
 
