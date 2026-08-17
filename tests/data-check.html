@@ -8,10 +8,132 @@
 <pre id="out">running…</pre>
 <script>
 window.addEventListener('error', e => {
-  document.getElementById('out').textContent = `UNCAUGHT: ${e.message}\n${e.filename}:${e.lineno}`;
+  
+// ── Both events, one FFT size: the artefact differs between them. ──────────
+// Demo A now optimises the pluck at 0 s and the one at 3 s simultaneously, so
+// the claim worth checking is that a single frame size does different damage to
+// each — that is the whole reason for showing them side by side.
+{
+  const fft = meta.A.fftSizes[0];
+  const target = meta.A.target;
+  const settle = surface => {
+    const walker = new Walker(surface, '#000', 'x');
+    walker.reset(20, 60);
+    for (let i = 0; i < 400; i += 1) walker.step();
+    return {
+      g: surface.xValues[Math.round(walker.col)],
+      a: surface.yValues[Math.round(walker.row)],
+    };
+  };
+
+  const rows = [];
+  for (const onset of ['0s', '3s']) {
+    const t = settle(new Surface('A', `A_${onset}_tksa`));
+    const f = settle(new Surface('A', `A_${onset}_fksa${fft}`));
+    rows.push({ onset, t, f, err: Math.abs(f.g - target.decay) });
+    note(`${onset}: tKSA settles at g=${t.g.toFixed(4)}, fKSA/${fft} at g=${f.g.toFixed(4)} ` +
+      `(true ${target.decay})`);
+  }
+
+  report('tKSA finds the answer for both events',
+    rows.every(r => Math.abs(r.t.g - target.decay) < 0.01),
+    rows.map(r => `${r.onset} g=${r.t.g.toFixed(4)}`).join(', '));
+  report('fKSA misses for both events',
+    rows.every(r => r.err > 0.002),
+    rows.map(r => `${r.onset} off by ${r.err.toFixed(4)}`).join(', '));
+  report('the two events are damaged differently by one frame size',
+    Math.abs(rows[0].err - rows[1].err) > 1e-4,
+    `event 1 off by ${rows[0].err.toFixed(4)}, event 2 by ${rows[1].err.toFixed(4)}`);
+}
+
+
+// ── One descent advances both events together, not one then the other. ─────
+{
+  const fft = meta.A.fftSizes[0];
+  const made = ['0s', '3s'].flatMap(onset => ([
+    new Walker(new Surface('A', `A_${onset}_tksa`), '#000', `t${onset}`),
+    new Walker(new Surface('A', `A_${onset}_fksa${fft}`), '#000', `f${onset}`),
+  ]));
+  made.forEach(w => w.reset(20, 60));
+  const before = made.map(w => [w.col, w.row]);
+  // One tick of the demo: every walker steps once.
+  made.forEach(w => w.step());
+  const moved = made.filter((w, i) => w.col !== before[i][0] || w.row !== before[i][1]);
+  report('a single step advances all four walkers', moved.length === 4,
+    `${moved.length} of 4 moved on one tick (both events, both implementations)`);
+  report('both events are still descending after 50 steps',
+    (() => {
+      for (let i = 0; i < 50; i += 1) made.forEach(w => w.step());
+      return made.every(w => w.trail.length > 40);
+    })(),
+    `trail lengths ${made.map(w => w.trail.length).join(', ')}`);
+}
+
+document.getElementById('out').textContent = `UNCAUGHT: ${e.message}\n${e.filename}:${e.lineno}`;
 });
 window.addEventListener('unhandledrejection', e => {
-  document.getElementById('out').textContent = `REJECTED: ${(e.reason && e.reason.stack) || e.reason}`;
+  
+// ── Both events, one FFT size: the artefact differs between them. ──────────
+// Demo A now optimises the pluck at 0 s and the one at 3 s simultaneously, so
+// the claim worth checking is that a single frame size does different damage to
+// each — that is the whole reason for showing them side by side.
+{
+  const fft = meta.A.fftSizes[0];
+  const target = meta.A.target;
+  const settle = surface => {
+    const walker = new Walker(surface, '#000', 'x');
+    walker.reset(20, 60);
+    for (let i = 0; i < 400; i += 1) walker.step();
+    return {
+      g: surface.xValues[Math.round(walker.col)],
+      a: surface.yValues[Math.round(walker.row)],
+    };
+  };
+
+  const rows = [];
+  for (const onset of ['0s', '3s']) {
+    const t = settle(new Surface('A', `A_${onset}_tksa`));
+    const f = settle(new Surface('A', `A_${onset}_fksa${fft}`));
+    rows.push({ onset, t, f, err: Math.abs(f.g - target.decay) });
+    note(`${onset}: tKSA settles at g=${t.g.toFixed(4)}, fKSA/${fft} at g=${f.g.toFixed(4)} ` +
+      `(true ${target.decay})`);
+  }
+
+  report('tKSA finds the answer for both events',
+    rows.every(r => Math.abs(r.t.g - target.decay) < 0.01),
+    rows.map(r => `${r.onset} g=${r.t.g.toFixed(4)}`).join(', '));
+  report('fKSA misses for both events',
+    rows.every(r => r.err > 0.002),
+    rows.map(r => `${r.onset} off by ${r.err.toFixed(4)}`).join(', '));
+  report('the two events are damaged differently by one frame size',
+    Math.abs(rows[0].err - rows[1].err) > 1e-4,
+    `event 1 off by ${rows[0].err.toFixed(4)}, event 2 by ${rows[1].err.toFixed(4)}`);
+}
+
+
+// ── One descent advances both events together, not one then the other. ─────
+{
+  const fft = meta.A.fftSizes[0];
+  const made = ['0s', '3s'].flatMap(onset => ([
+    new Walker(new Surface('A', `A_${onset}_tksa`), '#000', `t${onset}`),
+    new Walker(new Surface('A', `A_${onset}_fksa${fft}`), '#000', `f${onset}`),
+  ]));
+  made.forEach(w => w.reset(20, 60));
+  const before = made.map(w => [w.col, w.row]);
+  // One tick of the demo: every walker steps once.
+  made.forEach(w => w.step());
+  const moved = made.filter((w, i) => w.col !== before[i][0] || w.row !== before[i][1]);
+  report('a single step advances all four walkers', moved.length === 4,
+    `${moved.length} of 4 moved on one tick (both events, both implementations)`);
+  report('both events are still descending after 50 steps',
+    (() => {
+      for (let i = 0; i < 50; i += 1) made.forEach(w => w.step());
+      return made.every(w => w.trail.length > 40);
+    })(),
+    `trail lengths ${made.map(w => w.trail.length).join(', ')}`);
+}
+
+document.getElementById('out').textContent = `REJECTED: ${(e.reason && e.reason.stack) || e.reason}`;
 });
 </script>
 <script type="module">
@@ -33,7 +155,68 @@ let meta;
 try {
   meta = await loadData();
 } catch (error) {
-  document.getElementById('out').textContent = `FAILED TO LOAD DATA: ${error}`;
+  
+// ── Both events, one FFT size: the artefact differs between them. ──────────
+// Demo A now optimises the pluck at 0 s and the one at 3 s simultaneously, so
+// the claim worth checking is that a single frame size does different damage to
+// each — that is the whole reason for showing them side by side.
+{
+  const fft = meta.A.fftSizes[0];
+  const target = meta.A.target;
+  const settle = surface => {
+    const walker = new Walker(surface, '#000', 'x');
+    walker.reset(20, 60);
+    for (let i = 0; i < 400; i += 1) walker.step();
+    return {
+      g: surface.xValues[Math.round(walker.col)],
+      a: surface.yValues[Math.round(walker.row)],
+    };
+  };
+
+  const rows = [];
+  for (const onset of ['0s', '3s']) {
+    const t = settle(new Surface('A', `A_${onset}_tksa`));
+    const f = settle(new Surface('A', `A_${onset}_fksa${fft}`));
+    rows.push({ onset, t, f, err: Math.abs(f.g - target.decay) });
+    note(`${onset}: tKSA settles at g=${t.g.toFixed(4)}, fKSA/${fft} at g=${f.g.toFixed(4)} ` +
+      `(true ${target.decay})`);
+  }
+
+  report('tKSA finds the answer for both events',
+    rows.every(r => Math.abs(r.t.g - target.decay) < 0.01),
+    rows.map(r => `${r.onset} g=${r.t.g.toFixed(4)}`).join(', '));
+  report('fKSA misses for both events',
+    rows.every(r => r.err > 0.002),
+    rows.map(r => `${r.onset} off by ${r.err.toFixed(4)}`).join(', '));
+  report('the two events are damaged differently by one frame size',
+    Math.abs(rows[0].err - rows[1].err) > 1e-4,
+    `event 1 off by ${rows[0].err.toFixed(4)}, event 2 by ${rows[1].err.toFixed(4)}`);
+}
+
+
+// ── One descent advances both events together, not one then the other. ─────
+{
+  const fft = meta.A.fftSizes[0];
+  const made = ['0s', '3s'].flatMap(onset => ([
+    new Walker(new Surface('A', `A_${onset}_tksa`), '#000', `t${onset}`),
+    new Walker(new Surface('A', `A_${onset}_fksa${fft}`), '#000', `f${onset}`),
+  ]));
+  made.forEach(w => w.reset(20, 60));
+  const before = made.map(w => [w.col, w.row]);
+  // One tick of the demo: every walker steps once.
+  made.forEach(w => w.step());
+  const moved = made.filter((w, i) => w.col !== before[i][0] || w.row !== before[i][1]);
+  report('a single step advances all four walkers', moved.length === 4,
+    `${moved.length} of 4 moved on one tick (both events, both implementations)`);
+  report('both events are still descending after 50 steps',
+    (() => {
+      for (let i = 0; i < 50; i += 1) made.forEach(w => w.step());
+      return made.every(w => w.trail.length > 40);
+    })(),
+    `trail lengths ${made.map(w => w.trail.length).join(', ')}`);
+}
+
+document.getElementById('out').textContent = `FAILED TO LOAD DATA: ${error}`;
   throw error;
 }
 note(`fs = ${meta.fs} Hz, ${meta.durationS} s, weights MSS ${meta.weights.mss} / SOT ${meta.weights.sot}`);
@@ -194,6 +377,67 @@ if (meta.G) {
 } else {
   report('gradient field present', false,
     'run PRECOMPUTE_ONLY=G tools/precompute_landscapes.py');
+}
+
+
+// ── Both events, one FFT size: the artefact differs between them. ──────────
+// Demo A now optimises the pluck at 0 s and the one at 3 s simultaneously, so
+// the claim worth checking is that a single frame size does different damage to
+// each — that is the whole reason for showing them side by side.
+{
+  const fft = meta.A.fftSizes[0];
+  const target = meta.A.target;
+  const settle = surface => {
+    const walker = new Walker(surface, '#000', 'x');
+    walker.reset(20, 60);
+    for (let i = 0; i < 400; i += 1) walker.step();
+    return {
+      g: surface.xValues[Math.round(walker.col)],
+      a: surface.yValues[Math.round(walker.row)],
+    };
+  };
+
+  const rows = [];
+  for (const onset of ['0s', '3s']) {
+    const t = settle(new Surface('A', `A_${onset}_tksa`));
+    const f = settle(new Surface('A', `A_${onset}_fksa${fft}`));
+    rows.push({ onset, t, f, err: Math.abs(f.g - target.decay) });
+    note(`${onset}: tKSA settles at g=${t.g.toFixed(4)}, fKSA/${fft} at g=${f.g.toFixed(4)} ` +
+      `(true ${target.decay})`);
+  }
+
+  report('tKSA finds the answer for both events',
+    rows.every(r => Math.abs(r.t.g - target.decay) < 0.01),
+    rows.map(r => `${r.onset} g=${r.t.g.toFixed(4)}`).join(', '));
+  report('fKSA misses for both events',
+    rows.every(r => r.err > 0.002),
+    rows.map(r => `${r.onset} off by ${r.err.toFixed(4)}`).join(', '));
+  report('the two events are damaged differently by one frame size',
+    Math.abs(rows[0].err - rows[1].err) > 1e-4,
+    `event 1 off by ${rows[0].err.toFixed(4)}, event 2 by ${rows[1].err.toFixed(4)}`);
+}
+
+
+// ── One descent advances both events together, not one then the other. ─────
+{
+  const fft = meta.A.fftSizes[0];
+  const made = ['0s', '3s'].flatMap(onset => ([
+    new Walker(new Surface('A', `A_${onset}_tksa`), '#000', `t${onset}`),
+    new Walker(new Surface('A', `A_${onset}_fksa${fft}`), '#000', `f${onset}`),
+  ]));
+  made.forEach(w => w.reset(20, 60));
+  const before = made.map(w => [w.col, w.row]);
+  // One tick of the demo: every walker steps once.
+  made.forEach(w => w.step());
+  const moved = made.filter((w, i) => w.col !== before[i][0] || w.row !== before[i][1]);
+  report('a single step advances all four walkers', moved.length === 4,
+    `${moved.length} of 4 moved on one tick (both events, both implementations)`);
+  report('both events are still descending after 50 steps',
+    (() => {
+      for (let i = 0; i < 50; i += 1) made.forEach(w => w.step());
+      return made.every(w => w.trail.length > 40);
+    })(),
+    `trail lengths ${made.map(w => w.trail.length).join(', ')}`);
 }
 
 document.getElementById('out').textContent =

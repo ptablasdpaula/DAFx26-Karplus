@@ -36,13 +36,21 @@ function bindCanvasDrag(canvas, surface, onPick) {
 }
 
 // ── Demo A ──────────────────────────────────────────────────────────────────
+//
+// Both events are optimised at once and both are always on screen: a loss
+// surface each on the left, and on the right the spectrograms of the whole
+// two-event signal. That pairing is the point — a frame short enough to
+// truncate the decay of the pluck at 0 s does something quite different to the
+// one at 3 s, and you can only see that if you are looking at both.
 function initDemoA(root, meta) {
-  const canvas = root.querySelector('[data-landscape]');
+  const canvases = [
+    root.querySelector('[data-landscape="0"]'),
+    root.querySelector('[data-landscape="1"]'),
+  ];
   const specTarget = root.querySelector('[data-spec="target"]');
   const specT = root.querySelector('[data-spec="tksa"]');
   const specF = root.querySelector('[data-spec="fksa"]');
   const fftSelect = root.querySelector('[data-fft]');
-  const onsetSelect = root.querySelector('[data-onset]');
   const playButton = root.querySelector('[data-action="play"]');
   const stepButton = root.querySelector('[data-action="step"]');
   const resetButton = root.querySelector('[data-action="reset"]');
@@ -51,17 +59,14 @@ function initDemoA(root, meta) {
   const fs = meta.fs;
   const length = meta.numSamples;
   const fixed = meta.fixed;
+  const ONSETS = [0, 3];
+  const SLICES = ['0s', '3s'];
 
-  let surfaceT = null;
-  let surfaceF = null;
-  let walkerT = null;
-  let walkerF = null;
+  // One entry per event, each with its own pair of surfaces and walkers.
+  const tracks = ONSETS.map(() => ({ surfaceT: null, surfaceF: null, walkerT: null, walkerF: null }));
   let timer = null;
-  let startCol = 20;
-  let startRow = 60;
+  let starts = [[20, 60], [20, 60]];
 
-  // FFT choices come from the manifest, so regenerating the data at a new
-  // sample rate rescales the selector instead of silently mismatching it.
   if (fftSelect && !fftSelect.options.length) {
     meta.A.fftSizes.forEach((n, i) => {
       const option = document.createElement('option');
@@ -73,74 +78,84 @@ function initDemoA(root, meta) {
   }
 
   const load = () => {
-    const onset = onsetSelect.value;
     const fft = fftSelect.value;
-    surfaceT = new Surface('A', `A_${onset}_tksa`);
-    surfaceF = new Surface('A', `A_${onset}_fksa${fft}`);
-    walkerT = new Walker(surfaceT, TKSA_COLOUR, 'tKSA');
-    walkerF = new Walker(surfaceF, FKSA_COLOUR, 'fKSA');
-    drawTargetSpectrogram();
+    tracks.forEach((track, i) => {
+      track.surfaceT = new Surface('A', `A_${SLICES[i]}_tksa`);
+      track.surfaceF = new Surface('A', `A_${SLICES[i]}_fksa${fft}`);
+      track.walkerT = new Walker(track.surfaceT, TKSA_COLOUR, 'tKSA');
+      track.walkerF = new Walker(track.surfaceF, FKSA_COLOUR, 'fKSA');
+    });
     reset();
   };
 
-  const paramsAt = (surface, col, row) => ({
-    f0: fixed.f0,
-    fs,
-    decay: surface.xValues[Math.round(col)],
-    damping: surface.yValues[Math.round(row)],
-    pluck: fixed.pluck_position,
-    dynamic: fixed.dynamic_level,
-    onsetSamples: (onsetSelect.value === '3s' ? 3 : 0) * fs,
-    length,
+  const paramsFor = (surface, walker) => ({
+    decay: surface.xValues[Math.round(walker.col)],
+    damping: surface.yValues[Math.round(walker.row)],
   });
 
-  // Resynthesising and transforming three 4-second signals costs tens of
-  // milliseconds, which is the same order as the descent tick. The target never
-  // moves during a run, so draw it once; the predictions only need redrawing
-  // when a walker has actually crossed into a different grid cell.
-  const drawTargetSpectrogram = () => {
-    const onsetSamples = (onsetSelect.value === '3s' ? 3 : 0) * fs;
-    paintSpectrogram(specTarget, renderTimeDomain({
-      f0: fixed.f0, fs, decay: fixed.decay, damping: fixed.a1,
-      pluck: fixed.pluck_position, dynamic: fixed.dynamic_level, onsetSamples, length,
-    }), {});
+  /** Render a two-event signal, one implementation, current walker positions. */
+  const twoEvents = (kind) => {
+    const out = new Float64Array(length);
+    tracks.forEach((track, i) => {
+      const params = kind === 'target'
+        ? { decay: fixed.decay, damping: fixed.a1 }
+        : paramsFor(kind === 'tksa' ? track.surfaceT : track.surfaceF,
+                    kind === 'tksa' ? track.walkerT : track.walkerF);
+      const common = {
+        f0: fixed.f0, fs, pluck: fixed.pluck_position, dynamic: fixed.dynamic_level,
+        onsetSamples: ONSETS[i] * fs, length, ...params,
+      };
+      // Each event is a separate excitation of an LTI system, so superposing the
+      // two responses is what either implementation actually produces.
+      const piece = kind === 'fksa'
+        ? renderFrequencySampling({ ...common, nFft: Number(fftSelect.value) })
+        : renderTimeDomain(common);
+      for (let n = 0; n < length; n += 1) out[n] += piece[n];
+    });
+    return out;
   };
 
   let lastCells = '';
   const drawSpectrograms = (force = false) => {
-    const cells = [Math.round(walkerT.col), Math.round(walkerT.row),
-      Math.round(walkerF.col), Math.round(walkerF.row)].join(',');
+    const cells = tracks.flatMap(track => [
+      Math.round(track.walkerT.col), Math.round(track.walkerT.row),
+      Math.round(track.walkerF.col), Math.round(track.walkerF.row),
+    ]).join(',');
     if (!force && cells === lastCells) return;
     lastCells = cells;
-    paintSpectrogram(specT, renderTimeDomain(paramsAt(surfaceT, walkerT.col, walkerT.row)), {});
-    paintSpectrogram(specF, renderFrequencySampling({
-      ...paramsAt(surfaceF, walkerF.col, walkerF.row),
-      nFft: Number(fftSelect.value),
-    }), {});
+    paintSpectrogram(specT, twoEvents('tksa'), {});
+    paintSpectrogram(specF, twoEvents('fksa'), {});
   };
 
   const render = () => {
-    const ctx = paintSurface(canvas, surfaceT);
-    const targetCol = nearestIndex(surfaceT.xValues, meta.A.target.decay);
-    const targetRow = nearestIndex(surfaceT.yValues, meta.A.target.a1);
-    drawTarget(ctx, canvas, surfaceT, targetCol, targetRow);
-    drawWalkers(ctx, canvas, [walkerT, walkerF], surfaceT);
+    tracks.forEach((track, i) => {
+      const ctx = paintSurface(canvases[i], track.surfaceT);
+      drawTarget(ctx, canvases[i], track.surfaceT,
+        nearestIndex(track.surfaceT.xValues, meta.A.target.decay),
+        nearestIndex(track.surfaceT.yValues, meta.A.target.a1));
+      drawWalkers(ctx, canvases[i], [track.walkerT, track.walkerF], track.surfaceT);
+    });
     if (readout) {
-      readout.innerHTML =
-        `<span style="color:${TKSA_COLOUR}">tKSA</span> g=${surfaceT.xValues[Math.round(walkerT.col)].toFixed(4)}, ` +
-        `a=${surfaceT.yValues[Math.round(walkerT.row)].toFixed(3)} &nbsp;·&nbsp; ` +
-        `<span style="color:${FKSA_COLOUR}">fKSA</span> g=${surfaceF.xValues[Math.round(walkerF.col)].toFixed(4)}, ` +
-        `a=${surfaceF.yValues[Math.round(walkerF.row)].toFixed(3)} &nbsp;·&nbsp; ` +
-        `target g=${meta.A.target.decay}, a=${meta.A.target.a1}`;
+      readout.innerHTML = tracks.map((track, i) => {
+        const t = paramsFor(track.surfaceT, track.walkerT);
+        const f = paramsFor(track.surfaceF, track.walkerF);
+        return `<span class="readout-row">Event ${i + 1} @ ${ONSETS[i]} s &nbsp; ` +
+          `<span style="color:${TKSA_COLOUR}">tKSA</span> g=${t.decay.toFixed(4)}, a=${t.damping.toFixed(3)} &nbsp;·&nbsp; ` +
+          `<span style="color:${FKSA_COLOUR}">fKSA</span> g=${f.decay.toFixed(4)}, a=${f.damping.toFixed(3)}</span>`;
+      }).join('') +
+      `<span class="readout-row">target g=${meta.A.target.decay}, a=${meta.A.target.a1} for both</span>`;
     }
     drawSpectrograms();
   };
 
   function reset() {
     stop();
-    walkerT.reset(startCol, startRow);
-    walkerF.reset(startCol, startRow);
+    tracks.forEach((track, i) => {
+      track.walkerT.reset(starts[i][0], starts[i][1]);
+      track.walkerF.reset(starts[i][0], starts[i][1]);
+    });
     lastCells = '';
+    paintSpectrogram(specTarget, twoEvents('target'), {});
     render();
   }
 
@@ -151,28 +166,25 @@ function initDemoA(root, meta) {
   }
 
   const stepOnce = () => {
-    walkerT.step();
-    walkerF.step();
+    tracks.forEach(track => { track.walkerT.step(); track.walkerF.step(); });
     render();
-    if (walkerT.done && walkerF.done) stop();
+    if (tracks.every(track => track.walkerT.done && track.walkerF.done)) stop();
   };
 
   if (playButton) playButton.addEventListener('click', () => {
     if (timer) { stop(); return; }
     playButton.textContent = 'Pause';
-    timer = setInterval(stepOnce, 90);
+    timer = setInterval(stepOnce, 110);
   });
   if (stepButton) stepButton.addEventListener('click', () => { stop(); stepOnce(); });
   if (resetButton) resetButton.addEventListener('click', reset);
   if (fftSelect) fftSelect.addEventListener('change', load);
-  if (onsetSelect) onsetSelect.addEventListener('change', load);
 
   load();
-  bindCanvasDrag(canvas, surfaceT, (col, row) => {
-    startCol = col;
-    startRow = row;
+  canvases.forEach((canvas, i) => bindCanvasDrag(canvas, tracks[i].surfaceT, (col, row) => {
+    starts[i] = [col, row];
     reset();
-  });
+  }));
 }
 
 // ── Demo B ──────────────────────────────────────────────────────────────────

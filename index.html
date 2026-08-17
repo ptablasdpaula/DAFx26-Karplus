@@ -244,38 +244,40 @@
           <p class="equation">$$H_{fKSA}(z_M) = \frac{H_D(z_M) H_P(z_M)}{1 - H_L(z_M) H_I(z_M) z_M^{-L}}$$</p>
           <p>This is fast and clean, and it has one serious problem. A Hermitian symmetry constraint forces a real impulse response of length $N_{FFT}$. If the true impulse response is longer than that, the tail does not get truncated — it wraps around and adds to the beginning of the frame. The string's decay folds back onto its own attack.</p>
           <p><strong>Time-domain interpolation</strong> avoids this entirely by computing exact analytic gradients through the recursive filter via the adjoint method, with fractional delay handled by the Lagrange interpolator directly. No frames, so no wrap-around.</p>
-          <p>The demonstration below makes the consequence concrete. A target is rendered with $g = 0.99$, $a_1 = 0.2$; both implementations start from the same point and descend the real loss surface $\mathcal{L} = 0.05\,\mathcal{L}_{MSS} + \mathcal{L}_{SOT}$, sampled offline with the paper's own code at its 16 kHz working rate. Choose the FFT size, choose whether the pluck happens at the start of the clip or three seconds in, and drag anywhere on the map to move the starting point.</p>
+          <p>The demonstration below makes the consequence concrete. A target is rendered with $g = 0.99$, $a_1 = 0.2$; both implementations start from the same point and descend the real loss surface $\mathcal{L} = 0.05\,\mathcal{L}_{MSS} + \mathcal{L}_{SOT}$, sampled offline with the paper's own code at its 16 kHz working rate. There are two plucks, one at the start of the clip and one three seconds in, and both are optimised <em>together</em>: a single run steps both events on every tick, exactly as training would. Each has its own loss surface on the left; the spectrograms on the right are always the whole two-event signal. Choose the FFT size, and drag on either map to move that event's starting point.</p>
 
           <div class="demo" data-demo="a">
             <div class="demo-controls">
               <label>FFT size
                 <select data-fft></select>
               </label>
-              <label>Onset
-                <select data-onset>
-                  <option value="0s" selected>0 s</option>
-                  <option value="3s">3 s</option>
-                </select>
-              </label>
               <button class="btn btn-sm btn-dark" type="button" data-action="play">Run descent</button>
               <button class="btn btn-sm btn-outline-dark" type="button" data-action="step">Step</button>
               <button class="btn btn-sm btn-outline-dark" type="button" data-action="reset">Reset</button>
             </div>
-            <div class="demo-body">
-              <figure class="landscape">
-                <canvas data-landscape width="440" height="440"></canvas>
-                <figcaption>Loss over decay $g$ (horizontal) and damping $a_1$ (vertical), normalised to this surface's own range — bright is low. The cross is the true answer. Click or drag to set the starting point.</figcaption>
-              </figure>
+            <div class="demo-body demo-body-paired">
+              <div class="landscape-stack">
+                <figure class="landscape">
+                  <figcaption>Event 1 &middot; pluck at 0 s</figcaption>
+                  <canvas data-landscape="0" width="300" height="300"></canvas>
+                </figure>
+                <figure class="landscape">
+                  <figcaption>Event 2 &middot; pluck at 3 s</figcaption>
+                  <canvas data-landscape="1" width="300" height="300"></canvas>
+                </figure>
+                <p class="landscape-key">Loss over decay $g$ (horizontal) and damping $a_1$ (vertical), each normalised to its own range — bright is low. The cross is the true answer. Click or drag either map to move that event's starting point.</p>
+              </div>
               <div class="spec-stack">
-                <figure><canvas data-spec="target" width="300" height="120"></canvas><figcaption>Target</figcaption></figure>
-                <figure><canvas data-spec="tksa" width="300" height="120"></canvas><figcaption>tKSA prediction</figcaption></figure>
-                <figure><canvas data-spec="fksa" width="300" height="120"></canvas><figcaption>fKSA prediction</figcaption></figure>
+                <figure><canvas data-spec="target" width="320" height="128"></canvas><figcaption>Target &mdash; both events</figcaption></figure>
+                <figure><canvas data-spec="tksa" width="320" height="128"></canvas><figcaption>tKSA reconstruction</figcaption></figure>
+                <figure><canvas data-spec="fksa" width="320" height="128"></canvas><figcaption>fKSA reconstruction</figcaption></figure>
               </div>
             </div>
             <p class="demo-readout" data-readout="status">Loading landscapes…</p>
           </div>
 
-          <p>Two things are worth doing here. First, set the onset to 3 s and step through: the time-domain marker walks to the cross, and the frequency-sampling marker does not. Second, look at the loss ranges. The tKSA surface spans a factor of two hundred between its best and worst point; the fKSA surface at a short FFT is almost flat. That flatness is the real damage — it is not that frequency sampling points the wrong way so much as that time-aliasing has erased the signal it needed to point with. A model trained this way overestimates $g$ and underestimates $a_1$, exactly the excess sustain visible in the paper's Figure 4.</p>
+          <p>Run it and watch both maps at once. The time-domain markers walk to the cross on both events. The frequency-sampling markers do not — and, revealingly, they fail by very different amounts. At a 2048-sample frame the pluck at 0 s ends up off by $0.006$ in $g$, while the one at 3 s is off by $0.090$: sixteen times worse, from the same frame size in the same signal. An event late in the clip has less room left before the frame ends, so more of its decay wraps around.</p>
+          <p>Look at the loss ranges too. The tKSA surface spans a factor of two hundred between its best and worst point; the fKSA surface at a short frame is almost flat. That flatness is the real damage — it is not so much that frequency sampling points the wrong way as that time-aliasing has erased the signal it needed to point with. A model trained this way overestimates $g$ and underestimates $a_1$, which is the excess sustain visible in the paper's Figure 4.</p>
           <div class="figure-grid narrative-figures"><figure class="figure-frame"><img class="paper-figure" src="assets/images/fig_4.png" alt="Comparison of real guitar and time- and frequency-domain KSA responses"><a class="figure-source" href="assets/figures/fig_4.pdf">Open PDF</a><figcaption>The same effect in the paper: an NSynth target, the two reconstructions at inference, and the frequency-sampling forward pass used in training, where circular convolution at $N_{FFT} = 2^{14}$ truncates long decays.</figcaption></figure></div>
           <p>The headline result is that time-domain Lagrange interpolation matches frequency sampling on gradient accuracy while avoiding this artefact — which makes it a viable, artefact-free alternative for differentiable physical models with time-varying, highly resonant behaviour.</p>
 

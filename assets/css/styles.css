@@ -201,6 +201,11 @@
     .demo-controls label{display:grid;gap:3px;font-size:.76rem;font-weight:600;margin:0}
     .demo-controls select{border:1px solid #cfd5da;border-radius:6px;padding:4px 8px;font-size:.82rem;background:#fff}
     .demo-body{display:grid;grid-template-columns:minmax(0,440px) minmax(0,1fr);gap:20px;align-items:start}
+    .demo-body-paired{grid-template-columns:minmax(0,340px) minmax(0,1fr)}
+    .landscape-stack{display:grid;gap:12px}
+    .landscape-stack figcaption{font-size:.74rem;font-weight:600;color:#274f69;margin:0 0 4px}
+    .landscape-key{font-size:.7rem;color:#5f6871;line-height:1.45;margin:0}
+    .readout-row{display:block}
     .landscape{margin:0}
     .landscape canvas{width:100%;height:auto;display:block;border-radius:6px;cursor:crosshair;image-rendering:auto}
     .demo figcaption{font-size:.72rem;color:#5f6871;margin-top:6px;line-height:1.4}
@@ -288,7 +293,7 @@
       .scrolly{grid-template-columns:1fr}
       .scrolly-figure{position:static}
       .scrolly-steps>.scrolly-step{opacity:1;padding:1.5rem 0}
-      .demo-body{grid-template-columns:1fr}
+      .demo-body,.demo-body-paired{grid-template-columns:1fr}
       .regime-grid{grid-template-columns:1fr}
       .match-params{grid-template-columns:1fr}
       .knob-panel{grid-template-columns:1fr}
